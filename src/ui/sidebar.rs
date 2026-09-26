@@ -22,8 +22,11 @@ struct Item {
 impl FileFlier {
     pub(crate) fn sidebar_ui(&mut self, ui: &mut Ui, rect: Rect) {
         let pal = self.pal();
-        ui.painter().rect_filled(rect, 0.0, pal.sidebar);
-        ui.painter().vline(rect.right() - 0.5, rect.y_range(), Stroke::new(1.0, pal.border));
+        let fx = self.fx();
+        super::surface(ui.painter(), rect, pal.sidebar, &fx, pal);
+        if !fx.glass {
+            ui.painter().vline(rect.right() - 0.5, rect.y_range(), Stroke::new(1.0, pal.border));
+        }
 
         // Resize handle on the right edge.
         let handle = Rect::from_min_max(pos2(rect.right() - 3.0, rect.top()), pos2(rect.right() + 3.0, rect.bottom()));

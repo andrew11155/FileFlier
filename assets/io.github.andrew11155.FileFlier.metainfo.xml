@@ -23,7 +23,8 @@
       <li>Command palette and a Go To box with path completion</li>
       <li>Inspector that previews text, images and folders</li>
       <li>Bookmarks, recent folders, drives and network shares in the sidebar</li>
-      <li>Eight themes, custom accent colors and adjustable size</li>
+      <li>Eight themes, custom accent colors, adjustable size and an optional frosted glass style</li>
+      <li>Quick Look previews, inline rename and undo</li>
     </ul>
   </description>
 
@@ -35,15 +36,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.2.0/docs/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/main.png</image>
       <caption>Split panes with a thumbnail grid and the inspector</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.2.0/docs/screenshots/menu.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/quicklook.png</image>
+      <caption>Quick Look preview (Space)</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/glass.png</image>
+      <caption>Optional frosted glass style</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/menu.png</image>
       <caption>Searchable context menu with keyboard shortcuts</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.2.0/docs/screenshots/palette.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/palette.png</image>
       <caption>Command palette</caption>
     </screenshot>
   </screenshots>
@@ -69,6 +78,19 @@
   </categories>
 
   <releases>
+    <release version="0.3.0" date="2026-09-26">
+      <description>
+        <p>Previews, polish and effects:</p>
+        <ul>
+          <li>Quick Look: press Space for a large preview and browse with the arrow keys</li>
+          <li>Rename files in place with F2</li>
+          <li>Undo (Ctrl+Z) for renames, moves, copies, new items and moving to the trash</li>
+          <li>Optional frosted glass style, with desktop blur on KDE Plasma and macOS</li>
+          <li>Smooth animations throughout, which can be turned off</li>
+          <li>AppImage mounts no longer show up as drives</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-26">
       <description>
         <p>Settings and themes:</p>

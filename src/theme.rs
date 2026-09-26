@@ -304,7 +304,7 @@ pub fn palette(theme: ThemeId, accent: Option<Color32>) -> &'static Palette {
     })
 }
 
-pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32) {
+pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) {
     let dark = p.is_dark;
     ctx.set_zoom_factor(ui_scale.clamp(0.8, 1.5));
     let mut v = if dark { Visuals::dark() } else { Visuals::light() };
@@ -349,7 +349,9 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32) {
         scroll.bar_inner_margin = 2.0;
         scroll.bar_outer_margin = 2.0;
         s.spacing.scroll = scroll;
-        s.animation_time = 0.08;
+        s.animation_time = if animations { 0.12 } else { 0.0 };
+        s.scroll_animation =
+            if animations { egui::style::ScrollAnimation::default() } else { egui::style::ScrollAnimation::none() };
         use egui::{FontFamily::Proportional, FontId, TextStyle};
         s.text_styles.insert(TextStyle::Body, FontId::new(14.0, Proportional));
         s.text_styles.insert(TextStyle::Button, FontId::new(14.0, Proportional));

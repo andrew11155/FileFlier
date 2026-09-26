@@ -39,15 +39,17 @@ fn modal<R>(
     id: &str,
     width: f32,
     pal: &crate::theme::Palette,
+    fx: &super::Fx,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
     let id = Id::new(("dialog", id));
     let area = egui::Modal::default_area(id).anchor(Align2::CENTER_TOP, vec2(0.0, 72.0));
     egui::Modal::new(id)
         .area(area)
-        .frame(popup_frame(pal))
+        .frame(popup_frame(pal, fx))
         .backdrop_color(Color32::from_black_alpha(70))
         .show(ctx, |ui| {
+            super::animate_in(ui, id.with("appear"), fx, 12.0);
             ui.set_width(width.min(ctx.content_rect().width() - 40.0));
             ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
             add(ui)
@@ -117,6 +119,7 @@ impl FileFlier {
     /// The shared searchable menu used for right-click, ⋮, history and filter options.
     pub(crate) fn menu_ui(&mut self, ctx: &egui::Context) {
         let pal = self.pal();
+        let fx = self.fx();
         let Some(menu) = self.menu.as_mut() else { return };
         let esc = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
         let (up, down, enter, _) = list_keys(ctx);
@@ -149,7 +152,8 @@ impl FileFlier {
         let mut chosen: Option<MenuItem> = None;
         let mut query = std::mem::take(&mut menu.query);
         let area = egui::Area::new(Id::new("cmd_menu")).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
-            popup_frame(pal).show(ui, |ui| {
+            super::animate_in(ui, Id::new("cmd_menu_appear"), &fx, -6.0);
+            popup_frame(pal, &fx).show(ui, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                 let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
@@ -219,6 +223,7 @@ impl FileFlier {
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.dialog.take() else { return };
         let pal = self.pal();
+        let fx = self.fx();
         let mut keep = !ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
         let mut run_after: Option<Command> = None;
         let mut go_after: Option<(PathBuf, Option<PathBuf>)> = None;
@@ -229,7 +234,7 @@ impl FileFlier {
                 let items = self.palette_items(query);
                 let (up, down, enter, _) = list_keys(ctx);
                 *cursor = step(*cursor, up, down, items.len());
-                let clicked = modal(ctx, "palette", 620.0, pal, |ui| {
+                let clicked = modal(ctx, "palette", 620.0, pal, &fx, |ui| {
                     let r = input_row(ui, pal, query, Id::new("palette_input"), "Search commands and folders...");
                     r.request_focus();
                     if r.changed() {
@@ -275,7 +280,7 @@ impl FileFlier {
                         st.store(ctx, id);
                     }
                 }
-                let clicked = modal(ctx, "goto", 620.0, pal, |ui| {
+                let clicked = modal(ctx, "goto", 620.0, pal, &fx, |ui| {
                     let r = input_row(
                         ui,
                         pal,
@@ -329,7 +334,7 @@ impl FileFlier {
                 let (up, down, enter, _) = list_keys(ctx);
                 *cursor = step(*cursor, up, down, n);
                 let mut changed = false;
-                let chosen = modal(ctx, "search", 680.0, pal, |ui| {
+                let chosen = modal(ctx, "search", 680.0, pal, &fx, |ui| {
                     let hint = format!("Search in {}", display_name(root));
                     let r = input_row(ui, pal, query, Id::new("search_input"), &hint);
                     r.request_focus();
@@ -394,7 +399,7 @@ impl FileFlier {
             }
             Dialog::Rename { path, name, init, error } => {
                 let mut submit = false;
-                modal(ctx, "rename", 440.0, pal, |ui| {
+                modal(ctx, "rename", 440.0, pal, &fx, |ui| {
                     label(ui, pal, &format!("Rename “{}”", display_name(path)), 15.0, None);
                     let id = Id::new("rename_edit");
                     let resp = plain_input(ui, pal, name, id);
@@ -443,6 +448,10 @@ impl FileFlier {
                     match res {
                         Ok(target) => {
                             keep = false;
+                            if target != *path {
+                                let op = crate::undo::UndoOp::Rename { from: path.clone(), to: target.clone() };
+                                self.info_undoable(format!("Renamed to {}", display_name(&target)), op);
+                            }
                             self.reload_all();
                             self.tab_mut().select_path(&target);
                         }
@@ -452,7 +461,7 @@ impl FileFlier {
             }
             Dialog::Create { dir, name, folder, error } => {
                 let mut submit = false;
-                modal(ctx, "create", 440.0, pal, |ui| {
+                modal(ctx, "create", 440.0, pal, &fx, |ui| {
                     label(ui, pal, if *folder { "New folder" } else { "New file" }, 15.0, None);
                     plain_input(ui, pal, name, Id::new("create_edit")).request_focus();
                     if let Some(e) = error.as_ref() {
@@ -484,6 +493,8 @@ impl FileFlier {
                     match res {
                         Ok(()) => {
                             keep = false;
+                            let op = crate::undo::UndoOp::Create { path: target.clone() };
+                            self.info_undoable(format!("Created {}", display_name(&target)), op);
                             self.reload_all();
                             self.tab_mut().select_path(&target);
                         }
@@ -493,7 +504,7 @@ impl FileFlier {
             }
             Dialog::ConfirmDelete { paths } => {
                 let mut confirm = false;
-                modal(ctx, "delete", 460.0, pal, |ui| {
+                modal(ctx, "delete", 460.0, pal, &fx, |ui| {
                     let n = paths.len();
                     label(ui, pal, &format!("Permanently delete {n} item{}?", crate::app::plural(n)), 15.0, None);
                     label(
@@ -528,12 +539,12 @@ impl FileFlier {
                 }
             }
             Dialog::Settings => {
-                if modal(ctx, "settings", 700.0, pal, |ui| self.settings_ui(ui)) {
+                if modal(ctx, "settings", 700.0, pal, &fx, |ui| self.settings_ui(ui)) {
                     keep = false;
                 }
             }
             Dialog::Help => {
-                modal(ctx, "help", 620.0, pal, |ui| {
+                modal(ctx, "help", 620.0, pal, &fx, |ui| {
                     label(ui, pal, "Keyboard shortcuts", 16.0, Some(pal.text_strong));
                     egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
                         let basics = [

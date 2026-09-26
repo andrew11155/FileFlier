@@ -10,8 +10,11 @@ use crate::ui::pane_view::{file_kind, type_label};
 impl FileFlier {
     pub(crate) fn inspector_ui(&mut self, ui: &mut Ui, rect: Rect) {
         let pal = self.pal();
-        ui.painter().rect_filled(rect, 0.0, pal.sidebar);
-        ui.painter().vline(rect.left() + 0.5, rect.y_range(), Stroke::new(1.0, pal.border));
+        let fx = self.fx();
+        super::surface(ui.painter(), rect, pal.sidebar, &fx, pal);
+        if !fx.glass {
+            ui.painter().vline(rect.left() + 0.5, rect.y_range(), Stroke::new(1.0, pal.border));
+        }
 
         let Some(e) = self.tab().cursor_entry().cloned() else {
             text(ui.painter(), rect.center(), Align2::CENTER_CENTER, "Nothing selected", 14.0, pal.text_dim);
@@ -40,7 +43,8 @@ impl FileFlier {
             // Preview area.
             let preview_h = (inner.height() * 0.55).max(120.0);
             let (pr, _) = ui.allocate_exact_size(vec2(inner.width(), preview_h), egui::Sense::hover());
-            ui.painter().rect_filled(pr, 6.0, pal.bg);
+            let well = if fx.glass { super::glass::with_alpha(pal.bg, 0.55) } else { pal.bg };
+            ui.painter().rect_filled(pr, 6.0, well);
             ui.painter().rect_stroke(pr, 6.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
             let content = pr.shrink(8.0);
             match &self.preview.as_ref().unwrap().2 {

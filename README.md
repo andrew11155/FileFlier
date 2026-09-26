@@ -42,6 +42,20 @@ the same on every desktop environment.
   paths or `file://` URIs from other applications copies those files in.
 - The view refreshes automatically when a folder changes on disk.
 
+## Quick Look, rename and undo
+
+- **Quick Look:** press `Space` to preview the selected item in a large window:
+  images, text, folder contents, or file details. Use the arrow keys to move
+  to the next item, `Enter` to open it, and `Space` or `Esc` to close the
+  preview.
+- **Rename in place:** press `F2` to edit the name directly in the list. The
+  name is selected without its extension, so typing replaces just the name.
+  `Enter` or clicking elsewhere saves; `Esc` cancels.
+- **Undo:** `Ctrl+Z` (or the *Undo* button on the notification) reverts the
+  last rename, move, copy, new file or folder, or move to trash. Undoing a copy
+  moves the copies to the trash, and undo never overwrites a file. Restoring
+  from the trash works on Linux; on macOS, use *Put Back* in Finder.
+
 ## Settings
 
 Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
@@ -59,6 +73,17 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 - **Dates:** `2026-09-26 14:03`, "5 min ago" or `Sep 26, 2026`.
 - **Startup:** open your home folder, or restore last session's tabs and split
   panes.
+- **Animations:** smooth transitions for the selection highlight, scrolling,
+  folders, menus, Quick Look and notifications. Turn them off to make
+  everything instant.
+- **Frosted glass:** panels become translucent and float over a soft color
+  backdrop, with a choice of strength (Airy to Solid). With **Show desktop
+  behind window**, your wallpaper shows through, blurred, on KDE Plasma
+  (including Bazzite) and macOS. *Auto* turns this on only on those systems;
+  elsewhere, such as Cinnamon on Linux Mint, the desktop would show through
+  unblurred. Changing this option takes effect after a restart.
+
+![Frosted glass style](docs/screenshots/glass.png)
 
 ## Keyboard shortcuts
 
@@ -86,6 +111,8 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | `F3` or `Ctrl+I` | Toggle the inspector |
 | `Ctrl+D` | Bookmark the current folder |
 | `Ctrl+Shift+T` | Open a terminal here |
+| `Space` | Quick Look |
+| `Ctrl+Z` | Undo |
 | `Ctrl+,` | Settings |
 | `Ctrl +` / `Ctrl −` / `Ctrl 0` | Interface size |
 | `F1` | List all shortcuts |

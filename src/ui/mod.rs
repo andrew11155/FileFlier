@@ -2,9 +2,11 @@
 //! match File Pilot closely rather than following egui's default widget style.
 
 mod chrome;
+pub mod glass;
 mod inspector;
 mod pane_view;
 mod popups;
+mod quicklook;
 mod settings;
 mod sidebar;
 
@@ -181,9 +183,70 @@ pub fn checkbox(p: &Painter, r: Rect, checked: bool, pal: &Palette, on_accent: b
 }
 
 /// Frame used by all popups and dialogs.
-pub fn popup_frame(pal: &Palette) -> egui::Frame {
+/// Visual-effects settings for this frame.
+#[derive(Clone, Copy)]
+pub struct Fx {
+    pub glass: bool,
+    pub see_through: bool,
+    pub opacity: f32,
+    pub animations: bool,
+}
+
+impl Fx {
+    /// Duration for a transition; zero when animations are off.
+    pub fn dur(&self, secs: f32) -> f32 {
+        if self.animations { secs } else { 0.0 }
+    }
+}
+
+/// Ease-out cubic: fast start, gentle landing.
+pub fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+
+/// 0→1 progress of an "appear" transition for something identified by `id`. It
+/// restarts whenever the thing wasn't shown on the previous frame, so a popup
+/// animates every time it opens.
+pub fn appear(ctx: &egui::Context, id: egui::Id, dur: f32) -> f32 {
+    let frame = ctx.cumulative_frame_nr();
+    let now = ctx.input(|i| i.time);
+    let (start, last) = ctx.data(|d| d.get_temp::<(f64, u64)>(id)).unwrap_or((now, 0));
+    let start = if last + 1 < frame { now } else { start };
+    ctx.data_mut(|d| d.insert_temp(id, (start, frame)));
+    if dur <= 0.0 {
+        return 1.0;
+    }
+    let t = ((now - start) as f32 / dur).clamp(0.0, 1.0);
+    if t < 1.0 {
+        ctx.request_repaint();
+    }
+    ease_out(t)
+}
+
+/// Fades a popup in and slides it up by `rise` pixels while it appears.
+pub fn animate_in(ui: &mut Ui, id: egui::Id, fx: &Fx, rise: f32) {
+    let t = appear(ui.ctx(), id, fx.dur(0.16));
+    ui.multiply_opacity(t);
+    let offset = egui::emath::TSTransform::from_translation(vec2(0.0, (1.0 - t) * rise));
+    ui.ctx().set_transform_layer(ui.layer_id(), offset);
+}
+
+/// Paints a pane/sidebar background: solid normally, a floating translucent
+/// panel in glass mode.
+pub fn surface(p: &Painter, rect: Rect, fill: Color32, fx: &Fx, pal: &Palette) {
+    if fx.glass {
+        glass::panel(p, rect, glass::with_alpha(fill, fx.opacity), 10, pal);
+    } else {
+        p.rect_filled(rect, 0.0, fill);
+    }
+}
+
+pub fn popup_frame(pal: &Palette, fx: &Fx) -> egui::Frame {
+    // Popups sit over the app's own content, which can't be blurred, so they stay
+    // nearly opaque to keep text readable.
+    let fill = if fx.glass { glass::with_alpha(pal.popup, 0.96) } else { pal.popup };
     egui::Frame::new()
-        .fill(pal.popup)
+        .fill(fill)
         .stroke(Stroke::new(1.0, pal.border))
         .corner_radius(8)
         .inner_margin(6)

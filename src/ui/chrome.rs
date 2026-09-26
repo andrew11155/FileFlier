@@ -17,7 +17,9 @@ impl FileFlier {
     pub(crate) fn title_bar(&mut self, ui: &mut Ui, rect: Rect, sidebar_w: f32, strips: &[(usize, f32, f32)]) {
         let pal = self.pal();
         let ctx = ui.ctx().clone();
-        ui.painter().rect_filled(rect, 0.0, pal.titlebar);
+        if !self.fx().glass {
+            ui.painter().rect_filled(rect, 0.0, pal.titlebar); // glass: tabs float on the backdrop
+        }
 
         // Empty title-bar space drags the window; double-click toggles maximize.
         let drag = ui.interact(rect, Id::new("titlebar_drag"), Sense::click_and_drag());
@@ -74,7 +76,9 @@ impl FileFlier {
             let hovered = resp.hovered();
             if is_active {
                 let radius = CornerRadius { nw: 7, ne: 7, sw: 0, se: 0 };
-                painter.rect_filled(r, radius, pal.bg);
+                let fx = self.fx();
+                let fill = if fx.glass { crate::ui::glass::with_alpha(pal.bg, fx.opacity) } else { pal.bg };
+                painter.rect_filled(r, radius, fill);
                 if pane_active {
                     // Thin accent on top of the active pane's current tab.
                     painter.line_segment(
@@ -215,13 +219,17 @@ impl FileFlier {
             }
         }
         // A 1px frame so the borderless window reads as a window.
-        ui.painter().rect_stroke(full, 0.0, Stroke::new(1.0, self.pal().border), egui::StrokeKind::Inside);
+        if !self.fx().see_through {
+            ui.painter().rect_stroke(full, 0.0, Stroke::new(1.0, self.pal().border), egui::StrokeKind::Inside);
+        }
     }
 
-    pub(crate) fn split_divider(&mut self, ui: &mut Ui, area: Rect, x: f32) {
+    pub(crate) fn split_divider(&mut self, ui: &mut Ui, area: Rect, x: f32, draw_line: bool) {
         let pal = self.pal();
         let line = Rect::from_min_max(pos2(x, area.top()), pos2(x + 1.0, area.bottom()));
-        ui.painter().rect_filled(line, 0.0, pal.border);
+        if draw_line {
+            ui.painter().rect_filled(line, 0.0, pal.border);
+        }
         let handle = line.expand2(vec2(3.0, 0.0));
         let resp = ui.interact(handle, Id::new("split_divider"), Sense::drag());
         if resp.hovered() || resp.dragged() {
@@ -240,44 +248,58 @@ impl FileFlier {
     /// Transient notifications and background-job progress.
     pub(crate) fn toasts(&mut self, ui: &mut Ui, full: Rect) {
         let pal = self.pal();
-        let (msg, err, spinner) = if let Some(job) = &self.job {
+        let fx = self.fx();
+        let ctx = ui.ctx().clone();
+        // Undoable toasts stay up longer so there's time to click Undo.
+        let life = if self.toast_undo { 7.0 } else { 4.0 };
+        let (msg, err, spinner, key, fade_out) = if let Some(job) = &self.job {
             let p = job.progress.lock().map(|p| p.clone()).unwrap_or_default();
-            (format!("{} · {p}", job.label), false, true)
+            (format!("{} · {p}", job.label), false, true, format!("job{}", job.label), 1.0)
         } else if let Some((msg, at, err)) = &self.status {
-            if at.elapsed().as_secs_f32() > 4.0 {
+            let age = at.elapsed().as_secs_f32();
+            if age > life {
                 return;
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
-            (msg.clone(), *err, false)
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            let out = if fx.animations { ((life - age) / 0.3).clamp(0.0, 1.0) } else { 1.0 };
+            (msg.clone(), *err, false, format!("{at:?}"), out)
         } else {
             return;
         };
-        let painter = ui.ctx().layer_painter(LayerId::new(Order::Foreground, Id::new("toasts")));
-        let color = if err { Color32::from_rgb(255, 140, 130) } else { pal.text };
-        let g = elided(&painter, &msg, 13.5, color, full.width() * 0.6);
-        let extra = if spinner { 26.0 } else { 0.0 };
-        let size = g.size() + vec2(28.0 + extra, 16.0);
-        let r = Rect::from_center_size(pos2(full.center().x, full.bottom() - 62.0), size);
-        painter.rect_filled(r, 6.0, pal.popup);
-        painter.rect_stroke(
-            r,
-            6.0,
-            Stroke::new(1.0, if err { Color32::from_rgb(170, 60, 50) } else { pal.border }),
-            egui::StrokeKind::Inside,
-        );
-        if spinner {
-            let t = ui.input(|i| i.time) as f32;
-            let c = pos2(r.left() + 20.0, r.center().y);
-            let pts: Vec<_> = (0..=16)
-                .map(|k| {
-                    let a = t * 6.0 + k as f32 / 16.0 * 4.5;
-                    c + vec2(a.cos(), a.sin()) * 6.0
-                })
-                .collect();
-            painter.add(egui::Shape::line(pts, Stroke::new(2.0, pal.accent)));
-            ui.ctx().request_repaint();
+        let show_undo = self.toast_undo && self.last_undo.is_some() && self.job.is_none();
+        let t_in = super::appear(&ctx, Id::new(("toast", key)), fx.dur(0.22));
+        let mut undo_clicked = false;
+        egui::Area::new(Id::new("toast_area"))
+            .order(Order::Foreground)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(pos2(full.center().x, full.bottom() - 48.0 + (1.0 - t_in) * 18.0))
+            .show(&ctx, |ui| {
+                ui.multiply_opacity(t_in * fade_out);
+                let color = if err { Color32::from_rgb(255, 140, 130) } else { pal.text };
+                let border = if err { Color32::from_rgb(170, 60, 50) } else { pal.border };
+                super::popup_frame(pal, &fx)
+                    .stroke(Stroke::new(1.0, border))
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            if spinner {
+                                ui.add(egui::Spinner::new().size(14.0).color(pal.accent));
+                            }
+                            let g = elided(ui.painter(), &msg, 13.5, color, full.width() * 0.55);
+                            let (r, _) = ui.allocate_exact_size(g.size(), egui::Sense::hover());
+                            ui.painter().galley(r.min, g, color);
+                            if show_undo {
+                                let label = egui::RichText::new("Undo").size(13.5).color(pal.accent).strong();
+                                let b = ui.add(egui::Button::new(label).frame(false)).on_hover_text("Ctrl+Z");
+                                undo_clicked = b.clicked();
+                            }
+                        });
+                    });
+            });
+        if undo_clicked {
+            self.undo_last();
         }
-        painter.galley(pos2(r.left() + 14.0 + extra, r.center().y - g.size().y / 2.0), g, color);
     }
 
     /// A small label following the pointer while files are being dragged.

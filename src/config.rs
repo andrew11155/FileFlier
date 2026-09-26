@@ -71,6 +71,15 @@ pub struct Config {
     pub show_item_counts: bool,
     pub startup: Startup,
     pub session: Session,
+    /// Smooth transitions; off = everything snaps instantly.
+    pub animations: bool,
+    /// Frosted glass: translucent floating panels over a soft backdrop.
+    pub glass: bool,
+    /// Panel opacity in glass mode (0.4 = very see-through, 0.95 = nearly solid).
+    pub glass_opacity: f32,
+    /// Let the desktop show through (blurred by the compositor where supported).
+    /// None = automatic: on for KDE Plasma and macOS, off elsewhere.
+    pub glass_see_through: Option<bool>,
     pub bookmarks: Vec<PathBuf>,
     pub show_hidden: bool,
     pub dark_mode: bool,
@@ -96,6 +105,10 @@ impl Default for Config {
             show_item_counts: true,
             startup: Startup::Home,
             session: Session::default(),
+            animations: true,
+            glass: false,
+            glass_opacity: 0.72,
+            glass_see_through: None,
             bookmarks: Vec::new(),
             show_hidden: false,
             dark_mode: true,
@@ -130,6 +143,17 @@ impl Config {
 
     pub fn accent_color(&self) -> Option<egui::Color32> {
         self.accent.map(|[r, g, b]| egui::Color32::from_rgb(r, g, b))
+    }
+
+    /// Whether the desktop should show through in glass mode.
+    pub fn see_through(&self) -> bool {
+        self.glass
+            && self.glass_see_through.unwrap_or_else(|| {
+                // Only default it on where the compositor blurs behind the window;
+                // elsewhere a sharp desktop behind text hurts readability.
+                cfg!(target_os = "macos")
+                    || std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.to_uppercase().contains("KDE"))
+            })
     }
 
     pub fn palette(&self) -> &'static crate::theme::Palette {

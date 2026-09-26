@@ -308,6 +308,7 @@ impl FileFlier {
         let is_active = idx == self.active;
         let sort = self.cfg.sort;
         let row_h = self.cfg.density.row_height();
+        let fx = self.fx();
         let date_style = self.cfg.date_style;
         let ctx = ui.ctx().clone();
         let cut_paths: Vec<PathBuf> =
@@ -407,15 +408,65 @@ impl FileFlier {
         let key = Id::new(("scroll", idx));
         let (off, view_h) = ctx.data(|d| d.get_temp::<(f32, f32)>(key).unwrap_or((0.0, 400.0)));
         let mut area = egui::ScrollArea::vertical().id_salt(("list", idx)).auto_shrink(false);
+        let now = ctx.input(|i| i.time);
+        let anim_key = Id::new(("scroll_anim", idx));
         if tab.scroll_to_cursor {
             tab.scroll_to_cursor = false;
             let y = (tab.cursor / ncols) as f32 * pitch;
-            if y < off {
-                area = area.vertical_scroll_offset(y);
+            let target = if y < off {
+                Some(y)
             } else if y + pitch > off + view_h {
-                area = area.vertical_scroll_offset(y + pitch - view_h);
+                Some(y + pitch - view_h)
+            } else {
+                None
+            };
+            if let Some(to) = target {
+                // Big jumps (Home/End, new folder) snap; short moves glide.
+                if fx.animations && (to - off).abs() < view_h * 3.0 {
+                    ctx.data_mut(|d| d.insert_temp(anim_key, (off, to, now)));
+                } else {
+                    ctx.data_mut(|d| d.remove::<(f32, f32, f64)>(anim_key));
+                    area = area.vertical_scroll_offset(to);
+                }
             }
         }
+        if let Some((from, to, start)) = ctx.data(|d| d.get_temp::<(f32, f32, f64)>(anim_key)) {
+            let t = ((now - start) as f32 / 0.14).clamp(0.0, 1.0);
+            area = area.vertical_scroll_offset(egui::lerp(from..=to, super::ease_out(t)));
+            if t >= 1.0 {
+                ctx.data_mut(|d| d.remove::<(f32, f32, f64)>(anim_key));
+            } else {
+                ctx.request_repaint();
+            }
+        }
+
+        // Folder change: content fades in and slides from the side it came from.
+        let nav_key = Id::new(("nav_anim", idx));
+        let (last_path, nav_start, nav_dir) =
+            ctx.data(|d| d.get_temp::<(PathBuf, f64, f32)>(nav_key)).unwrap_or((tab.path.clone(), -10.0, 0.0));
+        let (nav_start, nav_dir) = if last_path != tab.path {
+            let dir = if tab.path.starts_with(&last_path) { 1.0 } else { -1.0 };
+            ctx.data_mut(|d| d.insert_temp(nav_key, (tab.path.clone(), now, dir)));
+            (now, dir)
+        } else {
+            ctx.data_mut(|d| d.insert_temp(nav_key, (last_path, nav_start, nav_dir)));
+            (nav_start, nav_dir)
+        };
+        let nav_t =
+            if fx.animations { super::ease_out(((now - nav_start) as f32 / 0.18).clamp(0.0, 1.0)) } else { 1.0 };
+        if nav_t < 1.0 {
+            ctx.request_repaint();
+        }
+        let slide = (1.0 - nav_t) * 18.0 * nav_dir;
+
+        // The selection highlight glides between rows when a single item is selected.
+        let single_sel = view != ViewMode::Grid
+            && tab.selected.len() == 1
+            && tab.cursor_entry().is_some_and(|e| tab.selected.contains(&e.path));
+        let sel_key = Id::new(("sel_anim", idx, tab.path.as_os_str()));
+        let (target_row, target_col) = ((tab.cursor / ncols) as f32, (tab.cursor % ncols) as f32);
+        let anim_row = ctx.animate_value_with_time(sel_key.with("r"), target_row, fx.dur(0.09));
+        let anim_col = ctx.animate_value_with_time(sel_key.with("c"), target_col, fx.dur(0.09));
 
         let mut item_actions: Vec<ItemAction> = Vec::new();
         let mut drops: Vec<(Vec<PathBuf>, PathBuf)> = Vec::new();
@@ -430,188 +481,277 @@ impl FileFlier {
         if bg.secondary_clicked() {
             item_actions.push(ItemAction::BackgroundContext(bg.interact_pointer_pos().unwrap_or(list_rect.center())));
         }
+        // Inline rename state is taken out while drawing (avoids borrowing self twice).
+        let mut renaming =
+            self.renaming.take().filter(|r| r.pane != idx || r.path.parent() == Some(tab.path.as_path()));
+        let mut rename_done: Option<bool> = None; // Some(true) = commit, Some(false) = cancel
         let out = ui
-            .scope_builder(UiBuilder::new().max_rect(list_rect).id_salt(("view", idx)), |ui| {
-                ui.set_clip_rect(list_rect);
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                area.show_rows(ui, pitch, rows, |ui, range| {
-                    for row in range {
-                        let (row_rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), pitch), Sense::hover());
-                        for c in 0..ncols {
-                            let vi = row * ncols + c;
-                            let Some(&ei) = tab.visible.get(vi) else { break };
-                            let e = &tab.entries[ei];
-                            let item = match view {
-                                ViewMode::Details => row_rect.shrink2(vec2(8.0, 0.0)),
-                                ViewMode::List => {
-                                    let w = inner_w / ncols as f32;
-                                    Rect::from_min_size(
-                                        pos2(row_rect.left() + 8.0 + c as f32 * w, row_rect.top()),
-                                        vec2(w - 6.0, pitch),
-                                    )
-                                }
-                                ViewMode::Grid => {
-                                    let w = inner_w / ncols as f32;
-                                    Rect::from_min_size(
-                                        pos2(row_rect.left() + 8.0 + c as f32 * w, row_rect.top()),
-                                        vec2(w, pitch),
-                                    )
-                                    .shrink2(vec2(4.0, 4.0))
-                                }
-                            };
-                            let resp = ui.interact(item, Id::new(("item", idx, vi)), Sense::click_and_drag());
-                            let selected = tab.selected.contains(&e.path);
-                            let is_cursor = is_active && vi == tab.cursor;
-                            let drop_target = e.is_dir && resp.dnd_hover_payload::<DragPaths>().is_some();
-                            let dim = e.is_hidden() || cut_paths.contains(&e.path);
-                            let p = ui.painter();
+            .scope_builder(
+                UiBuilder::new().max_rect(list_rect.translate(vec2(slide, 0.0))).id_salt(("view", idx)),
+                |ui| {
+                    ui.set_clip_rect(list_rect);
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    ui.multiply_opacity(nav_t);
+                    area.show_rows(ui, pitch, rows, |ui, range| {
+                        if single_sel {
+                            // Content-space origin of row 0, so the highlight scrolls with the rows.
+                            let origin = ui.cursor().top() - range.start as f32 * pitch;
+                            let w = ui.available_width();
+                            let cell_w = if view == ViewMode::List { inner_w / ncols as f32 } else { w - 16.0 };
+                            let x = ui.cursor().left() + 8.0 + anim_col * cell_w;
+                            let width = if view == ViewMode::List { cell_w - 6.0 } else { cell_w };
+                            let r =
+                                Rect::from_min_size(pos2(x, origin + anim_row * pitch + 1.0), vec2(width, pitch - 2.0));
+                            ui.painter().rect_filled(r, 4.0, sel_fill);
+                        }
+                        for row in range {
+                            let (row_rect, _) =
+                                ui.allocate_exact_size(vec2(ui.available_width(), pitch), Sense::hover());
+                            for c in 0..ncols {
+                                let vi = row * ncols + c;
+                                let Some(&ei) = tab.visible.get(vi) else { break };
+                                let e = &tab.entries[ei];
+                                let item = match view {
+                                    ViewMode::Details => row_rect.shrink2(vec2(8.0, 0.0)),
+                                    ViewMode::List => {
+                                        let w = inner_w / ncols as f32;
+                                        Rect::from_min_size(
+                                            pos2(row_rect.left() + 8.0 + c as f32 * w, row_rect.top()),
+                                            vec2(w - 6.0, pitch),
+                                        )
+                                    }
+                                    ViewMode::Grid => {
+                                        let w = inner_w / ncols as f32;
+                                        Rect::from_min_size(
+                                            pos2(row_rect.left() + 8.0 + c as f32 * w, row_rect.top()),
+                                            vec2(w, pitch),
+                                        )
+                                        .shrink2(vec2(4.0, 4.0))
+                                    }
+                                };
+                                let resp = ui.interact(item, Id::new(("item", idx, vi)), Sense::click_and_drag());
+                                let selected = tab.selected.contains(&e.path);
+                                let is_cursor = is_active && vi == tab.cursor;
+                                let drop_target = e.is_dir && resp.dnd_hover_payload::<DragPaths>().is_some();
+                                let dim = e.is_hidden() || cut_paths.contains(&e.path);
+                                let p = &ui.painter().clone();
 
-                            // Background.
-                            let bg_rect = if view == ViewMode::Details { item.shrink2(vec2(0.0, 1.0)) } else { item };
-                            if view == ViewMode::Grid {
-                                if selected {
-                                    p.rect_filled(bg_rect, 5.0, pal.grid_sel);
-                                    p.rect_stroke(bg_rect, 5.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
-                                } else if resp.hovered() {
-                                    p.rect_filled(bg_rect, 5.0, pal.hover);
-                                }
-                            } else if selected {
-                                p.rect_filled(bg_rect, 4.0, sel_fill);
-                            } else if resp.hovered() {
-                                p.rect_filled(bg_rect, 4.0, pal.hover);
-                            }
-                            if is_cursor && !(selected && view != ViewMode::Grid) {
-                                p.rect_stroke(bg_rect, 4.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
-                            }
-                            if drop_target {
-                                p.rect_stroke(bg_rect, 4.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
-                            }
-                            if view != ViewMode::Grid && !selected {
-                                p.hline(item.x_range(), item.bottom() - 0.5, Stroke::new(1.0, pal.row_sep));
-                            }
-
-                            let on_accent = selected && view != ViewMode::Grid && is_active;
-                            let mut color = if on_accent { pal.on_accent } else { pal.text };
-                            let mut dim_color =
-                                if on_accent { pal.on_accent.gamma_multiply(0.8) } else { pal.text_dim };
-                            if dim {
-                                color = color.gamma_multiply(0.55);
-                                dim_color = dim_color.gamma_multiply(0.6);
-                            }
-
-                            match view {
-                                ViewMode::Details | ViewMode::List => {
-                                    let icon = Rect::from_center_size(
-                                        pos2(item.left() + 18.0, item.center().y),
-                                        vec2(20.0, 20.0),
+                                // Background.
+                                let bg_rect =
+                                    if view == ViewMode::Details { item.shrink2(vec2(0.0, 1.0)) } else { item };
+                                if view == ViewMode::Grid {
+                                    if selected {
+                                        p.rect_filled(bg_rect, 5.0, pal.grid_sel);
+                                        p.rect_stroke(bg_rect, 5.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                                    } else if resp.hovered() {
+                                        p.rect_filled(bg_rect, 5.0, pal.hover);
+                                    }
+                                } else if selected {
+                                    if !single_sel {
+                                        p.rect_filled(bg_rect, 4.0, sel_fill); // single selection glides (drawn above)
+                                    }
+                                } else {
+                                    let h = ui.ctx().animate_bool_with_time(
+                                        resp.id.with("hover"),
+                                        resp.hovered(),
+                                        fx.dur(0.1),
                                     );
-                                    if multi && selected {
-                                        checkbox(p, icon, true, pal, on_accent);
-                                    } else if e.is_dir {
-                                        icons::folder(p, icon, pal);
-                                    } else {
-                                        icons::file(p, icon, file_kind(e), pal);
-                                    }
-                                    let name_right =
-                                        if view == ViewMode::Details { cols.name - 8.0 } else { item.right() - 6.0 };
-                                    let label = if e.is_symlink { format!("{} ↗", e.name) } else { e.name.clone() };
-                                    let g = elided(p, &label, 14.0, color, name_right - (item.left() + 40.0));
-                                    p.galley(pos2(item.left() + 40.0, item.center().y - g.size().y / 2.0), g, color);
-                                    if view == ViewMode::Details {
-                                        let cy = item.center().y;
-                                        if let Some((l, r)) = cols.ty {
-                                            let g = elided(p, &type_label(e), 13.0, dim_color, r - l);
-                                            p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
-                                        }
-                                        if let Some((l, _)) = cols.items {
-                                            let s = match e.is_dir.then(|| counts.get(&e.path)) {
-                                                Some(Count::Items(n)) => short_count(n),
-                                                Some(Count::Pending) => "…".into(),
-                                                _ => "--".into(),
-                                            };
-                                            text(p, pos2(l, cy), Align2::LEFT_CENTER, s, 13.0, dim_color);
-                                        }
-                                        let size = if e.is_dir { "--".to_string() } else { human_size(e.size) };
-                                        text(p, pos2(cols.size.1, cy), Align2::RIGHT_CENTER, size, 13.0, dim_color);
-                                        if let Some((l, r)) = cols.modified {
-                                            let d = e.modified.map(|m| format_time(m, date_style)).unwrap_or_default();
-                                            let g = elided(p, &d, 13.0, dim_color, r - l);
-                                            p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
-                                        }
+                                    if h > 0.0 {
+                                        p.rect_filled(bg_rect, 4.0, pal.hover.gamma_multiply(h));
                                     }
                                 }
-                                ViewMode::Grid => {
-                                    let thumb = Rect::from_min_size(
-                                        item.min + vec2(10.0, 8.0),
-                                        vec2(item.width() - 20.0, 78.0),
-                                    );
-                                    let mut drew = false;
-                                    if e.is_file && file_kind(e) == FileKind::Image && e.size < 25_000_000 {
-                                        let img = egui::Image::new(format!("file://{}", e.path.display()));
-                                        if let Ok(poll) = img.load_for_size(ui.ctx(), thumb.size())
-                                            && let Some(sz) = poll.size()
-                                        {
-                                            let scale = (thumb.width() / sz.x).min(thumb.height() / sz.y).min(1.0);
-                                            let fit = Rect::from_center_size(thumb.center(), sz * scale);
-                                            img.corner_radius(3).paint_at(ui, fit);
-                                            drew = true;
-                                        }
-                                    }
-                                    let p = ui.painter();
-                                    if !drew {
-                                        let icon = Rect::from_center_size(thumb.center(), vec2(64.0, 64.0));
-                                        if e.is_dir {
+                                if is_cursor && !(selected && view != ViewMode::Grid) {
+                                    p.rect_stroke(bg_rect, 4.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                                }
+                                if drop_target {
+                                    p.rect_stroke(bg_rect, 4.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
+                                }
+                                if view != ViewMode::Grid && !selected {
+                                    p.hline(item.x_range(), item.bottom() - 0.5, Stroke::new(1.0, pal.row_sep));
+                                }
+
+                                let on_accent = selected && view != ViewMode::Grid && is_active;
+                                let mut color = if on_accent { pal.on_accent } else { pal.text };
+                                let mut dim_color =
+                                    if on_accent { pal.on_accent.gamma_multiply(0.8) } else { pal.text_dim };
+                                if dim {
+                                    color = color.gamma_multiply(0.55);
+                                    dim_color = dim_color.gamma_multiply(0.6);
+                                }
+
+                                match view {
+                                    ViewMode::Details | ViewMode::List => {
+                                        let icon = Rect::from_center_size(
+                                            pos2(item.left() + 18.0, item.center().y),
+                                            vec2(20.0, 20.0),
+                                        );
+                                        if multi && selected {
+                                            checkbox(p, icon, true, pal, on_accent);
+                                        } else if e.is_dir {
                                             icons::folder(p, icon, pal);
                                         } else {
                                             icons::file(p, icon, file_kind(e), pal);
                                         }
+                                        let name_right = if view == ViewMode::Details {
+                                            cols.name - 8.0
+                                        } else {
+                                            item.right() - 6.0
+                                        };
+                                        let editing = renaming.as_mut().filter(|r| r.pane == idx && r.path == e.path);
+                                        if let Some(rn) = editing {
+                                            let r = Rect::from_min_max(
+                                                pos2(item.left() + 36.0, item.top() + 3.0),
+                                                pos2(name_right, item.bottom() - 3.0),
+                                            );
+                                            let id = Id::new("inline_rename");
+                                            let edit = egui::TextEdit::singleline(&mut rn.text)
+                                                .id(id)
+                                                .frame(
+                                                    egui::Frame::new()
+                                                        .fill(pal.input)
+                                                        .stroke(Stroke::new(1.0, pal.accent))
+                                                        .corner_radius(4)
+                                                        .inner_margin(egui::Margin::symmetric(4, 0)),
+                                                )
+                                                .font(super::font(14.0))
+                                                .text_color(pal.text)
+                                                .vertical_align(egui::Align::Center)
+                                                .desired_width(r.width());
+                                            let resp = ui.put(r, edit);
+                                            if rn.init {
+                                                rn.init = false;
+                                                resp.request_focus();
+                                                // Select the name without its extension, like Finder/Explorer.
+                                                let stem = match rn.text.rfind('.') {
+                                                    Some(i) if i > 0 => rn.text[..i].chars().count(),
+                                                    _ => rn.text.chars().count(),
+                                                };
+                                                let mut st =
+                                                    egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                                                st.cursor.set_char_range(Some(
+                                                    egui::text_selection::CCursorRange::two(
+                                                        egui::text::CCursor::new(0),
+                                                        egui::text::CCursor::new(stem),
+                                                    ),
+                                                ));
+                                                st.store(ui.ctx(), id);
+                                            } else if resp.lost_focus() {
+                                                rename_done = Some(!ui.input(|i| i.key_pressed(egui::Key::Escape)));
+                                            }
+                                        } else {
+                                            let label =
+                                                if e.is_symlink { format!("{} ↗", e.name) } else { e.name.clone() };
+                                            let g = elided(p, &label, 14.0, color, name_right - (item.left() + 40.0));
+                                            if g.elided && resp.hovered() {
+                                                resp.clone().on_hover_text(&e.name); // full name for truncated rows
+                                            }
+                                            p.galley(
+                                                pos2(item.left() + 40.0, item.center().y - g.size().y / 2.0),
+                                                g,
+                                                color,
+                                            );
+                                        }
+                                        if view == ViewMode::Details {
+                                            let cy = item.center().y;
+                                            if let Some((l, r)) = cols.ty {
+                                                let g = elided(p, &type_label(e), 13.0, dim_color, r - l);
+                                                p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
+                                            }
+                                            if let Some((l, _)) = cols.items {
+                                                let s = match e.is_dir.then(|| counts.get(&e.path)) {
+                                                    Some(Count::Items(n)) => short_count(n),
+                                                    Some(Count::Pending) => "…".into(),
+                                                    _ => "--".into(),
+                                                };
+                                                text(p, pos2(l, cy), Align2::LEFT_CENTER, s, 13.0, dim_color);
+                                            }
+                                            let size = if e.is_dir { "--".to_string() } else { human_size(e.size) };
+                                            text(p, pos2(cols.size.1, cy), Align2::RIGHT_CENTER, size, 13.0, dim_color);
+                                            if let Some((l, r)) = cols.modified {
+                                                let d =
+                                                    e.modified.map(|m| format_time(m, date_style)).unwrap_or_default();
+                                                let g = elided(p, &d, 13.0, dim_color, r - l);
+                                                p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
+                                            }
+                                        }
                                     }
-                                    let g = wrapped(p, &e.name, 13.0, color, item.width() - 8.0, 2);
-                                    let ty = thumb.bottom() + 6.0;
-                                    // Center-aligned galleys are laid out around x = 0.
-                                    p.galley(pos2(item.center().x, ty), g.clone(), color);
-                                    let meta = if e.is_dir { String::new() } else { human_size(e.size) };
-                                    text(
-                                        p,
-                                        pos2(item.center().x, ty + g.size().y + 2.0),
-                                        Align2::CENTER_TOP,
-                                        meta,
-                                        12.0,
-                                        pal.text_dim,
-                                    );
+                                    ViewMode::Grid => {
+                                        let thumb = Rect::from_min_size(
+                                            item.min + vec2(10.0, 8.0),
+                                            vec2(item.width() - 20.0, 78.0),
+                                        );
+                                        let mut drew = false;
+                                        if e.is_file && file_kind(e) == FileKind::Image && e.size < 25_000_000 {
+                                            let img = egui::Image::new(format!("file://{}", e.path.display()));
+                                            if let Ok(poll) = img.load_for_size(ui.ctx(), thumb.size())
+                                                && let Some(sz) = poll.size()
+                                            {
+                                                let scale = (thumb.width() / sz.x).min(thumb.height() / sz.y).min(1.0);
+                                                let fit = Rect::from_center_size(thumb.center(), sz * scale);
+                                                img.corner_radius(3).paint_at(ui, fit);
+                                                drew = true;
+                                            }
+                                        }
+                                        let p = ui.painter();
+                                        if !drew {
+                                            let icon = Rect::from_center_size(thumb.center(), vec2(64.0, 64.0));
+                                            if e.is_dir {
+                                                icons::folder(p, icon, pal);
+                                            } else {
+                                                icons::file(p, icon, file_kind(e), pal);
+                                            }
+                                        }
+                                        let g = wrapped(p, &e.name, 13.0, color, item.width() - 8.0, 2);
+                                        let ty = thumb.bottom() + 6.0;
+                                        // Center-aligned galleys are laid out around x = 0.
+                                        p.galley(pos2(item.center().x, ty), g.clone(), color);
+                                        let meta = if e.is_dir { String::new() } else { human_size(e.size) };
+                                        text(
+                                            p,
+                                            pos2(item.center().x, ty + g.size().y + 2.0),
+                                            Align2::CENTER_TOP,
+                                            meta,
+                                            12.0,
+                                            pal.text_dim,
+                                        );
+                                    }
+                                }
+
+                                // Interaction.
+                                let mods = ui.input(|i| i.modifiers);
+                                if resp.clicked() {
+                                    item_actions.push(ItemAction::Click(vi, mods));
+                                }
+                                if resp.secondary_clicked() {
+                                    let pos = resp.interact_pointer_pos().unwrap_or(item.center());
+                                    item_actions.push(ItemAction::Context(vi, pos));
+                                }
+                                if resp.double_clicked() {
+                                    item_actions.push(ItemAction::Open(vi));
+                                }
+                                if resp.middle_clicked() && e.is_dir {
+                                    item_actions.push(ItemAction::NewTab(e.path.clone()));
+                                }
+                                if resp.drag_started() {
+                                    let paths = if selected { tab.targets_selected() } else { vec![e.path.clone()] };
+                                    resp.dnd_set_drag_payload(DragPaths(paths));
+                                }
+                                if e.is_dir
+                                    && let Some(pl) = resp.dnd_release_payload::<DragPaths>()
+                                {
+                                    drops.push((pl.0.clone(), e.path.clone()));
                                 }
                             }
-
-                            // Interaction.
-                            let mods = ui.input(|i| i.modifiers);
-                            if resp.clicked() {
-                                item_actions.push(ItemAction::Click(vi, mods));
-                            }
-                            if resp.secondary_clicked() {
-                                let pos = resp.interact_pointer_pos().unwrap_or(item.center());
-                                item_actions.push(ItemAction::Context(vi, pos));
-                            }
-                            if resp.double_clicked() {
-                                item_actions.push(ItemAction::Open(vi));
-                            }
-                            if resp.middle_clicked() && e.is_dir {
-                                item_actions.push(ItemAction::NewTab(e.path.clone()));
-                            }
-                            if resp.drag_started() {
-                                let paths = if selected { tab.targets_selected() } else { vec![e.path.clone()] };
-                                resp.dnd_set_drag_payload(DragPaths(paths));
-                            }
-                            if e.is_dir
-                                && let Some(pl) = resp.dnd_release_payload::<DragPaths>()
-                            {
-                                drops.push((pl.0.clone(), e.path.clone()));
-                            }
                         }
-                    }
-                })
-            })
+                    })
+                },
+            )
             .inner;
         ctx.data_mut(|d| d.insert_temp(key, (out.state.offset.y, out.inner_rect.height())));
+        self.renaming = renaming;
+        if let Some(commit) = rename_done {
+            self.finish_rename(commit);
+        }
         let content_h = rows as f32 * pitch;
         let scroll_pct = if content_h <= out.inner_rect.height() {
             0.0
@@ -690,7 +830,9 @@ impl FileFlier {
     fn bottom_ui(&mut self, ui: &mut Ui, idx: usize, rect: Rect) {
         let pal = self.pal();
         let show_hidden = self.cfg.show_hidden;
-        ui.painter().rect_filled(rect, 0.0, pal.bg);
+        if !self.fx().glass {
+            ui.painter().rect_filled(rect, 0.0, pal.bg); // glass: the pane panel is already painted
+        }
         ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, pal.row_sep));
         let tab = self.panes[idx].tab_mut();
 

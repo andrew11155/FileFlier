@@ -214,6 +214,68 @@ impl FileFlier {
                     }
                 });
 
+                section(ui, pal, "Effects");
+
+                if row(ui, pal, "Animations", "Smooth transitions for lists, menus and previews", |ui| {
+                    toggle(ui, pal, Id::new("anim"), self.cfg.animations)
+                }) {
+                    self.cfg.animations = !self.cfg.animations;
+
+                    restyle = true;
+                }
+
+                if row(ui, pal, "Frosted glass", "Translucent, floating panels over a soft backdrop", |ui| {
+                    toggle(ui, pal, Id::new("glass"), self.cfg.glass)
+                }) {
+                    self.cfg.glass = !self.cfg.glass;
+
+                    restyle = true;
+                }
+
+                if self.cfg.glass {
+                    const LEVELS: [f32; 4] = [0.5, 0.62, 0.72, 0.85];
+
+                    let li = LEVELS
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| {
+                            (a.1 - self.cfg.glass_opacity).abs().total_cmp(&(b.1 - self.cfg.glass_opacity).abs())
+                        })
+                        .map_or(2, |(i, _)| i);
+
+                    if let Some(i) = row(ui, pal, "Glass strength", "", |ui| {
+                        segmented(ui, pal, Id::new("glass_lvl"), &["Airy", "Light", "Balanced", "Solid"], li)
+                    }) {
+                        self.cfg.glass_opacity = LEVELS[i];
+
+                        restyle = true;
+                    }
+
+                    let st = match self.cfg.glass_see_through {
+                        None => 0,
+
+                        Some(true) => 1,
+
+                        Some(false) => 2,
+                    };
+
+                    if let Some(i) = row(
+                        ui,
+                        pal,
+                        "Show desktop behind window",
+                        if self.cfg.see_through() && !self.window_transparent {
+                            "Restart File Flier to apply"
+                        } else {
+                            "Blurred on KDE Plasma and macOS · Auto turns it on only there"
+                        },
+                        |ui| segmented(ui, pal, Id::new("see_through"), &["Auto", "On", "Off"], st),
+                    ) {
+                        self.cfg.glass_see_through = [None, Some(true), Some(false)][i];
+
+                        restyle = true;
+                    }
+                }
+
                 section(ui, pal, "Layout");
                 let scale_idx = SCALES.iter().position(|s| (s - self.cfg.ui_scale).abs() < 0.01).unwrap_or(2);
                 let labels = ["80%", "90%", "100%", "110%", "125%", "150%"];
@@ -287,6 +349,10 @@ impl FileFlier {
                         self.cfg.accent = None;
                         self.cfg.ui_scale = 1.0;
                         self.cfg.density = Density::Comfortable;
+                        self.cfg.animations = true;
+                        self.cfg.glass = false;
+                        self.cfg.glass_opacity = 0.72;
+                        self.cfg.glass_see_through = None;
                         restyle = true;
                     }
                 });

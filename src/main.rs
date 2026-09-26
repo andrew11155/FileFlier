@@ -14,6 +14,7 @@ mod pane;
 mod search;
 mod theme;
 mod ui;
+mod undo;
 
 fn main() -> eframe::Result {
     if ops::in_flatpak() {
@@ -28,14 +29,22 @@ fn main() -> eframe::Result {
         }
     }
     let start = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    // Only ask for a transparent window when "see-through" glass is actually on:
+    // some drivers (e.g. certain NVIDIA/X11 setups) misbehave with transparent windows.
+    let transparent = config::Config::load().see_through();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("File Flier")
             .with_app_id("io.github.andrew11155.FileFlier")
             .with_decorations(false)
+            .with_transparent(transparent)
             .with_inner_size([1180.0, 740.0])
             .with_min_inner_size([560.0, 360.0]),
         ..Default::default()
     };
-    eframe::run_native("File Flier", options, Box::new(move |cc| Ok(Box::new(app::FileFlier::new(cc, start)))))
+    eframe::run_native(
+        "File Flier",
+        options,
+        Box::new(move |cc| Ok(Box::new(app::FileFlier::new(cc, start, transparent)))),
+    )
 }

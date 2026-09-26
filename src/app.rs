@@ -15,6 +15,7 @@ use crate::mounts::{self, Mount, MountWatcher};
 use crate::pane::{Pane, Tab};
 use crate::search::Search;
 use crate::theme;
+use crate::undo::{self, UndoOp};
 use crate::{fuzzy, ops};
 
 pub const TITLE_H: f32 = 40.0;
@@ -30,7 +31,18 @@ pub struct Clip {
 pub struct Job {
     pub label: String,
     pub progress: Arc<Mutex<String>>,
-    rx: Receiver<Result<String, String>>,
+    rx: Receiver<JobResult>,
+}
+
+/// A finished job: a message plus, when it can be reversed, how to undo it.
+type JobResult = Result<(String, Option<UndoOp>), String>;
+
+/// An in-progress inline rename (F2) in a list row.
+pub struct Renaming {
+    pub pane: usize,
+    pub path: PathBuf,
+    pub text: String,
+    pub init: bool,
 }
 
 pub enum Dialog {
@@ -113,10 +125,20 @@ pub struct FileFlier {
     pub sidebar_filter: String,
     /// Cached child counts for folders shown in the Items column.
     pub item_counts: ItemCounter,
+    /// Last see-through state sent to the window (blur is only toggled on change).
+    blur_applied: Option<bool>,
+    /// Whether the window was created with transparency (needed for see-through).
+    pub window_transparent: bool,
+    /// The last reversible operation (Ctrl+Z).
+    pub last_undo: Option<UndoOp>,
+    /// Whether the current toast offers an Undo button.
+    pub toast_undo: bool,
+    pub quicklook: bool,
+    pub renaming: Option<Renaming>,
 }
 
 impl FileFlier {
-    pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>, window_transparent: bool) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::load_system_font(&cc.egui_ctx);
         let cfg = Config::load();
@@ -145,7 +167,7 @@ impl FileFlier {
             }
             active = if cfg.split { cfg.session.active_pane.min(1) } else { 0 };
         }
-        theme::apply(&cc.egui_ctx, cfg.palette(), cfg.ui_scale);
+        theme::apply(&cc.egui_ctx, cfg.palette(), cfg.ui_scale, cfg.animations);
         Self {
             cfg,
             panes,
@@ -163,6 +185,12 @@ impl FileFlier {
             geom: [PaneGeom { cols: 1, page_rows: 15 }; 2],
             sidebar_filter: String::new(),
             item_counts: ItemCounter::start(cc.egui_ctx.clone()),
+            blur_applied: None,
+            window_transparent,
+            last_undo: None,
+            toast_undo: false,
+            quicklook: false,
+            renaming: None,
         }
     }
 
@@ -170,9 +198,19 @@ impl FileFlier {
         self.cfg.palette()
     }
 
+    pub fn fx(&self) -> crate::ui::Fx {
+        crate::ui::Fx {
+            glass: self.cfg.glass,
+            // See-through needs a transparent window, which is only created at startup.
+            see_through: self.cfg.see_through() && self.window_transparent,
+            opacity: self.cfg.glass_opacity.clamp(0.4, 0.97),
+            animations: self.cfg.animations,
+        }
+    }
+
     /// Re-applies colors and scale after a settings change, and saves.
     pub fn apply_settings(&mut self, ctx: &egui::Context) {
-        theme::apply(ctx, self.cfg.palette(), self.cfg.ui_scale);
+        theme::apply(ctx, self.cfg.palette(), self.cfg.ui_scale, self.cfg.animations);
         self.cfg.save();
     }
     pub fn tab(&self) -> &Tab {
@@ -187,8 +225,30 @@ impl FileFlier {
 
     pub fn info(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), Instant::now(), false));
+        self.toast_undo = false;
+    }
+
+    /// A toast with an Undo button for `op` (also available via Ctrl+Z).
+    pub fn info_undoable(&mut self, msg: impl Into<String>, op: UndoOp) {
+        self.info(msg);
+        self.last_undo = Some(op);
+        self.toast_undo = true;
+    }
+
+    pub fn undo_last(&mut self) {
+        let Some(op) = self.last_undo.take() else {
+            self.info("Nothing to undo");
+            return;
+        };
+        let what = op.describe();
+        match undo::undo(op) {
+            Ok(msg) => self.info(msg),
+            Err(e) => self.error(format!("Couldn't undo {what}: {e}")),
+        }
+        self.reload_all();
     }
     pub fn error(&mut self, msg: impl Into<String>) {
+        self.toast_undo = false;
         self.status = Some((msg.into(), Instant::now(), true));
     }
 
@@ -222,7 +282,7 @@ impl FileFlier {
         }
     }
 
-    fn open_entries(&mut self) {
+    pub fn open_entries(&mut self) {
         let targets = self.tab().targets();
         if let [single] = targets.as_slice()
             && single.is_dir()
@@ -244,7 +304,7 @@ impl FileFlier {
 
     fn start_job<F>(&mut self, label: String, work: F)
     where
-        F: FnOnce(&Mutex<String>) -> Result<String, String> + Send + 'static,
+        F: FnOnce(&Mutex<String>) -> JobResult + Send + 'static,
     {
         if self.job.is_some() {
             self.error("Another operation is still running");
@@ -269,6 +329,7 @@ impl FileFlier {
         self.start_job(label, move |progress| {
             let mut errors = Vec::new();
             let mut done = 0;
+            let mut pairs = Vec::new();
             for src in &paths {
                 let Some(name) = src.file_name() else { continue };
                 *progress.lock().unwrap() = name.to_string_lossy().into_owned();
@@ -278,12 +339,17 @@ impl FileFlier {
                 let target = ops::unique_dest(&dest, &name.to_string_lossy());
                 let res = if cut { ops::move_path(src, &target) } else { ops::copy_recursive(src, &target) };
                 match res {
-                    Ok(()) => done += 1,
+                    Ok(()) => {
+                        done += 1;
+                        pairs.push((src.clone(), target));
+                    }
                     Err(e) => errors.push(format!("{}: {e}", name.to_string_lossy())),
                 }
             }
             if errors.is_empty() {
-                Ok(format!("{} {done} item{}", if cut { "Moved" } else { "Copied" }, plural(done)))
+                let msg = format!("{} {done} item{}", if cut { "Moved" } else { "Copied" }, plural(done));
+                let op = (!pairs.is_empty()).then_some(UndoOp::Transfer { pairs, moved: cut });
+                Ok((msg, op))
             } else {
                 Err(errors.join("; "))
             }
@@ -318,7 +384,7 @@ impl FileFlier {
                 .output()
                 .map_err(|e| e.to_string())?;
             if out.status.success() {
-                Ok(format!("Connected to {target}"))
+                Ok((format!("Connected to {target}"), None))
             } else {
                 let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
                 Err(format!(
@@ -326,6 +392,44 @@ impl FileFlier {
                 ))
             }
         });
+    }
+
+    /// Ends an inline rename: applies it (undoable) or cancels. On error the field
+    /// stays open so the name can be fixed.
+    pub fn finish_rename(&mut self, commit: bool) {
+        let Some(mut rn) = self.renaming.take() else { return };
+        if !commit {
+            return;
+        }
+        let name = rn.text.trim().to_string();
+        let target = rn.path.with_file_name(&name);
+        if target == rn.path {
+            return;
+        }
+        let res = ops::validate_name(&name).and_then(|()| {
+            ops::rename_noreplace(&rn.path, &target).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    format!("“{name}” already exists")
+                } else {
+                    e.to_string()
+                }
+            })
+        });
+        match res {
+            Ok(()) => {
+                self.info_undoable(
+                    format!("Renamed to {name}"),
+                    UndoOp::Rename { from: rn.path.clone(), to: target.clone() },
+                );
+                self.reload_all();
+                self.panes[rn.pane].tab_mut().select_path(&target);
+            }
+            Err(e) => {
+                self.error(e);
+                rn.init = true; // refocus the field
+                self.renaming = Some(rn);
+            }
+        }
     }
 
     pub fn start_delete(&mut self, paths: Vec<PathBuf>) {
@@ -338,7 +442,11 @@ impl FileFlier {
                     errors.push(format!("{}: {e}", p.display()));
                 }
             }
-            if errors.is_empty() { Ok(format!("Deleted {n} item{}", plural(n))) } else { Err(errors.join("; ")) }
+            if errors.is_empty() {
+                Ok((format!("Deleted {n} item{}", plural(n)), None))
+            } else {
+                Err(errors.join("; "))
+            }
         });
     }
 
@@ -524,8 +632,16 @@ impl FileFlier {
                 if paths.is_empty() {
                     return;
                 }
+                let when = SystemTime::now();
                 match ops::trash(&paths) {
-                    Ok(()) => self.info(format!("Moved {} item{} to trash", paths.len(), plural(paths.len()))),
+                    Ok(()) => {
+                        let msg = format!("Moved {} item{} to trash", paths.len(), plural(paths.len()));
+                        if undo::CAN_RESTORE_TRASH {
+                            self.info_undoable(msg, UndoOp::Trash { originals: paths, when });
+                        } else {
+                            self.info(msg);
+                        }
+                    }
                     Err(e) => self.error(format!("Trash failed: {e}")),
                 }
                 self.reload_all();
@@ -539,9 +655,20 @@ impl FileFlier {
             Rename => {
                 if let Some(e) = self.tab().cursor_entry() {
                     let (path, name) = (e.path.clone(), e.name.clone());
-                    self.dialog = Some(Dialog::Rename { path, name, init: true, error: None });
+                    if self.tab().view == ViewMode::Grid {
+                        self.dialog = Some(Dialog::Rename { path, name, init: true, error: None });
+                    } else {
+                        // Rename in place, right in the row.
+                        self.quicklook = false;
+                        self.tab_mut().scroll_to_cursor = true;
+                        self.renaming = Some(Renaming { pane: self.active, path, text: name, init: true });
+                    }
                 }
             }
+            QuickLook => {
+                self.quicklook = !self.quicklook && self.tab().cursor_entry().is_some();
+            }
+            Undo => self.undo_last(),
             NewFolder | NewFile => {
                 let dir = self.tab().path.clone();
                 let folder = cmd == NewFolder;
@@ -637,6 +764,31 @@ impl FileFlier {
             ctx.memory_mut(|m| m.surrender_focus(id));
         }
 
+        // Quick Look: Space/Esc close, Enter opens, ←/→ step through items.
+        if self.quicklook {
+            if ctx.input_mut(|i| {
+                i.consume_key(Modifiers::NONE, Key::Escape) || i.consume_key(Modifiers::NONE, Key::Space)
+            }) {
+                self.quicklook = false;
+                return;
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+                self.quicklook = false;
+                self.open_entries();
+                return;
+            }
+            if self.geom[self.active].cols <= 1 {
+                let tab = self.tab_mut();
+                let (cur, last) = (tab.cursor, tab.visible.len().saturating_sub(1));
+                if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowRight)) {
+                    tab.move_cursor((cur + 1).min(last), false);
+                }
+                if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowLeft)) {
+                    tab.move_cursor(cur.saturating_sub(1), false);
+                }
+            }
+        }
+
         // egui turns Ctrl+C/X/V into clipboard events rather than key presses.
         let clip_events: Vec<egui::Event> = ctx.input(|i| {
             i.events
@@ -672,7 +824,12 @@ impl FileFlier {
             let m = s.modifiers;
             std::cmp::Reverse(m.shift as u8 + m.alt as u8 + (m.command || m.ctrl) as u8)
         });
+        let filtering = !self.tab().filter.is_empty();
         for (cmd, shortcut) in all {
+            // While typing a filter, Space is part of the filter, not Quick Look.
+            if cmd == Command::QuickLook && filtering {
+                continue;
+            }
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
                 self.run(cmd, ctx);
                 return;
@@ -792,7 +949,8 @@ impl FileFlier {
                     self.job = None;
                     let ok = res.is_ok();
                     match res {
-                        Ok(msg) => self.info(msg),
+                        Ok((msg, Some(op))) => self.info_undoable(msg, op),
+                        Ok((msg, None)) => self.info(msg),
                         Err(e) => self.error(e),
                     }
                     self.reload_all();
@@ -923,24 +1081,33 @@ pub enum PaletteItem {
 
 impl eframe::App for FileFlier {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        if self.fx().see_through {
+            return [0.0; 4]; // let the (compositor-blurred) desktop show through
+        }
         let c = self.pal().bg;
         [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, 1.0]
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let pal = self.pal();
         self.poll_background(&ctx);
         self.persist_ui_state(&ctx);
 
         // Text fields that own the keyboard while focused.
-        let text_ids = [Id::new(("filter", 0usize)), Id::new(("filter", 1usize)), Id::new("sidebar_filter")];
+        let text_ids = [
+            Id::new(("filter", 0usize)),
+            Id::new(("filter", 1usize)),
+            Id::new("sidebar_filter"),
+            Id::new("inline_rename"),
+        ];
         let focused = ctx.memory(|m| m.focused());
         let typing = focused.is_some_and(|f| text_ids.contains(&f));
         if self.dialog.is_none() && self.menu.is_none() {
             if typing {
+                let renaming = focused == Some(Id::new("inline_rename"));
                 let done = ctx.input(|i| i.key_pressed(Key::Escape) || i.key_pressed(Key::Enter))
-                    || ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
+                    || (!renaming && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown)));
                 if done {
                     ctx.memory_mut(|m| m.surrender_focus(focused.unwrap()));
                 }
@@ -955,7 +1122,26 @@ impl eframe::App for FileFlier {
 
         // ---- layout
         let full = ui.max_rect();
-        ui.painter().rect_filled(full, 0.0, pal.bg);
+        let fx = self.fx();
+        // Ask the compositor to blur what's behind the window (KDE Plasma, macOS;
+        // a no-op elsewhere). Only called when the setting changes.
+        if self.blur_applied != Some(fx.see_through) {
+            if let Some(w) = frame.winit_window() {
+                w.set_blur(fx.see_through);
+            }
+            self.blur_applied = Some(fx.see_through);
+        }
+        if fx.see_through {
+            // A light tint keeps text readable over the blurred desktop.
+            ui.painter().rect_filled(full, 0.0, crate::ui::glass::with_alpha(pal.bg, fx.opacity * 0.45));
+        } else if fx.glass {
+            crate::ui::glass::backdrop(ui.painter(), full, pal, ctx.input(|i| i.time), fx.animations);
+            if fx.animations {
+                ctx.request_repaint_after(Duration::from_millis(66));
+            }
+        } else {
+            ui.painter().rect_filled(full, 0.0, pal.bg);
+        }
         let body = Rect::from_min_max(pos2(full.left(), full.top() + TITLE_H), full.max);
         let sb_w = if self.cfg.show_sidebar { self.cfg.sidebar_width.clamp(160.0, 420.0) } else { 0.0 };
         let insp_w = if self.cfg.show_preview { INSPECTOR_W.min(full.width() * 0.4) } else { 0.0 };
@@ -972,14 +1158,35 @@ impl eframe::App for FileFlier {
             vec![panes_area]
         };
 
+        // Glass mode floats each area as a separate panel with small gaps.
+        let g = if fx.glass { 6.0 } else { 0.0 };
+        let inset = |r: Rect, l: f32, rt: f32| {
+            Rect::from_min_max(pos2(r.left() + l, r.top()), pos2(r.right() - rt, r.bottom() - g))
+        };
+        let sidebar = inset(sidebar, g, g / 2.0);
+        let inspector = inset(inspector, g / 2.0, g);
+        let n = pane_rects.len();
+        let pane_rects: Vec<Rect> = pane_rects
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let left = if i == 0 && sb_w == 0.0 { g } else { g / 2.0 };
+                let right = if i + 1 == n && insp_w == 0.0 { g } else { g / 2.0 };
+                inset(*r, left, right)
+            })
+            .collect();
+
         if self.cfg.show_sidebar {
             self.sidebar_ui(ui, sidebar);
         }
         for (i, r) in pane_rects.iter().enumerate() {
+            if fx.glass {
+                crate::ui::surface(ui.painter(), *r, pal.bg, &fx, pal);
+            }
             self.pane_ui(ui, i, *r);
         }
         if self.cfg.split {
-            self.split_divider(ui, panes_area, pane_rects[0].right());
+            self.split_divider(ui, panes_area, pane_rects[0].right() + g / 2.0, !fx.glass);
         }
         if self.cfg.show_preview {
             self.inspector_ui(ui, inspector);
@@ -990,6 +1197,7 @@ impl eframe::App for FileFlier {
         self.title_bar(ui, title_rect, sb_w, &strips);
         self.resize_edges(ui, full);
 
+        self.quicklook_ui(&ctx);
         self.menu_ui(&ctx);
         self.dialogs(&ctx);
         self.toasts(ui, full);
