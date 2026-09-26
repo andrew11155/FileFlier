@@ -56,10 +56,18 @@ pub enum SortKey {
     Kind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Sort {
     pub key: SortKey,
     pub descending: bool,
+    pub folders_first: bool,
+}
+
+impl Default for Sort {
+    fn default() -> Self {
+        Self { key: SortKey::Name, descending: false, folders_first: true }
+    }
 }
 
 pub fn read_dir(path: &Path) -> std::io::Result<Vec<Entry>> {
@@ -112,9 +120,9 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 
 pub fn sort_entries(entries: &mut [Entry], sort: Sort) {
     entries.sort_by(|a, b| {
-        // Folders always come first, regardless of direction.
+        // Folders come first (if enabled), regardless of direction.
         let dirs = b.is_dir.cmp(&a.is_dir);
-        if dirs != Ordering::Equal {
+        if sort.folders_first && dirs != Ordering::Equal {
             return dirs;
         }
         let ord = match sort.key {

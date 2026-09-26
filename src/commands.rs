@@ -48,6 +48,7 @@ pub enum Command {
     ViewGrid,
     ToggleSidebar,
     LockTab,
+    Settings,
 }
 
 use Command::*;
@@ -97,6 +98,7 @@ pub const ALL: &[Command] = &[
     ViewGrid,
     ToggleSidebar,
     LockTab,
+    Settings,
 ];
 
 const fn sc(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
@@ -155,6 +157,7 @@ impl Command {
             ViewGrid => "View: grid",
             ToggleSidebar => "Toggle sidebar",
             LockTab => "Lock / unlock tab",
+            Settings => "Settings",
         }
     }
 
@@ -205,6 +208,7 @@ impl Command {
             ViewGrid => vec![sc(CTRL_SHIFT, Key::G)],
             ToggleSidebar => vec![sc(CTRL, Key::B)],
             LockTab => vec![],
+            Settings => vec![sc(CTRL, Key::Comma)],
         }
     }
 
@@ -227,6 +231,6 @@ mod tests {
         let count = ALL.len();
         let unique: std::collections::HashSet<_> = ALL.iter().map(|c| format!("{c:?}")).collect();
         assert_eq!(unique.len(), count);
-        assert_eq!(count, LockTab as usize + 1);
+        assert_eq!(count, Settings as usize + 1);
     }
 }

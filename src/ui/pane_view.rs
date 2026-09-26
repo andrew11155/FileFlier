@@ -16,7 +16,6 @@ use crate::icons::{self, FileKind};
 const TOOLBAR_H: f32 = 42.0;
 const HEADER_H: f32 = 34.0;
 const BOTTOM_H: f32 = 40.0;
-const ROW_H: f32 = 32.0;
 const TILE_W: f32 = 132.0;
 const TILE_H: f32 = 136.0;
 const LIST_COL_W: f32 = 280.0;
@@ -40,7 +39,7 @@ struct Cols {
 }
 
 impl Cols {
-    fn new(r: Rect) -> Self {
+    fn new(r: Rect, show_items: bool) -> Self {
         let w = r.width();
         let mut right = r.right() - 12.0;
         let modified = (w > 700.0).then(|| {
@@ -51,7 +50,7 @@ impl Cols {
             right -= 110.0;
             (right, right + 86.0)
         };
-        let items = (w > 560.0).then(|| {
+        let items = (show_items && w > 560.0).then(|| {
             right -= 70.0;
             (right, right + 60.0)
         });
@@ -177,6 +176,7 @@ impl FileFlier {
         if more_resp.clicked() {
             self.actions.push(Action::Activate(idx));
             let items = [
+                Command::Settings,
                 Command::ViewDetails,
                 Command::ViewList,
                 Command::ViewGrid,
@@ -193,7 +193,7 @@ impl FileFlier {
             ];
             let mut v = Vec::new();
             for (i, c) in items.into_iter().enumerate() {
-                if [3, 7, 10].contains(&i) {
+                if [1, 4, 8, 11].contains(&i) {
                     v.push(MenuItem::Sep);
                 }
                 v.push(MenuItem::Cmd(c));
@@ -307,6 +307,8 @@ impl FileFlier {
         let pal = self.pal();
         let is_active = idx == self.active;
         let sort = self.cfg.sort;
+        let row_h = self.cfg.density.row_height();
+        let date_style = self.cfg.date_style;
         let ctx = ui.ctx().clone();
         let cut_paths: Vec<PathBuf> =
             self.clipboard.as_ref().filter(|c| c.cut).map(|c| c.paths.clone()).unwrap_or_default();
@@ -318,7 +320,7 @@ impl FileFlier {
 
         // ---- column header (details only)
         let mut list_rect = rect;
-        let cols = Cols::new(rect);
+        let cols = Cols::new(rect, self.cfg.show_item_counts);
         let mut header_actions: Vec<Action> = Vec::new();
         if view == ViewMode::Details {
             let h = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER_H));
@@ -395,8 +397,8 @@ impl FileFlier {
         // ---- geometry
         let inner_w = list_rect.width() - 16.0;
         let (ncols, pitch) = match view {
-            ViewMode::Details => (1, ROW_H),
-            ViewMode::List => (((inner_w / LIST_COL_W).floor() as usize).max(1), ROW_H),
+            ViewMode::Details => (1, row_h),
+            ViewMode::List => (((inner_w / LIST_COL_W).floor() as usize).max(1), row_h),
             ViewMode::Grid => (((inner_w / TILE_W).floor() as usize).max(1), TILE_H),
         };
         let rows = n.div_ceil(ncols);
@@ -489,8 +491,9 @@ impl FileFlier {
                             }
 
                             let on_accent = selected && view != ViewMode::Grid && is_active;
-                            let mut color = if on_accent { Color32::WHITE } else { pal.text };
-                            let mut dim_color = if on_accent { Color32::from_white_alpha(200) } else { pal.text_dim };
+                            let mut color = if on_accent { pal.on_accent } else { pal.text };
+                            let mut dim_color =
+                                if on_accent { pal.on_accent.gamma_multiply(0.8) } else { pal.text_dim };
                             if dim {
                                 color = color.gamma_multiply(0.55);
                                 dim_color = dim_color.gamma_multiply(0.6);
@@ -531,7 +534,7 @@ impl FileFlier {
                                         let size = if e.is_dir { "--".to_string() } else { human_size(e.size) };
                                         text(p, pos2(cols.size.1, cy), Align2::RIGHT_CENTER, size, 13.0, dim_color);
                                         if let Some((l, r)) = cols.modified {
-                                            let d = e.modified.map(format_time).unwrap_or_default();
+                                            let d = e.modified.map(|m| format_time(m, date_style)).unwrap_or_default();
                                             let g = elided(p, &d, 13.0, dim_color, r - l);
                                             p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
                                         }
