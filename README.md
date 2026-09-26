@@ -5,7 +5,7 @@ A fast, keyboard-driven file manager for Linux, modeled closely on
 [egui](https://github.com/emilk/egui) and draws all of its own UI, so it looks
 the same on every desktop environment.
 
-![File Flier in split view with the inspector open](docs/screenshot.png)
+![File Flier in split view with the inspector open](docs/screenshots/main.png)
 
 > This is a fan-made side project and has no connection to File Pilot or its
 > author. The UI copies File Pilot's look, but the logo, name and code are
@@ -78,7 +78,7 @@ On these systems the OS is read-only, so File Flier installs as a **Flatpak**.
 Nothing is layered onto the system and nothing needs root.
 
 **From a release:** download `file-flier.flatpak` from the
-[Releases](https://github.com/andrew11155/File-Flier/releases) page, or from the
+[Releases](https://github.com/andrew11155/FileFlier/releases) page, or from the
 latest *Release* workflow run under Actions, then run:
 
 ```sh
@@ -88,8 +88,8 @@ flatpak install --user file-flier.flatpak
 **From source:**
 
 ```sh
-git clone https://github.com/andrew11155/File-Flier.git
-cd File-Flier
+git clone https://github.com/andrew11155/FileFlier.git
+cd FileFlier
 ./install.sh
 ```
 
@@ -103,14 +103,21 @@ Afterwards, launch **File Flier** from your app menu, or run
 `./install.sh --uninstall` or `flatpak uninstall io.github.andrew11155.FileFlier`.
 
 The Flatpak has these sandbox permissions:
-- **Your files** (`--filesystem=host`): your home folder, `/run/media`, `/mnt`,
-  and the real trash in `~/.local/share/Trash`, so deleted files show up in
-  your desktop's trash.
-- **Host OS files, read-only** (`host-os:ro`, `host-etc:ro`): for browsing
-  `/usr` and `/etc`.
-- **Host terminal** (`org.freedesktop.Flatpak`): lets *Open terminal here*
-  start your terminal outside the sandbox. It tries Ptyxis, Konsole and other
-  common terminals, and respects `$TERMINAL`.
+- **Your files** (`--filesystem=host`): your home folder, drives under
+  `/run/media` and `/mnt`, and the real trash in `~/.local/share/Trash`, so
+  deleted files show up in your desktop's trash.
+- **Network shares mounted by GNOME** (`xdg-run/gvfs`): see
+  [Network shares and cloud storage](#network-shares-and-cloud-storage).
+
+*Open terminal here* needs one more permission, which lets the app start your
+terminal outside the sandbox. It's off by default because it effectively
+bypasses the sandbox. `install.sh` turns it on for you. If you installed the
+Flatpak another way, the app copies the command to enable it when you first use
+the feature:
+
+```sh
+flatpak override --user --talk-name=org.freedesktop.Flatpak io.github.andrew11155.FileFlier
+```
 
 ### Without Flatpak (binary in `~/.local`)
 
@@ -156,9 +163,55 @@ terminal emulators in turn.
   curl -O https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
   python3 flatpak-cargo-generator.py Cargo.lock -o flatpak/cargo-sources.json
   ```
+- Publishing on Flathub is described step by step in
+  [docs/FLATHUB.md](docs/FLATHUB.md).
 - Pushing a tag such as `v0.1.0` runs the *Release* workflow. It attaches
   `file-flier.flatpak` and `file-flier-x86_64-linux.tar.gz` to a GitHub release.
   You can also run the workflow by hand from the Actions tab.
+
+## Network shares and cloud storage
+
+File Flier works with anything that is mounted as a folder. Drives, network
+shares and cloud mounts appear under **Storage** in the sidebar.
+
+| What | How to connect it | Works in File Flier |
+| --- | --- | --- |
+| NAS or server (SMB/Samba, NFS) | Mount it with `/etc/fstab` or a systemd mount, e.g. under `/mnt/nas` | ✅ Listed under Storage |
+| Shares opened in GNOME Files (`smb://`, `sftp://`) | GNOME mounts them under `/run/user/<id>/gvfs` | ✅ Listed with a friendly name, e.g. "media on nas". You can also type `smb://nas/media` into Go To (`Ctrl+L`). |
+| Google Drive via GNOME Online Accounts | GNOME mounts it the same way | ✅ Listed as "Google Drive (you)" |
+| OneDrive, Google Drive, Dropbox and more | [`rclone mount`](https://rclone.org/commands/rclone_mount/), or the [`onedrive`](https://github.com/abraunegg/onedrive) sync client | ✅ rclone mounts appear under Storage; synced folders are normal folders |
+| Shares opened in KDE Dolphin (`smb://` in KIO) | KIO doesn't expose shares as real folders | ❌ Mount the share with fstab or rclone instead |
+
+When you type an `smb://` address that isn't mounted yet, the native build asks
+GNOME to mount it (`gio mount`). This works for guest shares and for shares
+whose password your desktop keyring already has. Password-protected shares
+need to be opened once in your desktop's file manager first. File Flier doesn't
+store passwords.
+
+Folders on network and cloud mounts don't auto-refresh (press `Ctrl+R`), and
+their item counts load in the background. A slow or disconnected server can't
+freeze the window.
+
+## Security
+
+- **No network access.** File Flier sends nothing anywhere: no telemetry, no
+  update checks, no accounts.
+- **It never runs code from your files.** Opening a file hands it to your
+  default application, like any file manager.
+- **File operations never overwrite by accident.** Copy, move and rename use the
+  kernel's atomic no-replace operations. Symlinks are copied as links, never
+  followed. Copying a folder into itself is refused, even through a symlink.
+  Special files (pipes, sockets, devices) are never read, because reading them
+  can block forever.
+- **Deleting is recoverable by default.** `Delete` moves items to the trash.
+  Permanent delete (`Shift+Delete`) asks first.
+- **The Flatpak sandbox is broad by necessity.** A file manager needs access to
+  your files, so the sandbox doesn't isolate File Flier from your data. The one
+  permission that would let it run commands outside the sandbox is opt-in.
+
+This is young software and hasn't been independently audited. Keep backups, as
+you would with any new tool that moves files around. Please report security
+issues privately; see [SECURITY.md](SECURITY.md).
 
 ## Configuration
 
@@ -185,4 +238,12 @@ Source layout:
 | `src/pane.rs` | Tabs, navigation history, selection and filtering |
 | `src/fs_model.rs`, `src/ops.rs` | Directory listing and sorting; copy, move, trash and rename |
 | `src/search.rs`, `src/fuzzy.rs` | Background recursive search and the fuzzy matcher |
+| `src/mounts.rs`, `src/counts.rs` | Drive, network share and cloud mount discovery; background folder item counts |
 | `src/commands.rs` | Every action and its shortcuts |
+
+## License
+
+File Flier is free software, licensed under the
+[GNU General Public License v3.0 or later](LICENSE). You may use, study, share
+and modify it. If you distribute a modified version, you must also make its
+source available under the same license.

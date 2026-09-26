@@ -3,7 +3,7 @@
 #       build-dir flatpak/io.github.andrew11155.FileFlier.yml
 id: io.github.andrew11155.FileFlier
 runtime: org.freedesktop.Platform
-runtime-version: '25.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -17,11 +17,13 @@ finish-args:
   # A file manager needs to see your files, removable drives (/run/media, /media, /mnt)
   # and the real trash in ~/.local/share/Trash.
   - --filesystem=host
-  # Read-only view of the host OS (/usr, /etc) when browsing outside your home.
-  - --filesystem=host-os:ro
-  - --filesystem=host-etc:ro
-  # Lets "Open terminal here" launch the host's terminal via flatpak-spawn --host.
-  - --talk-name=org.freedesktop.Flatpak
+  # Network shares and cloud accounts mounted by GNOME (smb://, sftp://, Google Drive).
+  - --filesystem=xdg-run/gvfs
+  - --filesystem=xdg-run/gvfsd
+  # "Open terminal here" needs to start the host's terminal, which requires
+  # --talk-name=org.freedesktop.Flatpak. That lets an app run commands outside its
+  # sandbox, so it's opt-in rather than granted here; the app explains how to enable it:
+  #   flatpak override --user --talk-name=org.freedesktop.Flatpak io.github.andrew11155.FileFlier
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin

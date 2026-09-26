@@ -366,6 +366,8 @@ pub enum Place {
     Bookmark,
     Recent,
     Drive,
+    Network,
+    Cloud,
 }
 
 pub fn place(p: &Painter, r: Rect, kind: Place, pal: &Palette) {
@@ -420,6 +422,23 @@ pub fn place(p: &Painter, r: Rect, kind: Place, pal: &Palette) {
             line(p, &[at(r, 0.24, 0.3), at(r, 0.3, 0.88), at(r, 0.7, 0.88), at(r, 0.76, 0.3)], c, 1.5);
         }
         Place::Drive => drive(p, r, pal.text_dim),
+        Place::Network => {
+            // Drive with a network "stem".
+            let c = pal.text_dim;
+            let body = Rect::from_min_max(at(r, 0.12, 0.12), at(r, 0.88, 0.5));
+            p.rect_stroke(body, 2.0, Stroke::new(1.4, c), StrokeKind::Middle);
+            p.circle_filled(at(r, 0.74, 0.31), 1.3, c);
+            line(p, &[at(r, 0.5, 0.5), at(r, 0.5, 0.78)], c, 1.4);
+            line(p, &[at(r, 0.16, 0.84), at(r, 0.84, 0.84)], c, 1.4);
+            p.circle_filled(at(r, 0.5, 0.84), 2.2, c);
+        }
+        Place::Cloud => {
+            let c = Color32::from_rgb(88, 170, 230);
+            p.circle_filled(at(r, 0.36, 0.58), r.width() * 0.2, c);
+            p.circle_filled(at(r, 0.58, 0.46), r.width() * 0.26, c);
+            p.circle_filled(at(r, 0.76, 0.62), r.width() * 0.16, c);
+            p.rect_filled(Rect::from_min_max(at(r, 0.2, 0.6), at(r, 0.86, 0.78)), 3.0, c);
+        }
         Place::Folder => folder(p, r, pal),
         Place::Bookmark => bookmark(p, r, pal.text_dim, false),
         Place::Recent => clock(p, r, pal.text_dim),

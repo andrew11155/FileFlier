@@ -9,7 +9,9 @@ use egui::{Id, Key, Modifiers, Pos2, Rect, Ui, pos2};
 
 use crate::commands::{self, Command};
 use crate::config::{Config, ViewMode};
+use crate::counts::ItemCounter;
 use crate::fs_model::{Entry, SortKey};
+use crate::mounts::{self, Mount, MountWatcher};
 use crate::pane::{Pane, Tab};
 use crate::search::Search;
 use crate::theme;
@@ -70,13 +72,6 @@ pub enum MenuItem {
 /// Payload for dragging files around inside the app.
 pub struct DragPaths(pub Vec<PathBuf>);
 
-pub struct Mount {
-    pub path: PathBuf,
-    pub name: String,
-    /// Fraction of the filesystem in use.
-    pub used: Option<f32>,
-}
-
 /// Things the UI asks the app to do after drawing (avoids borrow conflicts).
 pub enum Action {
     Activate(usize),
@@ -108,12 +103,15 @@ pub struct FileFlier {
     pub status: Option<(String, Instant, bool)>,
     pub job: Option<Job>,
     pub preview: Option<(PathBuf, Option<SystemTime>, Preview)>,
-    pub mounts: (Instant, Vec<Mount>),
+    pub mounts: Vec<Mount>,
+    mount_watcher: MountWatcher,
+    /// A remote address (smb://…) to open once the background `gio mount` finishes.
+    pending_uri: Option<String>,
     pub actions: Vec<Action>,
     pub geom: [PaneGeom; 2],
     pub sidebar_filter: String,
     /// Cached child counts for folders shown in the Items column.
-    pub item_counts: std::collections::HashMap<PathBuf, Option<usize>>,
+    pub item_counts: ItemCounter,
 }
 
 impl FileFlier {
@@ -139,11 +137,13 @@ impl FileFlier {
             status: None,
             job: None,
             preview: None,
-            mounts: (Instant::now() - Duration::from_secs(60), Vec::new()),
+            mounts: Vec::new(),
+            mount_watcher: MountWatcher::start(cc.egui_ctx.clone()),
+            pending_uri: None,
             actions: Vec::new(),
             geom: [PaneGeom { cols: 1, page_rows: 15 }; 2],
             sidebar_filter: String::new(),
-            item_counts: Default::default(),
+            item_counts: ItemCounter::start(cc.egui_ctx.clone()),
         }
     }
 
@@ -205,7 +205,12 @@ impl FileFlier {
             self.navigate(single.clone());
             return;
         }
-        for p in targets.into_iter().filter(|p| !p.is_dir()) {
+        let files: Vec<PathBuf> = targets.into_iter().filter(|p| !p.is_dir()).collect();
+        if files.len() > 25 {
+            self.error(format!("Not opening {} files at once; select 25 or fewer", files.len()));
+            return;
+        }
+        for p in files {
             if let Err(e) = open::that_detached(&p) {
                 self.error(format!("Could not open {}: {e}", p.display()));
             }
@@ -256,6 +261,44 @@ impl FileFlier {
                 Ok(format!("{} {done} item{}", if cut { "Moved" } else { "Copied" }, plural(done)))
             } else {
                 Err(errors.join("; "))
+            }
+        });
+    }
+
+    /// Opens a network address such as `smb://nas/share` through GNOME's GVFS mounts.
+    pub fn open_uri(&mut self, uri: &str) {
+        let uri = uri.trim().trim_end_matches('/').to_string();
+        if let Some(path) = mounts::resolve_uri(&uri, &mounts::gvfs_root()) {
+            self.navigate(path);
+            return;
+        }
+        if self.pending_uri.is_some() {
+            return; // already tried mounting; don't loop
+        }
+        // Not mounted yet: ask GVFS to mount it (uses saved passwords / guest access).
+        let has_gio = !ops::in_flatpak()
+            && std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("gio").is_file()));
+        if !has_gio {
+            self.error(format!(
+                "{uri} isn't mounted. Open it once in your desktop's file manager (or mount it via /etc/fstab), then try again."
+            ));
+            return;
+        }
+        self.pending_uri = Some(uri.clone());
+        let target = uri.clone();
+        self.start_job(format!("Connecting to {uri}"), move |_| {
+            let out = std::process::Command::new("gio")
+                .args(["mount", &target])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|e| e.to_string())?;
+            if out.status.success() {
+                Ok(format!("Connected to {target}"))
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                Err(format!(
+                    "Couldn't connect to {target}: {err}. Shares that need a password must be opened once in your desktop's file manager first."
+                ))
             }
         });
     }
@@ -364,8 +407,15 @@ impl FileFlier {
             Open => self.open_entries(),
             OpenTerminal => {
                 let dir = self.tab().path.clone();
-                if let Err(e) = ops::open_terminal(&dir) {
-                    self.error(e);
+                match ops::open_terminal(&dir) {
+                    Ok(()) => {}
+                    Err(ops::TerminalError::Failed(e)) => self.error(e),
+                    Err(ops::TerminalError::NeedsPermission(cmd)) => {
+                        ctx.copy_text(cmd);
+                        self.error(
+                            "Terminal access is off. A command to enable it was copied: paste it into a terminal.",
+                        );
+                    }
                 }
             }
             ToggleHidden => {
@@ -691,23 +741,31 @@ impl FileFlier {
             match job.rx.try_recv() {
                 Ok(res) => {
                     self.job = None;
+                    let ok = res.is_ok();
                     match res {
                         Ok(msg) => self.info(msg),
                         Err(e) => self.error(e),
                     }
                     self.reload_all();
+                    if let Some(uri) = self.pending_uri.take()
+                        && ok
+                    {
+                        self.open_uri(&uri);
+                    }
                 }
                 Err(_) => ctx.request_repaint_after(Duration::from_millis(100)),
             }
         }
+        self.item_counts.poll();
+        self.mounts = self.mount_watcher.get();
         let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
         for pane in &mut self.panes {
-            if pane.tab_mut().check_changed(h, s) {
+            let tab = pane.tab_mut();
+            // Don't poll folders on network/cloud mounts every second: a stalled server
+            // would block the UI. Refresh those with Ctrl+R.
+            if !mounts::is_remote_path(&tab.path, &self.mounts) && tab.check_changed(h, s) {
                 self.item_counts.clear();
             }
-        }
-        if self.mounts.0.elapsed().as_secs() >= 5 {
-            self.mounts = (Instant::now(), read_mounts());
         }
         ctx.request_repaint_after(Duration::from_millis(1000));
     }
@@ -916,7 +974,7 @@ fn paths_text(paths: &[PathBuf]) -> String {
 }
 
 /// Decodes %XX escapes in file:// URIs.
-fn percent_decode(s: &str) -> String {
+pub fn percent_decode(s: &str) -> std::ffi::OsString {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -932,7 +990,8 @@ fn percent_decode(s: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    // Raw bytes: Linux file names needn't be valid UTF-8.
+    std::os::unix::ffi::OsStringExt::from_vec(out)
 }
 
 pub fn expand_tilde(s: &str) -> PathBuf {
@@ -976,30 +1035,6 @@ pub fn disk_usage(path: &Path) -> Option<f32> {
     Some(1.0 - st.f_bavail as f32 / st.f_blocks as f32)
 }
 
-/// Root plus removable / user mounts, for the sidebar's Storage section.
-fn read_mounts() -> Vec<Mount> {
-    let mut paths = vec![PathBuf::from("/")];
-    if let Ok(text) = std::fs::read_to_string("/proc/mounts") {
-        let mut extra: Vec<PathBuf> = text
-            .lines()
-            .filter_map(|l| l.split_whitespace().nth(1))
-            .map(|m| m.replace("\\040", " "))
-            .filter(|m| m.starts_with("/media/") || m.starts_with("/run/media/") || m.starts_with("/mnt/"))
-            .map(PathBuf::from)
-            .collect();
-        extra.sort();
-        extra.dedup();
-        paths.extend(extra);
-    }
-    paths
-        .into_iter()
-        .map(|p| {
-            let name = if p == Path::new("/") { "File System".to_string() } else { display_name(&p) };
-            Mount { used: disk_usage(&p), name, path: p }
-        })
-        .collect()
-}
-
 pub fn load_preview(e: &Entry) -> Preview {
     if e.is_dir {
         return match crate::fs_model::read_dir(&e.path) {
@@ -1011,6 +1046,10 @@ pub fn load_preview(e: &Entry) -> Preview {
             }
             Err(err) => Preview::Error(err.to_string()),
         };
+    }
+    // Never open pipes, sockets or devices: reading a FIFO blocks forever.
+    if !e.is_file {
+        return Preview::Binary;
     }
     if matches!(e.extension().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp") {
         return Preview::Image;
@@ -1043,6 +1082,9 @@ mod tests {
         assert_eq!(percent_decode("/home/me/My%20File.txt"), "/home/me/My File.txt");
         assert_eq!(percent_decode("/a%2"), "/a%2");
         assert_eq!(percent_decode("/a%é"), "/a%é");
+        // Non-UTF-8 bytes survive exactly.
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(percent_decode("/x%FF").as_bytes(), b"/x\xff");
     }
 
     #[test]

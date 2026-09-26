@@ -30,6 +30,9 @@ install_flatpak() {
         set -- flatpak run org.flatpak.Builder
     fi
     "$@" --user --install --force-clean --disable-rofiles-fuse --install-deps-from=flathub build-dir "flatpak/$APP_ID.yml"
+    # Self-installs opt in to "Open terminal here", which runs your terminal outside the
+    # sandbox. Undo with: flatpak override --user --reset $APP_ID
+    flatpak override --user --talk-name=org.freedesktop.Flatpak "$APP_ID"
     echo
     echo "Installed. Launch \"File Flier\" from your app menu, or run: flatpak run $APP_ID"
 }
@@ -61,6 +64,7 @@ uninstall() {
     app_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
     if command -v flatpak >/dev/null 2>&1 && flatpak info --user "$APP_ID" >/dev/null 2>&1; then
         flatpak uninstall --user -y "$APP_ID"
+        flatpak override --user --reset "$APP_ID" 2>/dev/null || true
     fi
     rm -f "$HOME/.local/bin/file-flier" \
         "$app_dir/applications/$APP_ID.desktop" \

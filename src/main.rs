@@ -4,9 +4,11 @@
 mod app;
 mod commands;
 mod config;
+mod counts;
 mod fs_model;
 mod fuzzy;
 mod icons;
+mod mounts;
 mod ops;
 mod pane;
 mod search;

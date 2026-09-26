@@ -65,8 +65,12 @@ impl Config {
         if let Some(parent) = p.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+        // Write-then-rename so a crash mid-save can't leave a corrupt config.
         if let Ok(s) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(p, s);
+            let tmp = p.with_extension("json.tmp");
+            if std::fs::write(&tmp, s).is_ok() {
+                let _ = std::fs::rename(&tmp, &p);
+            }
         }
     }
 
