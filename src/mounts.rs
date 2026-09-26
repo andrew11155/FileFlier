@@ -44,6 +44,14 @@ fn unescape(s: &str) -> String {
     s.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\")
 }
 
+/// Mounts that are an app's internals rather than user storage: running AppImages
+/// (which mount themselves at /tmp/.mount_*) and anything mounted on a hidden folder.
+fn is_internal(device: &str, mountpoint: &str, fstype: &str) -> bool {
+    let appimage = |s: &str| s.to_ascii_lowercase().ends_with(".appimage");
+    let hidden = Path::new(mountpoint).components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+    appimage(device) || appimage(fstype) || hidden
+}
+
 fn classify(mountpoint: &str, fstype: &str) -> Option<MountKind> {
     if NETWORK_FS.contains(&fstype) {
         return Some(MountKind::Network);
@@ -62,8 +70,11 @@ pub fn parse_proc_mounts(text: &str) -> Vec<(PathBuf, MountKind)> {
     let mut out: Vec<(PathBuf, MountKind)> = Vec::new();
     for line in text.lines() {
         let mut f = line.split_whitespace();
-        let (Some(_dev), Some(mp), Some(fstype)) = (f.next(), f.next(), f.next()) else { continue };
+        let (Some(dev), Some(mp), Some(fstype)) = (f.next(), f.next(), f.next()) else { continue };
         let mp = unescape(mp);
+        if is_internal(&unescape(dev), &mp, fstype) {
+            continue;
+        }
         if let Some(kind) = classify(&mp, fstype)
             && !out.iter().any(|(p, _)| p.as_os_str() == mp.as_str())
         {
@@ -251,6 +262,20 @@ portal /run/user/1000/doc fuse.portal rw 0 0
         assert_eq!(find("/run/user/1000/gvfs"), None);
         assert_eq!(find("/run/user/1000/doc"), None);
         assert_eq!(find("/"), None);
+    }
+
+    #[test]
+    fn hides_appimage_and_hidden_mounts() {
+        // Running AppImages mount themselves under /tmp/.mount_*; these aren't drives.
+        let text = "\
+Claude.AppImage /tmp/.mount_ClaudeXq1QkS fuse.Claude.AppImage ro,nosuid,nodev 0 0
+/home/me/Apps/Obsidian-1.6.AppImage /tmp/.mount_ObsidiAbc123 fuse.Obsidian-1.6.AppImage ro 0 0
+appimagekit /tmp/.mount_Old fuse.appimagekit ro 0 0
+some-tool /home/me/.cache/tool-mount fuse.sometool rw 0 0
+gdrive: /home/me/GoogleDrive fuse.rclone rw 0 0
+";
+        let got = parse_proc_mounts(text);
+        assert_eq!(got, vec![(PathBuf::from("/home/me/GoogleDrive"), MountKind::Cloud)]);
     }
 
     #[test]
