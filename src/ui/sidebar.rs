@@ -16,7 +16,7 @@ struct Item {
     icon: Place,
     label: String,
     path: PathBuf,
-    usage: Option<f32>,
+    space: Option<crate::app::DiskSpace>,
 }
 
 impl FileFlier {
@@ -62,14 +62,14 @@ impl FileFlier {
         ]
         .into_iter()
         .filter_map(|(icon, label, path)| {
-            path.filter(|p| p.is_dir()).map(|path| Item { icon, label, path, usage: None })
+            path.filter(|p| p.is_dir()).map(|path| Item { icon, label, path, space: None })
         })
         .collect();
         let bookmarks: Vec<Item> = self
             .cfg
             .bookmarks
             .iter()
-            .map(|b| Item { icon: Place::Folder, label: display_name(b), path: b.clone(), usage: None })
+            .map(|b| Item { icon: Place::Folder, label: display_name(b), path: b.clone(), space: None })
             .collect();
         let recents: Vec<Item> = self
             .cfg
@@ -77,7 +77,7 @@ impl FileFlier {
             .iter()
             .filter(|p| p.is_dir())
             .take(10)
-            .map(|p| Item { icon: Place::Folder, label: display_name(p), path: p.clone(), usage: None })
+            .map(|p| Item { icon: Place::Folder, label: display_name(p), path: p.clone(), space: None })
             .collect();
         let storage: Vec<Item> = self
             .mounts
@@ -88,7 +88,7 @@ impl FileFlier {
                     MountKind::Cloud => Place::Cloud,
                     MountKind::Root | MountKind::Removable => Place::Drive,
                 };
-                Item { icon, label: m.name.clone(), path: m.path.clone(), usage: m.used }
+                Item { icon, label: m.name.clone(), path: m.path.clone(), space: m.space }
             })
             .collect();
 
@@ -156,7 +156,7 @@ impl FileFlier {
                         );
                     }
                     for item in &items {
-                        let h = if item.usage.is_some() { ITEM_H + 6.0 } else { ITEM_H };
+                        let h = if item.space.is_some() { ITEM_H + 6.0 } else { ITEM_H };
                         let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
                         let r = r.shrink2(vec2(6.0, 1.0));
                         let is_current = item.path == current;
@@ -170,13 +170,13 @@ impl FileFlier {
                         if drop_hover {
                             p.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
                         }
-                        let text_y = if item.usage.is_some() { r.top() + 13.0 } else { r.center().y };
+                        let text_y = if item.space.is_some() { r.top() + 13.0 } else { r.center().y };
                         let ir = Rect::from_center_size(pos2(r.left() + 40.0, text_y), vec2(18.0, 18.0));
                         icons::place(p, ir, item.icon, pal);
                         let color = if is_current { pal.text_strong } else { pal.text };
                         let g = elided(p, &item.label, 14.0, color, r.right() - (r.left() + 58.0) - 6.0);
                         p.galley(pos2(r.left() + 58.0, text_y - g.size().y / 2.0), g, color);
-                        if let Some(u) = item.usage {
+                        if let Some(u) = item.space.map(|s| s.used()) {
                             let bar = Rect::from_min_size(
                                 pos2(r.left() + 58.0, text_y + 11.0),
                                 vec2((r.width() - 74.0).max(20.0), 3.0),
@@ -190,7 +190,16 @@ impl FileFlier {
                                 fill,
                             );
                         }
-                        let resp = resp.on_hover_text(item.path.to_string_lossy());
+                        let tip = match item.space {
+                            Some(s) => format!(
+                                "{}\n{} free of {}",
+                                item.path.display(),
+                                crate::app::human_size(s.free),
+                                crate::app::human_size(s.total)
+                            ),
+                            None => item.path.display().to_string(),
+                        };
+                        let resp = resp.on_hover_text(tip);
                         if resp.clicked() {
                             actions.push(Action::Navigate(item.path.clone()));
                         }

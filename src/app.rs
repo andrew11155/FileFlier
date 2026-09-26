@@ -125,6 +125,8 @@ pub struct FileFlier {
     pub sidebar_filter: String,
     /// Cached child counts for folders shown in the Items column.
     pub item_counts: ItemCounter,
+    /// A terminal just launched through `flatpak-spawn`, watched briefly for failure.
+    terminal_launch: Option<(std::process::Child, Instant)>,
     /// Last see-through state sent to the window (blur is only toggled on change).
     blur_applied: Option<bool>,
     /// Whether the window was created with transparency (needed for see-through).
@@ -185,6 +187,7 @@ impl FileFlier {
             geom: [PaneGeom { cols: 1, page_rows: 15 }; 2],
             sidebar_filter: String::new(),
             item_counts: ItemCounter::start(cc.egui_ctx.clone()),
+            terminal_launch: None,
             blur_applied: None,
             window_transparent,
             last_undo: None,
@@ -541,12 +544,12 @@ impl FileFlier {
             OpenTerminal => {
                 let dir = self.tab().path.clone();
                 match ops::open_terminal(&dir) {
-                    Ok(()) => {}
+                    Ok(child) => self.terminal_launch = child.map(|c| (c, Instant::now())),
                     Err(ops::TerminalError::Failed(e)) => self.error(e),
                     Err(ops::TerminalError::NeedsPermission(cmd)) => {
                         ctx.copy_text(cmd);
                         self.error(
-                            "Terminal access is off. A command to enable it was copied: paste it into a terminal.",
+                            "Terminal access is off. A command to enable it was copied: run it in a terminal, then restart File Flier.",
                         );
                     }
                 }
@@ -943,6 +946,28 @@ impl FileFlier {
     }
 
     fn poll_background(&mut self, ctx: &egui::Context) {
+        if let Some((child, started)) = &mut self.terminal_launch {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    self.terminal_launch = None;
+                    match status.code() {
+                        Some(0) | None => {}
+                        Some(127) => self.error("No terminal app found on your system (set $TERMINAL)"),
+                        Some(_) => self.error("Could not open a terminal on the host"),
+                    }
+                }
+                // Terminals that stay attached are fine; stop watching after a few seconds.
+                Ok(None) if started.elapsed() < Duration::from_secs(3) => {
+                    ctx.request_repaint_after(Duration::from_millis(100))
+                }
+                _ => {
+                    // Reap it whenever it exits so it doesn't linger as a zombie.
+                    if let Some((mut child, _)) = self.terminal_launch.take() {
+                        std::thread::spawn(move || child.wait());
+                    }
+                }
+            }
+        }
         if let Some(job) = &self.job {
             match job.rx.try_recv() {
                 Ok(res) => {
@@ -1304,7 +1329,20 @@ pub fn format_mode(mode: u32) -> String {
 }
 
 /// Fraction of a filesystem that's in use.
-pub fn disk_usage(path: &Path) -> Option<f32> {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiskSpace {
+    pub free: u64,
+    pub total: u64,
+}
+
+impl DiskSpace {
+    /// Fraction of the filesystem in use.
+    pub fn used(&self) -> f32 {
+        1.0 - self.free as f32 / self.total as f32
+    }
+}
+
+pub fn disk_space(path: &Path) -> Option<DiskSpace> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
@@ -1312,7 +1350,8 @@ pub fn disk_usage(path: &Path) -> Option<f32> {
     if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 || st.f_blocks == 0 {
         return None;
     }
-    Some(1.0 - st.f_bavail as f32 / st.f_blocks as f32)
+    let unit = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize } as u64;
+    Some(DiskSpace { free: st.f_bavail as u64 * unit, total: st.f_blocks as u64 * unit })
 }
 
 pub fn load_preview(e: &Entry) -> Preview {

@@ -181,8 +181,9 @@ pub enum TerminalError {
     Failed(String),
 }
 
-/// Launches a terminal emulator in `dir`.
-pub fn open_terminal(dir: &Path) -> Result<(), TerminalError> {
+/// Launches a terminal emulator in `dir`. In Flatpak, returns the `flatpak-spawn`
+/// process so the caller can notice if no terminal was found on the host (exit 127).
+pub fn open_terminal(dir: &Path) -> Result<Option<std::process::Child>, TerminalError> {
     let preferred = std::env::var("TERMINAL").ok().filter(|t| !t.trim().is_empty());
     if in_flatpak() {
         if !flatpak_can_spawn_on_host() {
@@ -200,12 +201,12 @@ pub fn open_terminal(dir: &Path) -> Result<(), TerminalError> {
             .args(["sh", "-c", script, "sh"])
             .args(list)
             .spawn()
-            .map(|_| ())
+            .map(Some)
             .map_err(|e| TerminalError::Failed(format!("Could not open a terminal on the host: {e}")));
     }
     for c in preferred.iter().map(String::as_str).chain(TERMINALS.iter().copied()) {
         if std::process::Command::new(c).current_dir(dir).spawn().is_ok() {
-            return Ok(());
+            return Ok(None);
         }
     }
     Err(TerminalError::Failed("No terminal emulator found (set $TERMINAL)".into()))

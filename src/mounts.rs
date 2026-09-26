@@ -21,8 +21,8 @@ pub struct Mount {
     pub path: PathBuf,
     pub name: String,
     pub kind: MountKind,
-    /// Fraction of the filesystem in use (local filesystems only).
-    pub used: Option<f32>,
+    /// Free and total space (local filesystems only).
+    pub space: Option<crate::app::DiskSpace>,
 }
 
 const NETWORK_FS: &[&str] =
@@ -172,13 +172,17 @@ fn scan() -> Vec<Mount> {
         path: PathBuf::from("/"),
         name: "File System".into(),
         kind: MountKind::Root,
-        used: crate::app::disk_usage(Path::new("/")),
+        // Measure where the user's files live, not `/`: inside Flatpak `/` is the
+        // sandbox's tiny tmpfs, and on Fedora Atomic / Bazzite it's a read-only image.
+        space: dirs::home_dir()
+            .and_then(|h| crate::app::disk_space(&h))
+            .or_else(|| crate::app::disk_space(Path::new("/"))),
     }];
     let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
     for (path, kind) in parse_proc_mounts(&text) {
         // Only local disks get a usage bar: statvfs on a dead network share can hang.
-        let used = if kind == MountKind::Removable { crate::app::disk_usage(&path) } else { None };
-        mounts.push(Mount { name: crate::app::display_name(&path), path, kind, used });
+        let space = if kind == MountKind::Removable { crate::app::disk_space(&path) } else { None };
+        mounts.push(Mount { name: crate::app::display_name(&path), path, kind, space });
     }
     if let Ok(rd) = std::fs::read_dir(gvfs_root()) {
         let mut gvfs: Vec<Mount> = rd
@@ -190,7 +194,7 @@ fn scan() -> Vec<Mount> {
                 } else {
                     MountKind::Network
                 };
-                Mount { name: gvfs_label(&name), path: e.path(), kind, used: None }
+                Mount { name: gvfs_label(&name), path: e.path(), kind, space: None }
             })
             .collect();
         gvfs.sort_by(|a, b| a.name.cmp(&b.name));
