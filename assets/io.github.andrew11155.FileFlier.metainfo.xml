@@ -23,7 +23,7 @@
       <li>Command palette and a Go To box with path completion</li>
       <li>Inspector that previews text, images and folders</li>
       <li>Bookmarks, recent folders, drives and network shares in the sidebar</li>
-      <li>Dark and light themes</li>
+      <li>Eight themes, custom accent colors and adjustable size</li>
     </ul>
   </description>
 
@@ -69,6 +69,18 @@
   </categories>
 
   <releases>
+    <release version="0.2.0" date="2026-09-26">
+      <description>
+        <p>Settings and themes:</p>
+        <ul>
+          <li>New Settings window (Ctrl+,)</li>
+          <li>Eight themes: File Pilot Dark, Light, Midnight, Nord, Dracula, Catppuccin Mocha, Gruvbox and Solarized Light</li>
+          <li>Custom accent colors, interface size and row density</li>
+          <li>Relative or friendly date formats</li>
+          <li>Option to restore your tabs from last time</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-09-26">
       <description>
         <p>First release.</p>

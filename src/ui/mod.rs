@@ -5,6 +5,7 @@ mod chrome;
 mod inspector;
 mod pane_view;
 mod popups;
+mod settings;
 mod sidebar;
 
 use std::sync::Arc;
@@ -113,11 +114,11 @@ pub fn search_box(
 
 /// Keyboard-shortcut badge, drawn right-aligned ending at `right`. Returns its width.
 pub fn badge(p: &Painter, right: f32, cy: f32, s: &str, pal: &Palette, on_accent: bool) -> f32 {
-    let color = if on_accent { Color32::from_white_alpha(230) } else { pal.text_dim };
+    let color = if on_accent { pal.on_accent.gamma_multiply(0.9) } else { pal.text_dim };
     let g = p.layout_no_wrap(s.to_string(), font(11.5), color);
     let w = g.size().x + 14.0;
     let r = Rect::from_min_max(pos2(right - w, cy - 10.0), pos2(right, cy + 10.0));
-    let stroke = if on_accent { Color32::from_white_alpha(120) } else { pal.border };
+    let stroke = if on_accent { pal.on_accent.gamma_multiply(0.5) } else { pal.border };
     p.rect_stroke(r, 4.0, Stroke::new(1.0, stroke), StrokeKind::Inside);
     p.galley(r.center() - g.size() / 2.0, g, color);
     w
@@ -156,7 +157,7 @@ pub fn menu_row(ui: &mut Ui, pal: &Palette, selected: bool, icon: RowIcon, label
     for b in badges.iter().rev() {
         right -= badge(p, right, rect.center().y, b, pal, selected) + 6.0;
     }
-    let color = if selected { Color32::WHITE } else { pal.text };
+    let color = if selected { pal.on_accent } else { pal.text };
     let g = elided(p, label, 14.0, color, right - x - 8.0);
     p.galley(pos2(x, rect.center().y - g.size().y / 2.0), g, color);
     resp
@@ -164,9 +165,9 @@ pub fn menu_row(ui: &mut Ui, pal: &Palette, selected: bool, icon: RowIcon, label
 
 pub fn checkbox(p: &Painter, r: Rect, checked: bool, pal: &Palette, on_accent: bool) {
     let r = Rect::from_center_size(r.center(), vec2(16.0, 16.0));
-    let stroke = if on_accent { Color32::WHITE } else { pal.text_dim };
+    let stroke = if on_accent { pal.on_accent } else { pal.text_dim };
     if checked {
-        p.rect_filled(r, 3.0, if on_accent { Color32::from_white_alpha(40) } else { pal.accent });
+        p.rect_filled(r, 3.0, if on_accent { pal.on_accent.gamma_multiply(0.15) } else { pal.accent });
     }
     p.rect_stroke(r, 3.0, Stroke::new(1.3, stroke), StrokeKind::Inside);
     if checked {
@@ -175,7 +176,7 @@ pub fn checkbox(p: &Painter, r: Rect, checked: bool, pal: &Palette, on_accent: b
             pos2(r.left() + 6.5, r.bottom() - 4.0),
             pos2(r.right() - 3.5, r.top() + 4.0),
         ];
-        p.add(egui::Shape::line(pts, Stroke::new(1.6, Color32::WHITE)));
+        p.add(egui::Shape::line(pts, Stroke::new(1.6, pal.on_accent)));
     }
 }
 

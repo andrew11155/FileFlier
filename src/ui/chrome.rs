@@ -289,9 +289,9 @@ impl FileFlier {
         let copy = ctx.input(|i| i.modifiers.command);
         let n = payload.0.len();
         let label = format!("{} {n} item{}", if copy { "Copy" } else { "Move" }, plural(n));
-        let g = painter.layout_no_wrap(label, super::font(13.0), Color32::WHITE);
+        let g = painter.layout_no_wrap(label, super::font(13.0), pal.on_accent);
         let at = pos + vec2(18.0, 14.0);
         painter.rect_filled(Rect::from_min_size(at, g.size()).expand2(vec2(8.0, 4.0)), 4.0, pal.accent);
-        painter.galley(at, g, Color32::WHITE);
+        painter.galley(at, g, pal.on_accent);
     }
 }

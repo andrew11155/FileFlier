@@ -42,6 +42,24 @@ the same on every desktop environment.
   paths or `file://` URIs from other applications copies those files in.
 - The view refreshes automatically when a folder changes on disk.
 
+## Settings
+
+Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
+
+- **Themes:** File Pilot Dark (default), Light, Midnight (true black, good for
+  OLED screens), Nord, Dracula, Catppuccin Mocha, Gruvbox and Solarized Light.
+- **Accent color:** the theme's own, or one of eight colors. Text on the accent
+  switches between black and white so it stays readable.
+- **Interface size:** 80–150%. You can also press `Ctrl +`, `Ctrl −` and
+  `Ctrl 0`.
+- **Row density:** compact, comfortable or spacious.
+- **Default view** for new tabs.
+- **Browsing:** show hidden files, folders first, and item counts (turn these
+  off if network drives feel slow).
+- **Dates:** `2026-09-26 14:03`, "5 min ago" or `Sep 26, 2026`.
+- **Startup:** open your home folder, or restore last session's tabs and split
+  panes.
+
 ## Keyboard shortcuts
 
 | Keys | Action |
@@ -68,6 +86,8 @@ the same on every desktop environment.
 | `F3` or `Ctrl+I` | Toggle the inspector |
 | `Ctrl+D` | Bookmark the current folder |
 | `Ctrl+Shift+T` | Open a terminal here |
+| `Ctrl+,` | Settings |
+| `Ctrl +` / `Ctrl −` / `Ctrl 0` | Interface size |
 | `F1` | List all shortcuts |
 
 ## Installing

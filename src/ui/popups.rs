@@ -96,7 +96,13 @@ fn button(ui: &mut Ui, pal: &crate::theme::Palette, label: &str, primary: bool, 
     if !primary && !danger {
         ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
     }
-    let color = if primary || danger { Color32::WHITE } else { pal.text };
+    let color = if danger {
+        Color32::WHITE
+    } else if primary {
+        pal.on_accent
+    } else {
+        pal.text
+    };
     text(ui.painter(), r.center(), Align2::CENTER_CENTER, label, 14.0, color);
     resp
 }
@@ -519,6 +525,11 @@ impl FileFlier {
                     keep = false;
                     let paths = std::mem::take(paths);
                     self.start_delete(paths);
+                }
+            }
+            Dialog::Settings => {
+                if modal(ctx, "settings", 700.0, pal, |ui| self.settings_ui(ui)) {
+                    keep = false;
                 }
             }
             Dialog::Help => {

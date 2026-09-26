@@ -119,7 +119,7 @@ impl FileFlier {
                 _ => rows.push(("Size", format!("{} ({} bytes)", human_size(e.size), e.size))),
             }
             if let Some(m) = e.modified {
-                rows.push(("Modified", format_time(m)));
+                rows.push(("Modified", format_time(m, self.cfg.date_style)));
             }
             if let Ok(meta) = std::fs::symlink_metadata(&e.path) {
                 use std::os::unix::fs::PermissionsExt;

@@ -41,6 +41,7 @@ pub enum Dialog {
     Create { dir: PathBuf, name: String, folder: bool, error: Option<String> },
     ConfirmDelete { paths: Vec<PathBuf> },
     Help,
+    Settings,
 }
 
 pub enum Preview {
@@ -120,17 +121,35 @@ impl FileFlier {
         theme::load_system_font(&cc.egui_ctx);
         let cfg = Config::load();
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        let start =
-            start.and_then(|p| std::fs::canonicalize(p).ok()).filter(|p| p.is_dir()).unwrap_or_else(|| home.clone());
-        let panes = [
+        let cli_start = start.and_then(|p| std::fs::canonicalize(p).ok()).filter(|p| p.is_dir());
+        let restore = cli_start.is_none() && cfg.startup == crate::config::Startup::RestoreSession;
+        let start = cli_start.unwrap_or_else(|| home.clone());
+        let mut panes = [
             Pane::new(start, cfg.show_hidden, cfg.sort, cfg.view),
-            Pane::new(home, cfg.show_hidden, cfg.sort, cfg.view),
+            Pane::new(home.clone(), cfg.show_hidden, cfg.sort, cfg.view),
         ];
-        theme::apply(&cc.egui_ctx, cfg.dark_mode);
+        let mut active = 0;
+        if restore {
+            // Reopen last session's tabs; folders that no longer exist are skipped.
+            for (i, paths) in cfg.session.panes.iter().take(2).enumerate() {
+                let tabs: Vec<Tab> = paths
+                    .iter()
+                    .filter(|p| p.is_dir())
+                    .map(|p| Tab::new(p.clone(), cfg.show_hidden, cfg.sort, cfg.view))
+                    .collect();
+                if !tabs.is_empty() {
+                    let want = cfg.session.active_tabs.get(i).copied().unwrap_or(0);
+                    panes[i].active = want.min(tabs.len() - 1);
+                    panes[i].tabs = tabs;
+                }
+            }
+            active = if cfg.split { cfg.session.active_pane.min(1) } else { 0 };
+        }
+        theme::apply(&cc.egui_ctx, cfg.palette(), cfg.ui_scale);
         Self {
             cfg,
             panes,
-            active: 0,
+            active,
             clipboard: None,
             dialog: None,
             menu: None,
@@ -148,7 +167,13 @@ impl FileFlier {
     }
 
     pub fn pal(&self) -> &'static theme::Palette {
-        theme::palette(self.cfg.dark_mode)
+        self.cfg.palette()
+    }
+
+    /// Re-applies colors and scale after a settings change, and saves.
+    pub fn apply_settings(&mut self, ctx: &egui::Context) {
+        theme::apply(ctx, self.cfg.palette(), self.cfg.ui_scale);
+        self.cfg.save();
     }
     pub fn tab(&self) -> &Tab {
         self.panes[self.active].tab()
@@ -438,10 +463,12 @@ impl FileFlier {
                 self.cfg.save();
             }
             ToggleTheme => {
-                self.cfg.dark_mode = !self.cfg.dark_mode;
-                self.cfg.save();
-                theme::apply(ctx, self.cfg.dark_mode);
+                // Flip between the default dark and light themes.
+                let dark = self.pal().is_dark;
+                self.cfg.theme = Some(if dark { theme::ThemeId::Light } else { theme::ThemeId::Dark });
+                self.apply_settings(ctx);
             }
+            Settings => self.dialog = Some(Dialog::Settings),
             ViewDetails | ViewList | ViewGrid => {
                 let view = match cmd {
                     ViewDetails => ViewMode::Details,
@@ -736,6 +763,28 @@ impl FileFlier {
         }
     }
 
+    /// Remembers Ctrl+/- zoom changes and the open tabs (for "restore last session").
+    fn persist_ui_state(&mut self, ctx: &egui::Context) {
+        let zoom = ctx.zoom_factor();
+        if (zoom - self.cfg.ui_scale).abs() > 0.001 {
+            self.cfg.ui_scale = zoom.clamp(0.8, 1.5);
+            if (zoom - self.cfg.ui_scale).abs() > 0.001 {
+                ctx.set_zoom_factor(self.cfg.ui_scale);
+            }
+            self.cfg.save();
+        }
+        let n = if self.cfg.split { 2 } else { 1 };
+        let session = crate::config::Session {
+            panes: self.panes[..n].iter().map(|p| p.tabs.iter().map(|t| t.path.clone()).collect()).collect(),
+            active_tabs: self.panes[..n].iter().map(|p| p.active).collect(),
+            active_pane: self.active,
+        };
+        if session != self.cfg.session {
+            self.cfg.session = session;
+            self.cfg.save();
+        }
+    }
+
     fn poll_background(&mut self, ctx: &egui::Context) {
         if let Some(job) = &self.job {
             match job.rx.try_recv() {
@@ -882,6 +931,7 @@ impl eframe::App for FileFlier {
         let ctx = ui.ctx().clone();
         let pal = self.pal();
         self.poll_background(&ctx);
+        self.persist_ui_state(&ctx);
 
         // Text fields that own the keyboard while focused.
         let text_ids = [Id::new(("filter", 0usize)), Id::new(("filter", 1usize)), Id::new("sidebar_filter")];
@@ -1007,9 +1057,31 @@ pub fn human_size(bytes: u64) -> String {
     humansize::format_size(bytes, humansize::DECIMAL.decimal_places(1).space_after_value(true)).replace("KB", "kB")
 }
 
-pub fn format_time(t: SystemTime) -> String {
+pub fn format_time(t: SystemTime, style: crate::config::DateStyle) -> String {
+    use crate::config::DateStyle;
     let dt: chrono::DateTime<chrono::Local> = t.into();
-    dt.format("%Y-%m-%d %H:%M").to_string()
+    match style {
+        DateStyle::Iso => dt.format("%Y-%m-%d %H:%M").to_string(),
+        DateStyle::Friendly => dt.format("%b %-d, %Y").to_string(),
+        DateStyle::Relative => relative_time(dt, chrono::Local::now()),
+    }
+}
+
+fn relative_time(dt: chrono::DateTime<chrono::Local>, now: chrono::DateTime<chrono::Local>) -> String {
+    let secs = (now - dt).num_seconds();
+    if secs < 0 {
+        return dt.format("%b %-d, %Y").to_string(); // in the future: just show the date
+    }
+    let days = (now.date_naive() - dt.date_naive()).num_days();
+    match secs {
+        0..60 => "Just now".into(),
+        60..3600 => format!("{} min ago", secs / 60),
+        _ if days == 0 => format!("{} h ago", secs / 3600),
+        _ if days == 1 => format!("Yesterday {}", dt.format("%H:%M")),
+        _ if days < 7 => dt.format("%A %H:%M").to_string(),
+        _ if dt.format("%Y").to_string() == now.format("%Y").to_string() => dt.format("%b %-d").to_string(),
+        _ => dt.format("%b %-d, %Y").to_string(),
+    }
 }
 
 pub fn format_mode(mode: u32) -> String {
@@ -1093,6 +1165,18 @@ mod tests {
         assert_eq!(step(4, false, true, 5), 4);
         assert_eq!(step(2, false, true, 5), 3);
         assert_eq!(step(9, false, false, 3), 2);
+    }
+
+    #[test]
+    fn relative_dates() {
+        use chrono::TimeZone;
+        let now = chrono::Local.with_ymd_and_hms(2026, 9, 26, 15, 0, 0).unwrap();
+        let ago = |s: i64| relative_time(now - chrono::Duration::seconds(s), now);
+        assert_eq!(ago(10), "Just now");
+        assert_eq!(ago(5 * 60), "5 min ago");
+        assert_eq!(ago(3 * 3600), "3 h ago");
+        assert_eq!(ago(20 * 3600), "Yesterday 19:00");
+        assert_eq!(relative_time(chrono::Local.with_ymd_and_hms(2025, 1, 2, 9, 0, 0).unwrap(), now), "Jan 2, 2025");
     }
 
     #[test]
