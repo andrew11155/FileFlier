@@ -14,11 +14,22 @@ mod theme;
 mod ui;
 
 fn main() -> eframe::Result {
+    if ops::in_flatpak() {
+        // Inside Flatpak, XDG_DATA_HOME points into the sandbox (~/.var/app/...), so trashed
+        // files would land in a private trash. Use the real ~/.local/share, which the
+        // manifest grants access to, so the desktop's trash sees them.
+        let host = std::env::var_os("HOST_XDG_DATA_HOME")
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".local/share").into()));
+        if let Some(host) = host {
+            // SAFETY: called at startup before any other threads exist.
+            unsafe { std::env::set_var("XDG_DATA_HOME", host) };
+        }
+    }
     let start = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("File Flier")
-            .with_app_id("file-flier")
+            .with_app_id("io.github.andrew11155.FileFlier")
             .with_decorations(false)
             .with_inner_size([1180.0, 740.0])
             .with_min_inner_size([560.0, 360.0]),

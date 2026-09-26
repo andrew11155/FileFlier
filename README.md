@@ -70,6 +70,63 @@ the same on every desktop environment.
 | `Ctrl+Shift+T` | Open a terminal here |
 | `F1` | List all shortcuts |
 
+## Installing
+
+### Bazzite, Silverblue, SteamOS and other immutable distros
+
+On these systems the OS is read-only, so File Flier installs as a **Flatpak**.
+Nothing is layered onto the system and nothing needs root.
+
+**From a release:** download `file-flier.flatpak` from the
+[Releases](https://github.com/andrew11155/File-Flier/releases) page, or from the
+latest *Release* workflow run under Actions, then run:
+
+```sh
+flatpak install --user file-flier.flatpak
+```
+
+**From source:**
+
+```sh
+git clone https://github.com/andrew11155/File-Flier.git
+cd File-Flier
+./install.sh
+```
+
+`install.sh` builds the Flatpak and installs it for your user. If
+`flatpak-builder` isn't installed (it isn't on Bazzite), the script fetches
+Flathub's `org.flatpak.Builder` first. The script only needs `flatpak`, which
+every immutable desktop ships.
+
+Afterwards, launch **File Flier** from your app menu, or run
+`flatpak run io.github.andrew11155.FileFlier`. To remove it, run
+`./install.sh --uninstall` or `flatpak uninstall io.github.andrew11155.FileFlier`.
+
+The Flatpak has these sandbox permissions:
+- **Your files** (`--filesystem=host`): your home folder, `/run/media`, `/mnt`,
+  and the real trash in `~/.local/share/Trash`, so deleted files show up in
+  your desktop's trash.
+- **Host OS files, read-only** (`host-os:ro`, `host-etc:ro`): for browsing
+  `/usr` and `/etc`.
+- **Host terminal** (`org.freedesktop.Flatpak`): lets *Open terminal here*
+  start your terminal outside the sandbox. It tries Ptyxis, Konsole and other
+  common terminals, and respects `$TERMINAL`.
+
+### Without Flatpak (binary in `~/.local`)
+
+`./install.sh --native` installs a plain binary into `~/.local/bin` and adds a
+menu entry. It never touches `/usr`, so it also works on immutable systems.
+
+- **From a release tarball** (`file-flier-x86_64-linux.tar.gz`): extract it and
+  run `./install.sh`. This uses the prebuilt binary.
+- **From source:** you need Rust and a C compiler. On Bazzite, build inside a
+  distrobox; it shares your home folder, so the result installs on the host:
+
+  ```sh
+  distrobox create -n build -i registry.fedoraproject.org/fedora:latest
+  distrobox enter build -- sh -c 'sudo dnf install -y cargo gcc && ./install.sh --native'
+  ```
+
 ## Building
 
 You need a recent stable Rust toolchain (edition 2024). You also need the usual
@@ -83,13 +140,25 @@ cargo run --release              # opens your home folder
 cargo run --release -- ~/Projects   # opens a specific folder
 ```
 
-The release build writes a single binary, `target/release/file-flier`. To add
-File Flier to your application launcher, copy that binary somewhere on your
-`PATH` and install `assets/file-flier.desktop` into
-`~/.local/share/applications/`.
-
 The terminal command opens `$TERMINAL` if it is set. Otherwise it tries common
 terminal emulators in turn.
+
+### Packaging
+
+- `flatpak/io.github.andrew11155.FileFlier.yml` is the Flatpak manifest. It
+  builds offline: crates come from `flatpak/cargo-sources.json` rather than
+  being downloaded during the build, which is also what Flathub requires.
+- **Whenever `Cargo.lock` changes**, regenerate that file (CI fails if it's
+  stale):
+
+  ```sh
+  pip install aiohttp tomlkit
+  curl -O https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+  python3 flatpak-cargo-generator.py Cargo.lock -o flatpak/cargo-sources.json
+  ```
+- Pushing a tag such as `v0.1.0` runs the *Release* workflow. It attaches
+  `file-flier.flatpak` and `file-flier-x86_64-linux.tar.gz` to a GitHub release.
+  You can also run the workflow by hand from the Actions tab.
 
 ## Configuration
 

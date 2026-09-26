@@ -1,0 +1,54 @@
+name: Release
+
+# Builds installable packages. Runs on version tags (v*) and can be started by hand
+# from the Actions tab; the packages are attached to the run, and to the GitHub
+# release when triggered by a tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: file-flier.flatpak
+          manifest-path: flatpak/io.github.andrew11155.FileFlier.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: file-flier.flatpak
+
+  binary:
+    # Built on an older glibc so the binary runs on current Fedora/Bazzite, Ubuntu, Arch, etc.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          dir=file-flier-x86_64-linux
+          mkdir -p "$dir/assets"
+          cp target/release/file-flier install.sh README.md "$dir/"
+          cp assets/io.github.andrew11155.FileFlier.desktop assets/io.github.andrew11155.FileFlier.svg "$dir/assets/"
+          tar czf "$dir.tar.gz" "$dir"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-flier-x86_64-linux
+          path: file-flier-x86_64-linux.tar.gz
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: file-flier-x86_64-linux.tar.gz

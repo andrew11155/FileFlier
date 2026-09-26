@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.andrew11155.FileFlier</id>
+  <name>File Flier</name>
+  <summary>Fast, keyboard-driven file manager</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <developer id="io.github.andrew11155">
+    <name>andrew11155</name>
+  </developer>
+  <description>
+    <p>
+      File Flier is a fast, keyboard-driven file manager inspired by File Pilot.
+      It has browser-style tabs, split panes, instant type-to-filter, recursive
+      fuzzy search, a command palette and an inspector for previewing files.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.andrew11155.FileFlier.desktop</launchable>
+  <url type="homepage">https://github.com/andrew11155/File-Flier</url>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>System</category>
+    <category>FileTools</category>
+  </categories>
+  <releases>
+    <release version="0.1.0" date="2026-09-26"/>
+  </releases>
+</component>
