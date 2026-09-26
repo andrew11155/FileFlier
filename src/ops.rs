@@ -79,29 +79,46 @@ pub fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Terminal emulators to try, most common first (Ptyxis and Konsole are the
+/// defaults on Bazzite / Fedora Atomic GNOME and KDE).
+const TERMINALS: &[&str] = &[
+    "x-terminal-emulator",
+    "ptyxis",
+    "kgx",
+    "gnome-terminal",
+    "konsole",
+    "xfce4-terminal",
+    "kitty",
+    "alacritty",
+    "wezterm",
+    "foot",
+    "tilix",
+    "xterm",
+];
+
+/// True when running inside a Flatpak sandbox.
+pub fn in_flatpak() -> bool {
+    std::env::var_os("FLATPAK_ID").is_some()
+}
+
 /// Launches a terminal emulator in `dir`.
 pub fn open_terminal(dir: &Path) -> Result<(), String> {
-    let mut candidates: Vec<String> = Vec::new();
-    if let Ok(t) = std::env::var("TERMINAL") {
-        candidates.push(t);
+    let preferred = std::env::var("TERMINAL").ok().filter(|t| !t.trim().is_empty());
+    if in_flatpak() {
+        // The host's terminals aren't visible in the sandbox; ask the host to pick one.
+        let list: Vec<&str> = preferred.iter().map(String::as_str).chain(TERMINALS.iter().copied()).collect();
+        let script = "for t in \"$@\"; do command -v \"$t\" >/dev/null 2>&1 && exec \"$t\"; done; exit 127";
+        return std::process::Command::new("flatpak-spawn")
+            .arg("--host")
+            .arg(format!("--directory={}", dir.display()))
+            .args(["sh", "-c", script, "sh"])
+            .args(list)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Could not open a terminal on the host: {e}"));
     }
-    candidates.extend(
-        [
-            "x-terminal-emulator",
-            "gnome-terminal",
-            "konsole",
-            "xfce4-terminal",
-            "kitty",
-            "alacritty",
-            "wezterm",
-            "foot",
-            "tilix",
-            "xterm",
-        ]
-        .map(String::from),
-    );
-    for c in candidates {
-        if std::process::Command::new(&c).current_dir(dir).spawn().is_ok() {
+    for c in preferred.iter().map(String::as_str).chain(TERMINALS.iter().copied()) {
+        if std::process::Command::new(c).current_dir(dir).spawn().is_ok() {
             return Ok(());
         }
     }

@@ -1,0 +1,53 @@
+# Flatpak manifest. Build and install locally with:
+#   flatpak run org.flatpak.Builder --user --install --force-clean --install-deps-from=flathub \
+#       build-dir flatpak/io.github.andrew11155.FileFlier.yml
+id: io.github.andrew11155.FileFlier
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: file-flier
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # A file manager needs to see your files, removable drives (/run/media, /media, /mnt)
+  # and the real trash in ~/.local/share/Trash.
+  - --filesystem=host
+  # Read-only view of the host OS (/usr, /etc) when browsing outside your home.
+  - --filesystem=host-os:ro
+  - --filesystem=host-etc:ro
+  # Lets "Open terminal here" launch the host's terminal via flatpak-spawn --host.
+  - --talk-name=org.freedesktop.Flatpak
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/file-flier/cargo
+    CARGO_TERM_COLOR: never
+
+modules:
+  - name: file-flier
+    buildsystem: simple
+    build-commands:
+      # Offline build: crates come from cargo-sources.json (regenerate it when Cargo.lock
+      # changes, see README).
+      - cargo --offline fetch --manifest-path Cargo.toml
+      - cargo --offline build --release --locked
+      - install -Dm755 target/release/file-flier /app/bin/file-flier
+      - install -Dm644 assets/io.github.andrew11155.FileFlier.desktop /app/share/applications/io.github.andrew11155.FileFlier.desktop
+      - install -Dm644 assets/io.github.andrew11155.FileFlier.svg /app/share/icons/hicolor/scalable/apps/io.github.andrew11155.FileFlier.svg
+      - install -Dm644 assets/io.github.andrew11155.FileFlier.metainfo.xml /app/share/metainfo/io.github.andrew11155.FileFlier.metainfo.xml
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - target
+          - build-dir
+          - .flatpak-builder
+          - repo
+          - '*.flatpak'
+      - cargo-sources.json

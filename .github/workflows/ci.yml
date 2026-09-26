@@ -16,3 +16,21 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  flatpak-sources:
+    # The Flatpak builds offline from flatpak/cargo-sources.json; it must match Cargo.lock.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install aiohttp tomlkit
+      - run: |
+          curl -sSLo /tmp/flatpak-cargo-generator.py \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o /tmp/cargo-sources.json
+          if ! diff -q /tmp/cargo-sources.json flatpak/cargo-sources.json; then
+            echo "::error::flatpak/cargo-sources.json is out of date. Regenerate it (see README → Packaging)."
+            exit 1
+          fi
