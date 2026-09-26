@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=File Flier
+GenericName=File Manager
+Comment=Fast, keyboard-driven file manager
+Exec=file-flier %U
+Icon=system-file-manager
+Terminal=false
+Categories=System;FileTools;FileManager;Utility;
+MimeType=inode/directory;
+StartupWMClass=file-flier
