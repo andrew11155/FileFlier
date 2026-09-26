@@ -57,7 +57,7 @@ impl Search {
             }
         }
         if changed {
-            self.results.sort_by(|a, b| b.score.cmp(&a.score));
+            self.results.sort_by_key(|h| std::cmp::Reverse(h.score));
         }
         changed
     }
