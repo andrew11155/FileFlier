@@ -1,10 +1,11 @@
 //! Quick Look: a large preview of the item under the cursor (Space to toggle).
 
 use egui::emath::TSTransform;
-use egui::{Align2, Area, Color32, Id, Order, Rect, RichText, Sense, Stroke, StrokeKind, UiBuilder, pos2, vec2};
+use egui::{Align2, Area, Color32, Id, Order, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 
-use super::{appear, elided, glass, text, wrapped};
-use crate::app::{FileFlier, Preview, format_time, human_size, load_preview};
+use super::preview_view::{self, Nav, Style};
+use super::{appear, elided, glass, text};
+use crate::app::{FileFlier, format_time, human_size};
 use crate::icons;
 use crate::ui::pane_view::{file_kind, type_label};
 
@@ -13,14 +14,13 @@ impl FileFlier {
         if !self.quicklook {
             return;
         }
-        let Some(e) = self.tab().cursor_entry().cloned() else {
+        let Some(e) = self.request_preview() else {
             self.quicklook = false;
             return;
         };
-        let stale = self.preview.as_ref().is_none_or(|(p, m, _)| p != &e.path || *m != e.modified);
-        if stale {
-            self.preview = Some((e.path.clone(), e.modified, load_preview(&e)));
-        }
+        let loading = self.pv.is_loading();
+        let mut view = std::mem::take(&mut self.ql_view);
+        let mut nav = None;
         let pal = self.pal();
         let fx = self.fx();
         let date_style = self.cfg.date_style;
@@ -39,7 +39,7 @@ impl FileFlier {
 
         let size = vec2((screen.width() * 0.82).min(1040.0), (screen.height() * 0.84).min(740.0));
         let card = Rect::from_center_size(screen.center(), size);
-        let preview = &self.preview.as_ref().unwrap().2;
+        let shown = self.pv.shown_for(&e.path).map(|s| &*s);
         Area::new(Id::new("ql_card")).order(Order::Foreground).fixed_pos(card.min).show(ctx, |ui| {
             // Grow from 94% to full size while fading in.
             let s = 0.94 + 0.06 * t;
@@ -70,16 +70,19 @@ impl FileFlier {
             } else {
                 icons::file(&p, icon, file_kind(&e), pal);
             }
-            let mut meta = vec![type_label(&e)];
+            let kind = shown
+                .and_then(|s| s.loaded.kind.clone())
+                .or_else(|| crate::preview::friendly_kind(&e))
+                .unwrap_or_else(|| type_label(&e));
+            let mut meta = vec![kind];
             if !e.is_dir {
                 meta.push(human_size(e.size));
             }
-            if let Preview::Image = preview {
-                let img = egui::Image::new(format!("file://{}", e.path.display()));
-                if let Ok(poll) = img.load_for_size(ui.ctx(), vec2(1.0, 1.0))
-                    && let Some(sz) = poll.size()
-                {
-                    meta.push(format!("{} × {}", sz.x as u32, sz.y as u32));
+            if let Some(s) = shown {
+                for key in ["Dimensions", "Duration", "Pages", "Contains"] {
+                    if let Some((_, v)) = s.loaded.info.iter().find(|(k, _)| k == key) {
+                        meta.push(if key == "Pages" { format!("{v} pages") } else { v.clone() });
+                    }
                 }
             }
             if let Some(m) = e.modified {
@@ -117,7 +120,7 @@ impl FileFlier {
                 &p,
                 pos2(footer.right() - 18.0, footer.center().y),
                 Align2::RIGHT_CENTER,
-                "↑ ↓ ← →  browse   ·   Enter  open   ·   Space  close",
+                "← →  browse   ·   scroll  zoom   ·   PgUp PgDn  pages   ·   Enter  open   ·   Space  close",
                 12.0,
                 pal.text_dim,
             );
@@ -127,74 +130,12 @@ impl FileFlier {
                 pos2(r.left() + 16.0, header.bottom() + 12.0),
                 pos2(r.right() - 16.0, footer.top() - 12.0),
             );
-            match preview {
-                Preview::Image => {
-                    let img = egui::Image::new(format!("file://{}", e.path.display()));
-                    if let Ok(poll) = img.load_for_size(ui.ctx(), body.size())
-                        && let Some(sz) = poll.size()
-                    {
-                        // Fit inside the body; small images may grow up to 2x.
-                        let scale = (body.width() / sz.x).min(body.height() / sz.y).min(2.0);
-                        img.corner_radius(6).paint_at(ui, Rect::from_center_size(body.center(), sz * scale));
-                    } else {
-                        ui.put(Rect::from_center_size(body.center(), vec2(32.0, 32.0)), egui::Spinner::new());
-                    }
-                }
-                Preview::Text(t) => {
-                    let well = pal.bg;
-                    p.rect_filled(body, 8.0, well);
-                    ui.scope_builder(UiBuilder::new().max_rect(body.shrink(12.0)), |ui| {
-                        egui::ScrollArea::both().id_salt(("ql_text", &e.path)).auto_shrink(false).show(ui, |ui| {
-                            ui.add(egui::Label::new(RichText::new(t).monospace().size(13.0).color(pal.text)).extend());
-                        });
-                    });
-                }
-                Preview::Dir(entries) => {
-                    if entries.is_empty() {
-                        text(&p, body.center(), Align2::CENTER_CENTER, "Empty folder", 15.0, pal.text_dim);
-                    }
-                    ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
-                        egui::ScrollArea::vertical().id_salt(("ql_dir", &e.path)).auto_shrink(false).show(ui, |ui| {
-                            let tile = vec2(112.0, 104.0);
-                            let cols = ((body.width() / tile.x).floor() as usize).max(1);
-                            for chunk in entries.chunks(cols) {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 0.0;
-                                    for c in chunk {
-                                        let (tr, _) = ui.allocate_exact_size(tile, Sense::hover());
-                                        let p = ui.painter();
-                                        let ir = Rect::from_center_size(
-                                            pos2(tr.center().x, tr.top() + 32.0),
-                                            vec2(48.0, 48.0),
-                                        );
-                                        if c.is_dir {
-                                            icons::folder(p, ir, pal);
-                                        } else {
-                                            icons::file(p, ir, file_kind(c), pal);
-                                        }
-                                        let g = wrapped(p, &c.name, 12.5, pal.text, tile.x - 10.0, 2);
-                                        p.galley(pos2(tr.center().x, tr.top() + 62.0), g, pal.text);
-                                    }
-                                });
-                            }
-                        });
-                    });
-                }
-                Preview::Binary | Preview::Error(_) => {
-                    let ir = Rect::from_center_size(body.center() - vec2(0.0, 24.0), vec2(112.0, 112.0));
-                    if e.is_dir {
-                        icons::folder(&p, ir, pal);
-                    } else {
-                        icons::file(&p, ir, file_kind(&e), pal);
-                    }
-                    let msg = match preview {
-                        Preview::Error(err) => err.clone(),
-                        _ => "No preview available".into(),
-                    };
-                    text(&p, pos2(body.center().x, ir.bottom() + 28.0), Align2::CENTER_CENTER, msg, 14.0, pal.text_dim);
-                }
-            }
+            nav = preview_view::show(ui, body, &e, shown, loading, &mut view, pal, Style { big: true });
         });
+        self.ql_view = view;
+        if let Some(Nav::Page(n)) = nav {
+            self.preview_page.1 = n;
+        }
 
         if open {
             self.quicklook = false;

@@ -92,6 +92,11 @@ pub struct Config {
     pub sidebar_width: f32,
     pub split_ratio: f32,
     pub collapsed: Vec<String>,
+    pub inspector_width: f32,
+    /// Render office documents as pages with LibreOffice when it's installed.
+    pub office_previews: bool,
+    /// Set once the preview panel has been turned on for existing users.
+    pub preview_panel_intro: bool,
 }
 
 impl Default for Config {
@@ -121,6 +126,9 @@ impl Default for Config {
             sidebar_width: 230.0,
             split_ratio: 0.5,
             collapsed: vec!["Recents".into()],
+            inspector_width: 340.0,
+            office_previews: true,
+            preview_panel_intro: false,
         }
     }
 }

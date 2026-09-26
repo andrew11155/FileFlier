@@ -162,7 +162,7 @@ pub fn in_flatpak() -> bool {
 
 /// Whether this Flatpak may run commands on the host (needed to open a terminal).
 /// Reads the sandbox's own permission file, which includes user overrides.
-fn flatpak_can_spawn_on_host() -> bool {
+pub fn flatpak_can_spawn_on_host() -> bool {
     let info = std::fs::read_to_string("/.flatpak-info").unwrap_or_default();
     let mut in_policy = false;
     for line in info.lines().map(str::trim) {

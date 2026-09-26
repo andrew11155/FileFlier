@@ -84,13 +84,16 @@ pub enum FileKind {
 impl FileKind {
     pub fn from_ext(ext: &str) -> Self {
         match ext {
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tif" | "tiff" => Self::Image,
-            "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" => Self::Audio,
-            "mp4" | "mkv" | "webm" | "avi" | "mov" | "wmv" => Self::Video,
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tif" | "tiff" | "heic" | "heif"
+            | "avif" | "jxl" | "cr2" | "cr3" | "nef" | "arw" | "dng" | "raf" | "orf" | "rw2" | "tga" | "exr"
+            | "hdr" => Self::Image,
+            "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" | "aiff" | "wma" | "m4b" => Self::Audio,
+            "mp4" | "mkv" | "webm" | "avi" | "mov" | "wmv" | "m4v" | "mpg" | "mpeg" | "3gp" | "mts" => Self::Video,
             "zip" | "tar" | "gz" | "xz" | "bz2" | "7z" | "rar" | "zst" | "deb" | "rpm" | "tgz" => Self::Archive,
             "rs" | "c" | "h" | "cpp" | "hpp" | "py" | "js" | "ts" | "go" | "java" | "sh" | "toml" | "json" | "yaml"
             | "yml" | "html" | "css" | "lua" | "rb" | "zig" | "kt" | "cs" => Self::Code,
-            "pdf" | "doc" | "docx" | "odt" | "md" | "txt" | "rtf" | "csv" | "xls" | "xlsx" => Self::Document,
+            "pdf" | "doc" | "docx" | "odt" | "md" | "txt" | "rtf" | "csv" | "xls" | "xlsx" | "ods" | "ppt" | "pptx"
+            | "odp" | "epub" | "pages" | "numbers" | "key" | "tsv" => Self::Document,
             "appimage" | "bin" | "run" | "exe" => Self::Executable,
             _ => Self::Plain,
         }

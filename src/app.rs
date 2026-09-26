@@ -10,7 +10,7 @@ use egui::{Id, Key, Modifiers, Pos2, Rect, Ui, pos2};
 use crate::commands::{self, Command};
 use crate::config::{Config, ViewMode};
 use crate::counts::ItemCounter;
-use crate::fs_model::{Entry, SortKey};
+use crate::fs_model::SortKey;
 use crate::mounts::{self, Mount, MountWatcher};
 use crate::pane::{Pane, Tab};
 use crate::search::Search;
@@ -19,7 +19,6 @@ use crate::undo::{self, UndoOp};
 use crate::{fuzzy, ops};
 
 pub const TITLE_H: f32 = 40.0;
-pub const INSPECTOR_W: f32 = 320.0;
 pub const CONTROLS_W: f32 = 138.0;
 
 pub struct Clip {
@@ -54,14 +53,6 @@ pub enum Dialog {
     ConfirmDelete { paths: Vec<PathBuf> },
     Help,
     Settings,
-}
-
-pub enum Preview {
-    Dir(Vec<Entry>),
-    Text(String),
-    Image,
-    Binary,
-    Error(String),
 }
 
 /// A popup command menu (right-click menu, ⋮ menu, filter options).
@@ -115,7 +106,12 @@ pub struct FileFlier {
     pub menu: Option<Menu>,
     pub status: Option<(String, Instant, bool)>,
     pub job: Option<Job>,
-    pub preview: Option<(PathBuf, Option<SystemTime>, Preview)>,
+    /// Background previews (inspector, Quick Look) and grid thumbnails.
+    pub pv: crate::preview::Previewer,
+    pub insp_view: crate::ui::ViewState,
+    pub ql_view: crate::ui::ViewState,
+    /// Page shown for multi-page documents, per item.
+    pub preview_page: (PathBuf, usize),
     pub mounts: Vec<Mount>,
     mount_watcher: MountWatcher,
     /// A remote address (smb://…) to open once the background `gio mount` finishes.
@@ -143,7 +139,14 @@ impl FileFlier {
     pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>, window_transparent: bool) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::load_system_font(&cc.egui_ctx);
-        let cfg = Config::load();
+        let mut cfg = Config::load();
+        if !cfg.preview_panel_intro {
+            // 0.4 made the preview panel much more useful: show it once to everyone.
+            cfg.preview_panel_intro = true;
+            cfg.show_preview = true;
+            cfg.save();
+        }
+        crate::preview::warm_up();
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let cli_start = start.and_then(|p| std::fs::canonicalize(p).ok()).filter(|p| p.is_dir());
         let restore = cli_start.is_none() && cfg.startup == crate::config::Startup::RestoreSession;
@@ -179,7 +182,10 @@ impl FileFlier {
             menu: None,
             status: None,
             job: None,
-            preview: None,
+            pv: crate::preview::Previewer::new(&cc.egui_ctx),
+            insp_view: Default::default(),
+            ql_view: Default::default(),
+            preview_page: (PathBuf::new(), 0),
             mounts: Vec::new(),
             mount_watcher: MountWatcher::start(cc.egui_ctx.clone()),
             pending_uri: None,
@@ -780,6 +786,24 @@ impl FileFlier {
                 self.open_entries();
                 return;
             }
+            let page = self.preview_page.1;
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::PageDown)) {
+                self.preview_page.1 = page + 1;
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::PageUp)) {
+                self.preview_page.1 = page.saturating_sub(1);
+            }
+            if ctx
+                .input_mut(|i| i.consume_key(Modifiers::NONE, Key::Plus) || i.consume_key(Modifiers::NONE, Key::Equals))
+            {
+                self.ql_view.zoom_by(1.5);
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Minus)) {
+                self.ql_view.zoom_by(1.0 / 1.5);
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Num0)) {
+                self.ql_view.reset();
+            }
             if self.geom[self.active].cols <= 1 {
                 let tab = self.tab_mut();
                 let (cur, last) = (tab.cursor, tab.visible.len().saturating_sub(1));
@@ -946,6 +970,8 @@ impl FileFlier {
     }
 
     fn poll_background(&mut self, ctx: &egui::Context) {
+        self.pv.poll(ctx);
+        self.pv.thumbs.begin_frame(ctx);
         if let Some((child, started)) = &mut self.terminal_launch {
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -1169,7 +1195,11 @@ impl eframe::App for FileFlier {
         }
         let body = Rect::from_min_max(pos2(full.left(), full.top() + TITLE_H), full.max);
         let sb_w = if self.cfg.show_sidebar { self.cfg.sidebar_width.clamp(160.0, 420.0) } else { 0.0 };
-        let insp_w = if self.cfg.show_preview { INSPECTOR_W.min(full.width() * 0.4) } else { 0.0 };
+        let insp_w = if self.cfg.show_preview {
+            self.cfg.inspector_width.clamp(240.0, 900.0).min(full.width() * 0.5)
+        } else {
+            0.0
+        };
         let sidebar = Rect::from_min_max(body.min, pos2(body.left() + sb_w, body.bottom()));
         let inspector = Rect::from_min_max(pos2(body.right() - insp_w, body.top()), body.max);
         let panes_area = Rect::from_min_max(pos2(sidebar.right(), body.top()), pos2(inspector.left(), body.bottom()));
@@ -1352,44 +1382,6 @@ pub fn disk_space(path: &Path) -> Option<DiskSpace> {
     }
     let unit = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize } as u64;
     Some(DiskSpace { free: st.f_bavail as u64 * unit, total: st.f_blocks as u64 * unit })
-}
-
-pub fn load_preview(e: &Entry) -> Preview {
-    if e.is_dir {
-        return match crate::fs_model::read_dir(&e.path) {
-            Ok(mut entries) => {
-                entries.retain(|x| !x.is_hidden());
-                crate::fs_model::sort_entries(&mut entries, Default::default());
-                entries.truncate(300);
-                Preview::Dir(entries)
-            }
-            Err(err) => Preview::Error(err.to_string()),
-        };
-    }
-    // Never open pipes, sockets or devices: reading a FIFO blocks forever.
-    if !e.is_file {
-        return Preview::Binary;
-    }
-    if matches!(e.extension().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp") {
-        return Preview::Image;
-    }
-    use std::io::Read;
-    let mut buf = vec![0u8; 64 * 1024];
-    let n = match std::fs::File::open(&e.path).and_then(|mut f| f.read(&mut buf)) {
-        Ok(n) => n,
-        Err(err) => return Preview::Error(err.to_string()),
-    };
-    buf.truncate(n);
-    if buf.contains(&0) {
-        return Preview::Binary;
-    }
-    // Tolerate a multi-byte char cut off at the buffer end.
-    let text = match std::str::from_utf8(&buf) {
-        Ok(t) => t.to_string(),
-        Err(err) if err.error_len().is_none() => String::from_utf8_lossy(&buf[..err.valid_up_to()]).into_owned(),
-        Err(_) => return Preview::Binary,
-    };
-    Preview::Text(text.lines().take(400).collect::<Vec<_>>().join("\n"))
 }
 
 #[cfg(test)]

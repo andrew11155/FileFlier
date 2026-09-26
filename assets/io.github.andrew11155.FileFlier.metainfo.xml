@@ -21,7 +21,7 @@
       <li>Details, list and thumbnail grid views</li>
       <li>Instant type-to-filter and recursive fuzzy search</li>
       <li>Command palette and a Go To box with path completion</li>
-      <li>Inspector that previews text, images and folders</li>
+      <li>Finder-style preview panel with zoom, for photos (including HEIC and camera RAW), PDFs, office documents, video, audio and more</li>
       <li>Bookmarks, recent folders, drives and network shares in the sidebar</li>
       <li>Eight themes, custom accent colors, adjustable size and an optional frosted glass style</li>
       <li>Quick Look previews, inline rename and undo</li>
@@ -36,23 +36,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/main.png</image>
       <caption>Split panes with a thumbnail grid and the inspector</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/quicklook.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/quicklook.png</image>
       <caption>Quick Look preview (Space)</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/glass.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/glass.png</image>
       <caption>Optional frosted glass style</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/menu.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/menu.png</image>
       <caption>Searchable context menu with keyboard shortcuts</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/palette.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/palette.png</image>
       <caption>Command palette</caption>
     </screenshot>
   </screenshots>
@@ -78,6 +78,18 @@
   </categories>
 
   <releases>
+    <release version="0.4.0" date="2026-09-26">
+      <description>
+        <p>Previews for almost everything:</p>
+        <ul>
+          <li>A Finder-style preview panel with a large zoomable preview and detailed file information</li>
+          <li>HEIC, AVIF, JPEG XL, SVG, camera RAW, TIFF and many more image formats, with camera details</li>
+          <li>PDF pages, and Word, OpenDocument, RTF and PowerPoint documents (real pages when LibreOffice is installed)</li>
+          <li>Spreadsheets as tables, video frames, album art, archive contents, fonts and highlighted code</li>
+          <li>Thumbnails for all of these in grid view, shared with other file managers</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.1" date="2026-09-26">
       <description>
         <p>Fixes:</p>

@@ -11,12 +11,17 @@ mod icons;
 mod mounts;
 mod ops;
 mod pane;
+mod preview;
 mod search;
 mod theme;
 mod ui;
 mod undo;
 
 fn main() -> eframe::Result {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--preview-helper") {
+        std::process::exit(preview::helper::main(&args[2..]));
+    }
     if ops::in_flatpak() {
         // Inside Flatpak, XDG_DATA_HOME points into the sandbox (~/.var/app/...), so trashed
         // files would land in a private trash. Use the real ~/.local/share, which the

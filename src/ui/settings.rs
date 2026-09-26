@@ -328,6 +328,28 @@ impl FileFlier {
                     restyle = true;
                 }
 
+                section(ui, pal, "Previews");
+                if row(ui, pal, "Show preview panel", "Big preview and file details on the right (F3)", |ui| {
+                    toggle(ui, pal, Id::new("pvpanel"), self.cfg.show_preview)
+                }) {
+                    self.cfg.show_preview = !self.cfg.show_preview;
+                    self.cfg.save();
+                }
+                let lo_hint = match crate::preview::libreoffice_available() {
+                    Some(true) => "Real pages for Word, Excel, PowerPoint and OpenDocument files",
+                    Some(false) if crate::ops::in_flatpak() && !crate::ops::flatpak_can_spawn_on_host() => {
+                        "Needs the same host access as \"Open terminal here\""
+                    }
+                    Some(false) => "Install LibreOffice to see real pages (text previews work without it)",
+                    None => "Checking for LibreOffice…",
+                };
+                if row(ui, pal, "Office page previews", lo_hint, |ui| {
+                    toggle(ui, pal, Id::new("lopages"), self.cfg.office_previews)
+                }) {
+                    self.cfg.office_previews = !self.cfg.office_previews;
+                    self.cfg.save();
+                }
+
                 section(ui, pal, "Startup");
                 let starts = [Startup::Home, Startup::RestoreSession];
                 let st = starts.iter().position(|s| *s == self.cfg.startup).unwrap_or(0);

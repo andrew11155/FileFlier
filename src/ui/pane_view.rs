@@ -315,6 +315,7 @@ impl FileFlier {
             self.clipboard.as_ref().filter(|c| c.cut).map(|c| c.paths.clone()).unwrap_or_default();
         let tab = self.panes[idx].tab_mut();
         let counts = &mut self.item_counts;
+        let thumbs = &mut self.pv.thumbs;
         let view = tab.view;
         let n = tab.visible.len();
         let multi = tab.selected.len() > 1;
@@ -681,16 +682,30 @@ impl FileFlier {
                                             vec2(item.width() - 20.0, 78.0),
                                         );
                                         let mut drew = false;
-                                        if e.is_file && file_kind(e) == FileKind::Image && e.size < 25_000_000 {
-                                            let img = egui::Image::new(format!("file://{}", e.path.display()));
-                                            if let Ok(poll) = img.load_for_size(ui.ctx(), thumb.size())
-                                                && let Some(sz) = poll.size()
-                                            {
-                                                let scale = (thumb.width() / sz.x).min(thumb.height() / sz.y).min(1.0);
-                                                let fit = Rect::from_center_size(thumb.center(), sz * scale);
-                                                img.corner_radius(3).paint_at(ui, fit);
-                                                drew = true;
-                                            }
+                                        if e.is_file
+                                            && crate::preview::classify(&e.path).has_thumbnail()
+                                            && let Some(tex) = thumbs.get(&e.path, e.modified)
+                                        {
+                                            let sz = tex.size_vec2() / ui.ctx().pixels_per_point();
+                                            let scale = (thumb.width() / sz.x).min(thumb.height() / sz.y).min(1.0);
+                                            let fit = Rect::from_center_size(thumb.center(), sz * scale);
+                                            let p = ui.painter();
+                                            p.add(
+                                                egui::Shadow {
+                                                    offset: [0, 1],
+                                                    blur: 6,
+                                                    spread: 0,
+                                                    color: Color32::from_black_alpha(50),
+                                                }
+                                                .as_shape(fit, 3),
+                                            );
+                                            p.image(
+                                                tex.id(),
+                                                fit,
+                                                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                                                Color32::WHITE,
+                                            );
+                                            drew = true;
                                         }
                                         let p = ui.painter();
                                         if !drew {

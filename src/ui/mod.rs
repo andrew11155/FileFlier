@@ -6,6 +6,7 @@ pub mod glass;
 mod inspector;
 mod pane_view;
 mod popups;
+mod preview_view;
 mod quicklook;
 mod settings;
 mod sidebar;
@@ -17,6 +18,8 @@ use egui::{
     Align, Align2, Color32, FontId, Galley, Id, Painter, Rect, Response, RichText, Sense, Stroke, StrokeKind, TextEdit,
     Ui, pos2, vec2,
 };
+
+pub use preview_view::ViewState;
 
 use crate::icons::{self, FileKind};
 use crate::theme::Palette;

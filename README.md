@@ -30,8 +30,8 @@ the same on every desktop environment.
   the highlighted suggestion.
 - **Searchable context menus.** Right-click menus include a search field and
   show each command's shortcut.
-- **Inspector** (`F3`). Previews text files, images and folder contents, and
-  shows the item's metadata.
+- **Preview panel** (`F3`). A Finder-style panel with a large, zoomable
+  preview of the selected item and its details. See [Previews](#previews).
 - **Sidebar.** Has its own filter box and collapsible sections for Recents,
   Bookmarks, Storage (mounted drives with usage bars) and Places.
 - **File operations.** Copy, cut, paste, drag-and-drop (moves within a
@@ -42,12 +42,46 @@ the same on every desktop environment.
   paths or `file://` URIs from other applications copies those files in.
 - The view refreshes automatically when a folder changes on disk.
 
+## Previews
+
+Select a file and the preview panel on the right shows it, with an
+*Information* section below: kind, size, dates, permissions and type-specific
+details such as camera and exposure, duration and codecs, page count, or
+author. Drag the panel's left edge to resize it. Scroll or pinch over a picture
+to zoom, drag to pan, and double-click to switch between fit and actual size.
+
+| Type | Preview |
+| --- | --- |
+| Photos and images: JPEG, PNG, GIF, WebP, TIFF, BMP, ICO, TGA, EXR, HDR and more | The image, rotated per EXIF, with camera details and GPS location |
+| HEIC, HEIF, AVIF, JPEG XL | The image (through libheif or ffmpeg) |
+| SVG | Rendered crisply at any zoom |
+| Camera RAW (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2...) | The camera's embedded full-size preview |
+| PDF | Rendered pages; flip through with the page buttons or `Page Up` / `Page Down` |
+| Word, OpenDocument, RTF, `.doc`, PowerPoint | Real pages when LibreOffice is installed; otherwise the text with headings, lists and tables |
+| Excel, OpenDocument spreadsheets, CSV | A spreadsheet-style table |
+| Video | A frame from the video, plus duration, resolution and codecs (needs ffmpeg, which the Flatpak includes) |
+| Audio | Album art, title, artist, album, duration and format |
+| EPUB, Pages, Numbers, Keynote, comic books (CBZ) | The cover or stored preview |
+| ZIP and tar archives | The files inside |
+| Fonts | A type sample |
+| Code and text | Syntax-highlighted text |
+
+Grid view (`Ctrl+Shift+G`) shows thumbnails for these types too. Thumbnails are
+stored in the shared `~/.cache/thumbnails` folder, so File Flier reuses
+thumbnails made by GNOME Files and Dolphin, and they reuse File Flier's.
+
+LibreOffice page previews can be turned off in *Settings → Previews*. The
+rendered pages are cached in `~/.cache/file-flier` (at most about 200 MB) so
+documents open instantly the next time. In the
+Flatpak, they need the same host access as *Open terminal here*, because
+LibreOffice runs outside the sandbox.
+
 ## Quick Look, rename and undo
 
-- **Quick Look:** press `Space` to preview the selected item in a large window:
-  images, text, folder contents, or file details. Use the arrow keys to move
-  to the next item, `Enter` to open it, and `Space` or `Esc` to close the
-  preview.
+- **Quick Look:** press `Space` to preview the selected item in a large window.
+  It supports everything the preview panel does, including zoom. Use the arrow
+  keys to move to the next item, `+` / `-` / `0` to zoom, `Enter` to open it,
+  and `Space` or `Esc` to close the preview.
 - **Rename in place:** press `F2` to edit the name directly in the list. The
   name is selected without its extension, so typing replaces just the name.
   `Enter` or clicking elsewhere saves; `Esc` cancels.
@@ -108,7 +142,7 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | `Ctrl+Shift+D` / `L` / `G` | Details / list / grid view |
 | `Ctrl+H` | Show hidden files |
 | `Ctrl+B` | Toggle the sidebar |
-| `F3` or `Ctrl+I` | Toggle the inspector |
+| `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |
 | `Ctrl+Shift+T` | Open a terminal here |
 | `Space` | Quick Look |
@@ -250,6 +284,9 @@ freeze the window.
   followed. Copying a folder into itself is refused, even through a symlink.
   Special files (pipes, sockets, devices) are never read, because reading them
   can block forever.
+- **Previews are isolated.** File formats are decoded by memory-safe Rust code,
+  except HEIC (libheif) and PDF, which are decoded in a separate short-lived
+  helper process, so a malformed file can't crash or hang File Flier.
 - **Deleting is recoverable by default.** `Delete` moves items to the trash.
   Permanent delete (`Shift+Delete`) asks first.
 - **The Flatpak sandbox is broad by necessity.** A file manager needs access to
@@ -280,7 +317,8 @@ Source layout:
 | Path | Contents |
 | --- | --- |
 | `src/app.rs` | Application state, command dispatch, keyboard handling, layout |
-| `src/ui/` | Custom-drawn UI: `chrome` (title bar, tabs, window buttons), `pane_view`, `sidebar`, `inspector`, `popups` |
+| `src/ui/` | Custom-drawn UI: `chrome` (title bar, tabs, window buttons), `pane_view`, `sidebar`, `inspector`, `preview_view`, `quicklook`, `popups` |
+| `src/preview/` | Preview and thumbnail loading: images, documents, media, archives, the helper process and the thumbnail cache |
 | `src/theme.rs`, `src/icons.rs` | Color palette and the vector icon set |
 | `src/pane.rs` | Tabs, navigation history, selection and filtering |
 | `src/fs_model.rs`, `src/ops.rs` | Directory listing and sorting; copy, move, trash and rename |
