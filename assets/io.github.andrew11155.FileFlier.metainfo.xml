@@ -36,23 +36,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/main.png</image>
       <caption>Split panes with a thumbnail grid and the inspector</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/quicklook.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/quicklook.png</image>
       <caption>Quick Look preview (Space)</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/glass.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/glass.png</image>
       <caption>Optional frosted glass style</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/menu.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/menu.png</image>
       <caption>Searchable context menu with keyboard shortcuts</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.0/docs/screenshots/palette.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.3.1/docs/screenshots/palette.png</image>
       <caption>Command palette</caption>
     </screenshot>
   </screenshots>
@@ -78,6 +78,16 @@
   </categories>
 
   <releases>
+    <release version="0.3.1" date="2026-09-26">
+      <description>
+        <p>Fixes:</p>
+        <ul>
+          <li>The disk space bar in the sidebar now shows your home drive, and works inside Flatpak</li>
+          <li>Hover a drive to see how much space is free</li>
+          <li>Clearer instructions for enabling "Open terminal here", and an error when no terminal app is found</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-09-26">
       <description>
         <p>Previews, polish and effects:</p>
