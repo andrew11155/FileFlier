@@ -11,6 +11,8 @@ pub struct Entry {
     pub path: PathBuf,
     pub is_dir: bool,
     pub is_symlink: bool,
+    /// A regular file (not a pipe, socket or device). Only these are ever read.
+    pub is_file: bool,
     pub size: u64,
     pub modified: Option<SystemTime>,
 }
@@ -27,6 +29,7 @@ impl Entry {
             path: path.to_path_buf(),
             is_dir: meta.is_dir(),
             is_symlink,
+            is_file: meta.is_file(),
             size: if meta.is_dir() { 0 } else { meta.len() },
             modified: meta.modified().ok(),
         })

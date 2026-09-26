@@ -8,6 +8,7 @@ use super::{elided, search_box, text};
 use crate::app::{Action, DragPaths, FileFlier, MenuItem, display_name};
 use crate::fuzzy;
 use crate::icons::{self, Place};
+use crate::mounts::MountKind;
 
 const ITEM_H: f32 = 30.0;
 
@@ -77,9 +78,15 @@ impl FileFlier {
             .collect();
         let storage: Vec<Item> = self
             .mounts
-            .1
             .iter()
-            .map(|m| Item { icon: Place::Drive, label: m.name.clone(), path: m.path.clone(), usage: m.used })
+            .map(|m| {
+                let icon = match m.kind {
+                    MountKind::Network => Place::Network,
+                    MountKind::Cloud => Place::Cloud,
+                    MountKind::Root | MountKind::Removable => Place::Drive,
+                };
+                Item { icon, label: m.name.clone(), path: m.path.clone(), usage: m.used }
+            })
             .collect();
 
         let q = self.sidebar_filter.trim().to_string();

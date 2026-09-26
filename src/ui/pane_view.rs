@@ -9,6 +9,7 @@ use super::{checkbox, elided, icon_button, search_box, text, wrapped};
 use crate::app::{Action, DragPaths, FileFlier, MenuItem, PaneGeom, format_time, human_size};
 use crate::commands::Command;
 use crate::config::ViewMode;
+use crate::counts::Count;
 use crate::fs_model::{Entry, SortKey};
 use crate::icons::{self, FileKind};
 
@@ -213,8 +214,19 @@ impl FileFlier {
         let home = dirs::home_dir();
         let mut crumbs: Vec<(String, PathBuf)> = Vec::new();
         let mut acc = PathBuf::new();
+        // Network shares start at the share itself ("media on nas"), not /run/user/…/gvfs.
+        let gvfs = crate::mounts::gvfs_root();
+        let share = path.strip_prefix(&gvfs).ok().and_then(|rel| rel.components().next()).map(|c| gvfs.join(c));
         let start = home.as_ref().filter(|h| path.starts_with(h) && h.parent().is_some());
-        if let Some(h) = start {
+        if let Some(share) = share {
+            let label = crate::mounts::gvfs_label(&crate::app::display_name(&share));
+            crumbs.push((label, share.clone()));
+            acc = share.clone();
+            for c in path.strip_prefix(&share).unwrap().components() {
+                acc.push(c);
+                crumbs.push((c.as_os_str().to_string_lossy().into_owned(), acc.clone()));
+            }
+        } else if let Some(h) = start {
             crumbs.push((crate::app::display_name(h), h.clone()));
             acc = h.clone();
             for c in path.strip_prefix(h).unwrap().components() {
@@ -509,14 +521,11 @@ impl FileFlier {
                                             p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
                                         }
                                         if let Some((l, _)) = cols.items {
-                                            let count = if e.is_dir {
-                                                *counts.entry(e.path.clone()).or_insert_with(|| {
-                                                    std::fs::read_dir(&e.path).ok().map(|d| d.count())
-                                                })
-                                            } else {
-                                                None
+                                            let s = match e.is_dir.then(|| counts.get(&e.path)) {
+                                                Some(Count::Items(n)) => short_count(n),
+                                                Some(Count::Pending) => "…".into(),
+                                                _ => "--".into(),
                                             };
-                                            let s = count.map(short_count).unwrap_or_else(|| "--".into());
                                             text(p, pos2(l, cy), Align2::LEFT_CENTER, s, 13.0, dim_color);
                                         }
                                         let size = if e.is_dir { "--".to_string() } else { human_size(e.size) };
@@ -534,7 +543,7 @@ impl FileFlier {
                                         vec2(item.width() - 20.0, 78.0),
                                     );
                                     let mut drew = false;
-                                    if file_kind(e) == FileKind::Image && e.size < 25_000_000 {
+                                    if e.is_file && file_kind(e) == FileKind::Image && e.size < 25_000_000 {
                                         let img = egui::Image::new(format!("file://{}", e.path.display()));
                                         if let Ok(poll) = img.load_for_size(ui.ctx(), thumb.size())
                                             && let Some(sz) = poll.size()

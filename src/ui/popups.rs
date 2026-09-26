@@ -216,6 +216,7 @@ impl FileFlier {
         let mut keep = !ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
         let mut run_after: Option<Command> = None;
         let mut go_after: Option<(PathBuf, Option<PathBuf>)> = None;
+        let mut uri_after: Option<String> = None;
 
         match &mut dialog {
             Dialog::Palette { query, cursor } => {
@@ -269,7 +270,13 @@ impl FileFlier {
                     }
                 }
                 let clicked = modal(ctx, "goto", 620.0, pal, |ui| {
-                    let r = input_row(ui, pal, path_text, Id::new("goto_input"), "Go to folder...");
+                    let r = input_row(
+                        ui,
+                        pal,
+                        path_text,
+                        Id::new("goto_input"),
+                        "Go to folder, or smb:// / sftp:// address...",
+                    );
                     r.request_focus();
                     if r.changed() {
                         *cursor = 0;
@@ -295,6 +302,9 @@ impl FileFlier {
                 if let Some(i) = clicked {
                     keep = false;
                     go_after = Some((items[i].clone(), None));
+                } else if enter && crate::mounts::is_remote_uri(path_text.trim()) {
+                    keep = false;
+                    uri_after = Some(path_text.trim().to_string());
                 } else if enter {
                     keep = false;
                     let target = if (*cursor > 0 || !typed.is_dir()) && !items.is_empty() {
@@ -416,10 +426,13 @@ impl FileFlier {
                         if target == *path {
                             return Ok(target);
                         }
-                        if std::fs::symlink_metadata(&target).is_ok() {
-                            return Err("A file with that name already exists".into());
-                        }
-                        std::fs::rename(&*path, &target).map(|()| target).map_err(|e| e.to_string())
+                        ops::rename_noreplace(path, &target).map(|()| target).map_err(|e| {
+                            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                                "A file with that name already exists".to_string()
+                            } else {
+                                e.to_string()
+                            }
+                        })
                     });
                     match res {
                         Ok(target) => {
@@ -552,6 +565,9 @@ impl FileFlier {
         }
         if let Some(c) = run_after {
             self.run(c, ctx);
+        }
+        if let Some(uri) = uri_after {
+            self.open_uri(&uri);
         }
         if let Some((dir, reveal)) = go_after {
             self.navigate(dir);
