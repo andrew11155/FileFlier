@@ -20,6 +20,8 @@ finish-args:
   # Network shares and cloud accounts mounted by GNOME (smb://, sftp://, Google Drive).
   - --filesystem=xdg-run/gvfs
   - --filesystem=xdg-run/gvfsd
+  # Mounting and safely ejecting USB drives and other disks, like other file managers.
+  - --system-talk-name=org.freedesktop.UDisks2
   # "Open terminal here" needs to start the host's terminal, which requires
   # --talk-name=org.freedesktop.Flatpak. That lets an app run commands outside its
   # sandbox, so it's opt-in rather than granted here; the app explains how to enable it:

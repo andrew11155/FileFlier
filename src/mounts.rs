@@ -14,6 +14,8 @@ pub enum MountKind {
     Removable,
     Network,
     Cloud,
+    /// A drive UDisks knows about that isn't mounted yet (click to mount).
+    Unmounted,
 }
 
 #[derive(Clone, Debug)]
@@ -23,6 +25,8 @@ pub struct Mount {
     pub kind: MountKind,
     /// Free and total space (local filesystems only).
     pub space: Option<crate::app::DiskSpace>,
+    /// The UDisks volume behind it, for mounting and ejecting.
+    pub volume: Option<crate::udisks::Volume>,
 }
 
 const NETWORK_FS: &[&str] =
@@ -174,6 +178,7 @@ fn scan() -> Vec<Mount> {
         kind: MountKind::Root,
         // Measure where the user's files live, not `/`: inside Flatpak `/` is the
         // sandbox's tiny tmpfs, and on Fedora Atomic / Bazzite it's a read-only image.
+        volume: None,
         space: dirs::home_dir()
             .and_then(|h| crate::app::disk_space(&h))
             .or_else(|| crate::app::disk_space(Path::new("/"))),
@@ -182,7 +187,27 @@ fn scan() -> Vec<Mount> {
     for (path, kind) in parse_proc_mounts(&text) {
         // Only local disks get a usage bar: statvfs on a dead network share can hang.
         let space = if kind == MountKind::Removable { crate::app::disk_space(&path) } else { None };
-        mounts.push(Mount { name: crate::app::display_name(&path), path, kind, space });
+        mounts.push(Mount { name: crate::app::display_name(&path), path, kind, space, volume: None });
+    }
+    // Drives through UDisks: attach them to mounted entries (for eject) and list the
+    // ones not mounted yet.
+    if let Ok(vols) = crate::udisks::list() {
+        for v in &vols {
+            if let Some(m) = mounts.iter_mut().find(|m| m.kind != MountKind::Root && v.mount_points.contains(&m.path)) {
+                if !v.label.is_empty() && m.kind == MountKind::Removable {
+                    m.name = v.label.clone();
+                }
+                m.volume = Some(v.clone());
+            } else if v.mount_points.is_empty() {
+                mounts.push(Mount {
+                    path: PathBuf::new(),
+                    name: v.label.clone(),
+                    kind: MountKind::Unmounted,
+                    space: None,
+                    volume: Some(v.clone()),
+                });
+            }
+        }
     }
     if let Ok(rd) = std::fs::read_dir(gvfs_root()) {
         let mut gvfs: Vec<Mount> = rd
@@ -194,7 +219,7 @@ fn scan() -> Vec<Mount> {
                 } else {
                     MountKind::Network
                 };
-                Mount { name: gvfs_label(&name), path: e.path(), kind, space: None }
+                Mount { name: gvfs_label(&name), path: e.path(), kind, space: None, volume: None }
             })
             .collect();
         gvfs.sort_by(|a, b| a.name.cmp(&b.name));

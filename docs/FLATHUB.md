@@ -62,7 +62,10 @@ request description:
 > core purpose. `--filesystem=host` lets it access the home folder, removable
 > drives under `/run/media` and `/mnt`, and the user's real trash in
 > `~/.local/share/Trash`. `xdg-run/gvfs` lets it open network shares that GVFS
-> has mounted. The app has no network access and does not request
+> has mounted. `--system-talk-name=org.freedesktop.UDisks2` lets it mount and
+> safely eject USB drives from the sidebar, as other file managers do (the
+> desktop's polkit agent still asks for a password where required). The app has
+> no network access and does not request
 > `org.freedesktop.Flatpak` (host command execution). The optional "Open terminal
 > here" feature tells users how to enable that with `flatpak override` if they
 > want it.

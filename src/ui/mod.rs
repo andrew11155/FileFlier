@@ -134,6 +134,12 @@ pub enum RowIcon {
     None,
     Folder,
     File(FileKind),
+    Trash,
+}
+
+/// Red used for destructive commands (Move to Trash, Delete).
+pub fn danger_color(pal: &Palette) -> Color32 {
+    if pal.is_dark { Color32::from_rgb(255, 107, 99) } else { Color32::from_rgb(200, 40, 40) }
 }
 
 pub fn paint_row_icon(p: &Painter, r: Rect, icon: RowIcon, pal: &Palette) {
@@ -141,28 +147,54 @@ pub fn paint_row_icon(p: &Painter, r: Rect, icon: RowIcon, pal: &Palette) {
         RowIcon::None => {}
         RowIcon::Folder => icons::folder(p, r, pal),
         RowIcon::File(k) => icons::file(p, r, k, pal),
+        RowIcon::Trash => icons::trash(p, r, danger_color(pal)),
     }
 }
 
 /// A row in a popup list: icon, label, and right-aligned shortcut badges.
 pub fn menu_row(ui: &mut Ui, pal: &Palette, selected: bool, icon: RowIcon, label: &str, badges: &[String]) -> Response {
+    menu_row_ex(ui, pal, selected, icon, label, badges, false)
+}
+
+/// `danger` rows (Move to Trash, Delete) are drawn in red so they're easy to find.
+pub fn menu_row_ex(
+    ui: &mut Ui,
+    pal: &Palette,
+    selected: bool,
+    icon: RowIcon,
+    label: &str,
+    badges: &[String],
+    danger: bool,
+) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
     let p = ui.painter();
+    let red = danger_color(pal);
     if selected {
-        p.rect_filled(rect, 4.0, pal.accent);
+        // A deeper red than the text color, so white text stays readable.
+        p.rect_filled(rect, 4.0, if danger { Color32::from_rgb(196, 48, 43) } else { pal.accent });
     } else if resp.hovered() {
-        p.rect_filled(rect, 4.0, pal.tab_hover);
+        p.rect_filled(rect, 4.0, if danger { red.gamma_multiply(0.18) } else { pal.tab_hover });
     }
     let mut x = rect.left() + 10.0;
     if !matches!(icon, RowIcon::None) {
-        paint_row_icon(p, Rect::from_center_size(pos2(x + 9.0, rect.center().y), vec2(18.0, 18.0)), icon, pal);
+        let ir = Rect::from_center_size(pos2(x + 9.0, rect.center().y), vec2(18.0, 18.0));
+        if danger && selected {
+            icons::trash(p, ir, Color32::WHITE);
+        } else {
+            paint_row_icon(p, ir, icon, pal);
+        }
         x += 26.0;
     }
     let mut right = rect.right() - 8.0;
     for b in badges.iter().rev() {
         right -= badge(p, right, rect.center().y, b, pal, selected) + 6.0;
     }
-    let color = if selected { pal.on_accent } else { pal.text };
+    let color = match (selected, danger) {
+        (true, true) => Color32::WHITE,
+        (true, false) => pal.on_accent,
+        (false, true) => red,
+        (false, false) => pal.text,
+    };
     let g = elided(p, label, 14.0, color, right - x - 8.0);
     p.galley(pos2(x, rect.center().y - g.size().y / 2.0), g, color);
     resp

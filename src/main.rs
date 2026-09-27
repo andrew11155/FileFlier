@@ -2,6 +2,7 @@
 #![allow(clippy::enum_variant_names)]
 
 mod app;
+mod archive;
 mod commands;
 mod config;
 mod counts;
@@ -9,11 +10,15 @@ mod fs_model;
 mod fuzzy;
 mod icons;
 mod mounts;
+mod native;
+mod openwith;
 mod ops;
 mod pane;
 mod preview;
 mod search;
 mod theme;
+mod trashview;
+mod udisks;
 mod ui;
 mod undo;
 

@@ -24,6 +24,12 @@ pub enum UndoOp {
     Create {
         path: PathBuf,
     },
+    /// Specific items in the trash to put back (e.g. files replaced by a paste).
+    Restore {
+        items: Vec<trash::TrashItem>,
+    },
+    /// Several steps, undone last-first.
+    Many(Vec<UndoOp>),
 }
 
 impl UndoOp {
@@ -35,6 +41,8 @@ impl UndoOp {
             UndoOp::Transfer { pairs, moved: true } => format!("move of {}", n(pairs.len())),
             UndoOp::Transfer { pairs, moved: false } => format!("copy of {}", n(pairs.len())),
             UndoOp::Create { .. } => "new item".into(),
+            UndoOp::Restore { items } => format!("removal of {}", n(items.len())),
+            UndoOp::Many(ops) => ops.last().map(UndoOp::describe).unwrap_or_default(),
         }
     }
 }
@@ -77,6 +85,14 @@ pub fn undo(op: UndoOp) -> Result<String, String> {
             }
         }
         UndoOp::Trash { originals, when } => restore_from_trash(&originals, when),
+        UndoOp::Restore { items } => restore_items(items),
+        UndoOp::Many(ops) => {
+            let mut msgs = Vec::new();
+            for op in ops.into_iter().rev() {
+                msgs.push(undo(op)?);
+            }
+            Ok(msgs.into_iter().next().unwrap_or_default())
+        }
     }
 }
 
@@ -101,6 +117,42 @@ fn restore_from_trash(originals: &[PathBuf], when: SystemTime) -> Result<String,
     let n = picked.len();
     trash::os_limited::restore_all(picked).map_err(|e| format!("Couldn't restore from trash: {e}"))?;
     Ok(format!("Restored {n} item{} from trash", if n == 1 { "" } else { "s" }))
+}
+
+/// Undo step for items just moved to the trash: pins the exact trash entries,
+/// so a later trashing of the same path can't be restored by mistake.
+pub fn trashed(originals: &[PathBuf], since: SystemTime) -> UndoOp {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let from = since.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64 - 1).unwrap_or(0);
+        if let Ok(all) = trash::os_limited::list() {
+            let items: Vec<trash::TrashItem> = originals
+                .iter()
+                .filter_map(|o| {
+                    all.iter()
+                        .filter(|it| &it.original_path() == o && it.time_deleted >= from)
+                        .max_by_key(|it| it.time_deleted)
+                        .cloned()
+                })
+                .collect();
+            if items.len() == originals.len() {
+                return UndoOp::Restore { items };
+            }
+        }
+    }
+    UndoOp::Trash { originals: originals.to_vec(), when: since }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn restore_items(items: Vec<trash::TrashItem>) -> Result<String, String> {
+    let n = items.len();
+    trash::os_limited::restore_all(items).map_err(|e| format!("Couldn't restore from trash: {e}"))?;
+    Ok(format!("Restored {n} item{} from trash", if n == 1 { "" } else { "s" }))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn restore_items(_: Vec<trash::TrashItem>) -> Result<String, String> {
+    Err("Restoring from the Trash isn't supported on this system; use Put Back in Finder".into())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]

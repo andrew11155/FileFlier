@@ -257,6 +257,21 @@ pub fn search(p: &Painter, r: Rect, c: Color32) {
     line(p, &[at(r, 0.61, 0.61), at(r, 0.86, 0.86)], c, 1.8);
 }
 
+pub fn eject(p: &Painter, r: Rect, c: Color32) {
+    let r = square(r);
+    p.add(PathShape::convex_polygon(vec![at(r, 0.5, 0.14), at(r, 0.9, 0.6), at(r, 0.1, 0.6)], c, Stroke::NONE));
+    p.rect_filled(Rect::from_min_max(at(r, 0.1, 0.72), at(r, 0.9, 0.86)), 1.0, c);
+}
+
+pub fn trash(p: &Painter, r: Rect, c: Color32) {
+    let r = square(r);
+    line(p, &[at(r, 0.18, 0.28), at(r, 0.82, 0.28)], c, 1.5);
+    line(p, &[at(r, 0.4, 0.28), at(r, 0.42, 0.16), at(r, 0.58, 0.16), at(r, 0.6, 0.28)], c, 1.4);
+    line(p, &[at(r, 0.26, 0.28), at(r, 0.32, 0.86), at(r, 0.68, 0.86), at(r, 0.74, 0.28)], c, 1.5);
+    line(p, &[at(r, 0.44, 0.42), at(r, 0.45, 0.72)], c, 1.2);
+    line(p, &[at(r, 0.56, 0.42), at(r, 0.55, 0.72)], c, 1.2);
+}
+
 pub fn plus(p: &Painter, r: Rect, c: Color32) {
     let r = square(r);
     line(p, &[at(r, 0.5, 0.2), at(r, 0.5, 0.8)], c, 1.5);

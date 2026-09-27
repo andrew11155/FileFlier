@@ -7,10 +7,11 @@ use std::time::Duration;
 use egui::{Align, Align2, Color32, Id, Key, Modifiers, Order, RichText, Sense, Stroke, TextEdit, Ui, pos2, vec2};
 
 use super::{RowIcon, badge, font, menu_row, popup_frame, search_box, text};
-use crate::app::{Action, Dialog, FileFlier, MenuItem, PaletteItem, display_name, step};
+use crate::app::{Action, Dialog, FileFlier, MenuItem, PaletteItem, Resolve, display_name, step};
 use crate::commands::{self, Command};
 use crate::icons::FileKind;
 use crate::search::{self, Search};
+use crate::trashview;
 use crate::{fuzzy, ops};
 
 /// Up / Down / Enter / Tab for popup lists.
@@ -169,14 +170,16 @@ impl FileFlier {
                         continue;
                     }
                     let selected = selectable.get(menu.cursor) == Some(i);
+                    let danger = matches!(item, MenuItem::Cmd(Command::Trash | Command::DeletePermanently));
                     let (label, badges, icon) = match item {
+                        MenuItem::Cmd(c) if danger => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::Trash),
                         MenuItem::Cmd(c) => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::None),
                         MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
                         MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
                         MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
                         MenuItem::Sep => unreachable!(),
                     };
-                    let resp = menu_row(ui, pal, selected, icon, &label, &badges);
+                    let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
                     if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
                         menu.cursor = sel_i;
                     }
@@ -536,6 +539,413 @@ impl FileFlier {
                     keep = false;
                     let paths = std::mem::take(paths);
                     self.start_delete(paths);
+                }
+            }
+            Dialog::Conflict(c) => {
+                let idx = c.conflicts[c.pos];
+                let src = c.paths[idx].clone();
+                let name = display_name(&src);
+                let existing = c.dest.join(src.file_name().unwrap_or_default());
+                let remaining = c.conflicts.len() - c.pos;
+                let mut choice = None;
+                let date_style = self.cfg.date_style;
+                modal(ctx, "conflict", 500.0, pal, &fx, |ui| {
+                    label(ui, pal, &format!("“{name}” already exists"), 16.0, Some(pal.text_strong));
+                    let msg = format!("There's already an item with this name in {}.", display_name(&c.dest));
+                    label(ui, pal, &msg, 13.0, Some(pal.text_dim));
+                    ui.add_space(6.0);
+                    let describe = |p: &std::path::Path| -> String {
+                        match std::fs::symlink_metadata(p) {
+                            Ok(m) => {
+                                let size =
+                                    if m.is_dir() { "Folder".to_string() } else { crate::app::human_size(m.len()) };
+                                let when =
+                                    m.modified().map(|t| crate::app::format_time(t, date_style)).unwrap_or_default();
+                                format!("{size}  ·  modified {when}")
+                            }
+                            Err(_) => "—".into(),
+                        }
+                    };
+                    for (title, p) in [("Already there", &existing), ("Incoming", &src)] {
+                        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
+                        let painter = ui.painter();
+                        painter.rect_filled(r.shrink2(vec2(0.0, 2.0)), 6.0, pal.input);
+                        let ir = egui::Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(24.0, 24.0));
+                        if p.is_dir() {
+                            crate::icons::folder(painter, ir, pal);
+                        } else {
+                            let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                            crate::icons::file(painter, ir, crate::icons::FileKind::from_ext(&ext), pal);
+                        }
+                        let (x, y) = (r.left() + 44.0, r.top());
+                        text(painter, pos2(x, y + 15.0), Align2::LEFT_CENTER, title, 13.0, pal.text_strong);
+                        text(painter, pos2(x, y + 31.0), Align2::LEFT_CENTER, describe(p), 12.5, pal.text_dim);
+                    }
+                    let note = if existing.is_dir() {
+                        "Replacing moves the existing folder, with everything in it, to the trash."
+                    } else {
+                        "Replacing moves the existing file to the trash, so you can get it back."
+                    };
+                    label(ui, pal, note, 12.5, Some(pal.text_dim));
+                    if remaining > 1 {
+                        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+                        let cb = egui::Rect::from_center_size(pos2(r.left() + 9.0, r.center().y), vec2(16.0, 16.0));
+                        super::checkbox(ui.painter(), cb, c.apply_all, pal, false);
+                        let t = format!("Do this for all {remaining} conflicts");
+                        text(ui.painter(), pos2(r.left() + 26.0, r.center().y), Align2::LEFT_CENTER, t, 13.0, pal.text);
+                        if resp.clicked() {
+                            c.apply_all = !c.apply_all;
+                        }
+                    }
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        if button(ui, pal, "Replace", false, true).clicked() {
+                            choice = Some(Resolve::Replace);
+                        }
+                        let both = button(ui, pal, "Keep Both", true, false);
+                        if both.on_hover_text("Adds a number to the new one's name").clicked() {
+                            choice = Some(Resolve::KeepBoth);
+                        }
+                        if button(ui, pal, "Skip", false, false).clicked() {
+                            choice = Some(Resolve::Skip);
+                        }
+                        if button(ui, pal, "Cancel", false, false).clicked() {
+                            keep = false;
+                        }
+                    });
+                    if ui.input(|i| i.key_pressed(Key::Enter)) {
+                        choice = Some(Resolve::KeepBoth);
+                    }
+                });
+                if let Some(ch) = choice {
+                    let upto = if c.apply_all { c.conflicts.len() } else { c.pos + 1 };
+                    for &i in &c.conflicts[c.pos..upto] {
+                        c.choices[i] = ch;
+                    }
+                    c.pos = upto;
+                    if c.pos >= c.conflicts.len() {
+                        keep = false;
+                        let (paths, dest, choices) =
+                            (std::mem::take(&mut c.paths), c.dest.clone(), std::mem::take(&mut c.choices));
+                        self.transfer_resolved(paths, dest, c.cut, choices);
+                    }
+                }
+            }
+            Dialog::Trash(tv) => {
+                tv.poll();
+                if tv.reload_when_idle && self.job.is_none() {
+                    tv.reload_when_idle = false;
+                    tv.reload();
+                }
+                if tv.loading.is_some() || self.job.is_some() {
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                }
+                let date_style = self.cfg.date_style;
+                let busy = self.job.is_some();
+                let mut action: Option<(bool, Vec<trash::TrashItem>)> = None; // (restore?, items)
+                modal(ctx, "trash", 760.0, pal, &fx, |ui| {
+                    let total: u64 = tv.items.iter().filter_map(|e| e.size).sum();
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
+                        crate::icons::trash(ui.painter(), r, super::danger_color(pal));
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("Trash").size(17.0).color(pal.text_strong));
+                        ui.add_space(10.0);
+                        let n = tv.items.len();
+                        let sub = if n == 0 {
+                            String::new()
+                        } else {
+                            format!("{n} item{}  ·  {}", crate::app::plural(n), crate::app::human_size(total))
+                        };
+                        ui.label(RichText::new(sub).size(13.0).color(pal.text_dim));
+                    });
+                    ui.add_space(6.0);
+                    input_row(ui, pal, &mut tv.filter, Id::new("trash_filter"), "Filter the trash...");
+                    let q = tv.filter.trim().to_lowercase();
+                    let visible: Vec<usize> = (0..tv.items.len())
+                        .filter(|&i| q.is_empty() || tv.items[i].name().to_lowercase().contains(&q))
+                        .collect();
+                    // Header: select all.
+                    let (hr, hresp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+                    let all =
+                        !visible.is_empty() && visible.iter().all(|&i| tv.selected.contains(&tv.items[i].item.id));
+                    let cb = egui::Rect::from_center_size(pos2(hr.left() + 14.0, hr.center().y), vec2(16.0, 16.0));
+                    super::checkbox(ui.painter(), cb, all, pal, false);
+                    let p = ui.painter();
+                    text(p, pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, "Name", 12.5, pal.text_dim);
+                    let (c_from, c_date, c_size) = (hr.left() + 300.0, hr.right() - 250.0, hr.right() - 8.0);
+                    text(p, pos2(c_from, hr.center().y), Align2::LEFT_CENTER, "Original location", 12.5, pal.text_dim);
+                    text(p, pos2(c_date, hr.center().y), Align2::LEFT_CENTER, "Deleted", 12.5, pal.text_dim);
+                    text(p, pos2(c_size, hr.center().y), Align2::RIGHT_CENTER, "Size", 12.5, pal.text_dim);
+                    if hresp.clicked() {
+                        for &i in &visible {
+                            let id = tv.items[i].item.id.clone();
+                            if all {
+                                tv.selected.remove(&id);
+                            } else {
+                                tv.selected.insert(id);
+                            }
+                        }
+                    }
+                    ui.painter().hline(hr.x_range(), hr.bottom(), Stroke::new(1.0, pal.border));
+                    egui::ScrollArea::vertical()
+                        .max_height(380.0)
+                        .min_scrolled_height(380.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if let Some(e) = &tv.error {
+                                label(ui, pal, e, 13.5, Some(pal.text_dim));
+                            } else if tv.loading.is_some() && tv.items.is_empty() {
+                                ui.add_space(20.0);
+                                ui.add(egui::Spinner::new().color(pal.text_dim));
+                            } else if tv.items.is_empty() {
+                                ui.add_space(40.0);
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new("The trash is empty").size(15.0).color(pal.text_dim));
+                                });
+                            }
+                            for &i in &visible {
+                                let e = &tv.items[i];
+                                let sel = tv.selected.contains(&e.item.id);
+                                let (r, resp) =
+                                    ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+                                let p = ui.painter();
+                                if sel {
+                                    p.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.35));
+                                } else if resp.hovered() {
+                                    p.rect_filled(r, 4.0, pal.tab_hover);
+                                }
+                                let cb =
+                                    egui::Rect::from_center_size(pos2(r.left() + 14.0, r.center().y), vec2(16.0, 16.0));
+                                super::checkbox(p, cb, sel, pal, false);
+                                let ir =
+                                    egui::Rect::from_center_size(pos2(r.left() + 44.0, r.center().y), vec2(18.0, 18.0));
+                                if e.is_dir() {
+                                    crate::icons::folder(p, ir, pal);
+                                } else {
+                                    let ext = std::path::Path::new(&e.item.name)
+                                        .extension()
+                                        .map(|x| x.to_string_lossy().to_lowercase())
+                                        .unwrap_or_default();
+                                    crate::icons::file(p, ir, crate::icons::FileKind::from_ext(&ext), pal);
+                                }
+                                let g = super::elided(p, &e.name(), 13.5, pal.text, c_from - r.left() - 70.0);
+                                p.galley(pos2(r.left() + 60.0, r.center().y - g.size().y / 2.0), g, pal.text);
+                                let from = tilde(&e.original_parent());
+                                let g = super::elided(p, &from, 13.0, pal.text_dim, c_date - c_from - 12.0);
+                                p.galley(pos2(c_from, r.center().y - g.size().y / 2.0), g, pal.text_dim);
+                                let when =
+                                    std::time::UNIX_EPOCH + Duration::from_secs(e.item.time_deleted.max(0) as u64);
+                                let when = crate::app::format_time(when, date_style);
+                                text(p, pos2(c_date, r.center().y), Align2::LEFT_CENTER, when, 13.0, pal.text_dim);
+                                let size = match (e.size, e.entries) {
+                                    (Some(b), _) => crate::app::human_size(b),
+                                    (_, Some(n)) => format!("{n} item{}", crate::app::plural(n)),
+                                    _ => String::new(),
+                                };
+                                text(p, pos2(c_size, r.center().y), Align2::RIGHT_CENTER, size, 13.0, pal.text_dim);
+                                let resp = resp.on_hover_text(e.item.original_path().to_string_lossy());
+                                if resp.clicked() {
+                                    let id = e.item.id.clone();
+                                    if sel {
+                                        tv.selected.remove(&id);
+                                    } else {
+                                        tv.selected.insert(id);
+                                    }
+                                }
+                            }
+                        });
+                    ui.add_space(10.0);
+                    let nsel = tv.selected.len();
+                    match tv.confirm {
+                        Some(which) => {
+                            let msg = match which {
+                                trashview::Confirm::Empty => format!(
+                                    "Permanently delete all {} items in the trash? This can't be undone.",
+                                    tv.items.len()
+                                ),
+                                trashview::Confirm::DeleteSelected => format!(
+                                    "Permanently delete {nsel} item{}? This can't be undone.",
+                                    crate::app::plural(nsel)
+                                ),
+                            };
+                            label(ui, pal, &msg, 13.5, Some(super::danger_color(pal)));
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                if button(ui, pal, "Delete forever", false, true).clicked() {
+                                    let items = match which {
+                                        trashview::Confirm::Empty => tv.items.iter().map(|e| e.item.clone()).collect(),
+                                        trashview::Confirm::DeleteSelected => tv.selected_items(),
+                                    };
+                                    action = Some((false, items));
+                                    tv.confirm = None;
+                                }
+                                if button(ui, pal, "Cancel", false, false).clicked() {
+                                    tv.confirm = None;
+                                }
+                            });
+                        }
+                        None => {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let label = if nsel > 0 { format!("Restore {nsel}") } else { "Restore".into() };
+                                if button(ui, pal, &label, true, false).clicked() && nsel > 0 && !busy {
+                                    action = Some((true, tv.selected_items()));
+                                }
+                                if button(ui, pal, "Delete forever", false, false).clicked() && nsel > 0 && !busy {
+                                    tv.confirm = Some(trashview::Confirm::DeleteSelected);
+                                }
+                                if button(ui, pal, "Empty Trash", false, true).clicked()
+                                    && !tv.items.is_empty()
+                                    && !busy
+                                {
+                                    tv.confirm = Some(trashview::Confirm::Empty);
+                                }
+                                if button(ui, pal, "Close", false, false).clicked() {
+                                    keep = false;
+                                }
+                            });
+                        }
+                    }
+                });
+                if let Some((restore, items)) = action
+                    && !items.is_empty()
+                {
+                    tv.reload_when_idle = true;
+                    let n = items.len();
+                    let label = if restore { "Restoring" } else { "Deleting" };
+                    self.start_job(format!("{label} {n} item{}", crate::app::plural(n)), move |_| {
+                        if restore {
+                            let n = trashview::restore(items)?;
+                            Ok((format!("Restored {n} item{}", crate::app::plural(n)), None))
+                        } else {
+                            let n = trashview::purge(items)?;
+                            Ok((format!("Deleted {n} item{} forever", crate::app::plural(n)), None))
+                        }
+                    });
+                }
+            }
+            Dialog::OpenWith(ow) => {
+                ow.poll_icons(ctx);
+                let (rec, others) = ow.visible();
+                let order: Vec<usize> = rec.iter().chain(others.iter()).copied().collect();
+                let (up, down, enter, _) = list_keys(ctx);
+                ow.cursor = step(ow.cursor, up, down, order.len());
+                let mut chosen: Option<usize> = None;
+                let file_name = display_name(&ow.files[0]);
+                let what = if ow.files.len() == 1 {
+                    format!("“{file_name}”")
+                } else {
+                    format!("{} files", ow.files.len())
+                };
+                let kind = ow.files[0]
+                    .extension()
+                    .map(|e| format!(".{} files", e.to_string_lossy().to_lowercase()))
+                    .unwrap_or_else(|| "files like this".into());
+                modal(ctx, "openwith", 480.0, pal, &fx, |ui| {
+                    label(ui, pal, &format!("Open {what} with"), 16.0, Some(pal.text_strong));
+                    input_row(ui, pal, &mut ow.filter, Id::new("openwith_filter"), "Search apps...").request_focus();
+                    egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
+                        let mut pos = 0usize;
+                        for (title, list) in [("Recommended", &rec), ("Other apps", &others)] {
+                            if list.is_empty() {
+                                continue;
+                            }
+                            ui.add_space(6.0);
+                            ui.label(RichText::new(title).size(12.0).color(pal.text_dim));
+                            ui.add_space(2.0);
+                            for &i in list.iter() {
+                                let app = &ow.apps[i];
+                                let selected = pos == ow.cursor;
+                                let (r, resp) =
+                                    ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+                                let p = ui.painter();
+                                if selected {
+                                    p.rect_filled(r, 5.0, pal.accent);
+                                } else if resp.hovered() {
+                                    p.rect_filled(r, 5.0, pal.tab_hover);
+                                }
+                                let ir =
+                                    egui::Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), vec2(24.0, 24.0));
+                                match ow.icons.get(&app.id) {
+                                    Some(t) => {
+                                        p.image(
+                                            t.id(),
+                                            ir,
+                                            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                                            Color32::WHITE,
+                                        );
+                                    }
+                                    None => {
+                                        p.rect_filled(ir.shrink(2.0), 5.0, pal.input);
+                                    }
+                                }
+                                let color = if selected { pal.on_accent } else { pal.text };
+                                text(
+                                    p,
+                                    pos2(r.left() + 42.0, r.center().y),
+                                    Align2::LEFT_CENTER,
+                                    &app.name,
+                                    14.0,
+                                    color,
+                                );
+                                if ow.default.as_deref() == Some(app.id.as_str()) {
+                                    super::badge(p, r.right() - 8.0, r.center().y, "Default", pal, selected);
+                                }
+                                if resp.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+                                    ow.cursor = pos;
+                                }
+                                if resp.clicked() {
+                                    ow.cursor = pos;
+                                }
+                                if resp.double_clicked() {
+                                    chosen = Some(i);
+                                }
+                                pos += 1;
+                            }
+                        }
+                        if order.is_empty() {
+                            ui.add_space(12.0);
+                            ui.label(RichText::new("No apps found").size(13.5).color(pal.text_dim));
+                        }
+                    });
+                    ui.add_space(8.0);
+                    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+                    let cb = egui::Rect::from_center_size(pos2(r.left() + 9.0, r.center().y), vec2(16.0, 16.0));
+                    super::checkbox(ui.painter(), cb, ow.always, pal, false);
+                    let t = format!("Always use this app for {kind}");
+                    text(ui.painter(), pos2(r.left() + 26.0, r.center().y), Align2::LEFT_CENTER, t, 13.0, pal.text);
+                    if resp.clicked() {
+                        ow.always = !ow.always;
+                    }
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        if button(ui, pal, "Open", true, false).clicked() {
+                            chosen = order.get(ow.cursor).copied();
+                        }
+                        if button(ui, pal, "Cancel", false, false).clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+                if enter && chosen.is_none() {
+                    chosen = order.get(ow.cursor).copied();
+                }
+                if let Some(i) = chosen {
+                    keep = false;
+                    let app = ow.apps[i].clone();
+                    if ow.always
+                        && let Err(e) = crate::openwith::set_default(&app.id, &ow.mime)
+                    {
+                        self.error(format!("Couldn't set the default app: {e}"));
+                    }
+                    match crate::openwith::launch(&app, &ow.files) {
+                        Ok(()) if ow.always => self.info(format!("{} is now the default for {kind}", app.name)),
+                        Ok(()) => {}
+                        Err(e) => self.error(e),
+                    }
                 }
             }
             Dialog::Settings => {

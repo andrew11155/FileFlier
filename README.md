@@ -33,14 +33,42 @@ the same on every desktop environment.
 - **Preview panel** (`F3`). A Finder-style panel with a large, zoomable
   preview of the selected item and its details. See [Previews](#previews).
 - **Sidebar.** Has its own filter box and collapsible sections for Recents,
-  Bookmarks, Storage (mounted drives with usage bars) and Places.
+  Bookmarks, Storage (drives with usage bars) and Places.
 - **File operations.** Copy, cut, paste, drag-and-drop (moves within a
   filesystem; hold `Ctrl` to copy), move to trash, permanent delete, rename,
   new file or folder, and copy or move to the other pane (`F5` / `F6`).
-  Operations run on a background thread and show progress.
-- **System clipboard.** Copied files go to the clipboard as paths. Pasting
-  paths or `file://` URIs from other applications copies those files in.
+  Operations run on a background thread and show progress. See
+  [Working with files](#working-with-files).
 - The view refreshes automatically when a folder changes on disk.
+
+## Working with files
+
+- **Name conflicts.** When you paste or drop something whose name already
+  exists, File Flier asks: *Replace*, *Keep Both* (adds a number) or *Skip*,
+  with an option to apply the choice to every conflict. *Replace* moves the
+  existing item to the trash rather than deleting it, and `Ctrl+Z` puts
+  everything back.
+- **Compress and extract.** Right-click → *Compress to ZIP* zips the selection.
+  *Extract here* unpacks ZIP, tar, tar.gz and gzip files; 7z, RAR, tar.xz,
+  tar.zst and more work when `bsdtar` is installed (it's included in the
+  Flatpak). An archive with a single item is extracted as that item; otherwise
+  into a new folder named after the archive. Nothing is ever overwritten.
+- **Open With** (`Ctrl+Shift+O`). Pick any installed app to open a file, and
+  optionally make it the default for that type. In the Flatpak, your desktop's
+  own app chooser appears instead.
+- **Trash.** Click *Trash* in the sidebar to see what's in it, restore items to
+  where they came from, delete them for good, or empty the trash. Dropping
+  files on *Trash* moves them there. *Move to trash* and *Delete permanently*
+  are red in right-click menus so they're easy to spot.
+- **Drives.** USB sticks, SD cards and extra partitions appear under *Storage*
+  even before they're mounted; click one to mount it (your desktop may ask for
+  a password). Removable drives have an eject button, which unmounts every
+  partition and powers the drive down so it's safe to unplug.
+- **Other apps.** Copied files go on the system clipboard as real files, so you
+  can paste them into GNOME Files, Dolphin, Nemo, chat apps and browsers. Drag
+  files out of the window to drop them into other apps, and drop files from
+  other apps into File Flier to copy them. This works on Wayland (GNOME, KDE
+  Plasma) and X11 (Cinnamon, Xfce).
 
 ## Previews
 
@@ -145,6 +173,7 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |
 | `Ctrl+Shift+T` | Open a terminal here |
+| `Ctrl+Shift+O` | Open with another app |
 | `Space` | Quick Look |
 | `Ctrl+Z` | Undo |
 | `Ctrl+,` | Settings |
@@ -287,6 +316,9 @@ freeze the window.
 - **Previews are isolated.** File formats are decoded by memory-safe Rust code,
   except HEIC (libheif) and PDF, which are decoded in a separate short-lived
   helper process, so a malformed file can't crash or hang File Flier.
+- **Archives can't escape.** Extraction refuses absolute paths and `..`,
+  never writes through symlinks, drops setuid bits, and unpacks into a hidden
+  temporary folder that's removed if anything goes wrong.
 - **Deleting is recoverable by default.** `Delete` moves items to the trash.
   Permanent delete (`Shift+Delete`) asks first.
 - **The Flatpak sandbox is broad by necessity.** A file manager needs access to

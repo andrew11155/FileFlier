@@ -593,6 +593,19 @@ pub fn have(program: &'static str) -> bool {
     found
 }
 
+/// Whether a program name or absolute path can be run.
+pub fn have_path(program: &str) -> bool {
+    if program.contains('/') {
+        return is_executable(Path::new(program));
+    }
+    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| is_executable(&d.join(program))))
+}
+
+/// Loads a PNG/SVG/etc. icon at about `size` pixels.
+pub fn load_icon(path: &Path, size: u32) -> Option<Rgba> {
+    catch_unwind(AssertUnwindSafe(|| images::icon(path, size))).ok().flatten()
+}
+
 fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)

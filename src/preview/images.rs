@@ -165,6 +165,14 @@ fn svg(path: &Path, max: u32) -> Result<(Rgba, (u32, u32)), String> {
     Ok((Rgba { w: pw, h: ph, px: px.collect() }, (w.round() as u32, h.round() as u32)))
 }
 
+/// A small icon (PNG, SVG, XPM-less) scaled to fit `size`.
+pub fn icon(path: &Path, size: u32) -> Option<Rgba> {
+    if super::ext_of(path) == "svg" {
+        return svg(path, size).ok().map(|(i, _)| i);
+    }
+    raster(path, size).ok().map(|(i, _)| i)
+}
+
 /// Camera RAW files carry a full-size JPEG preview; find the largest one.
 pub fn embedded_jpeg(path: &Path) -> Option<(image::DynamicImage, (u32, u32))> {
     let data = super::read_head(path, 200 << 20).ok()?;

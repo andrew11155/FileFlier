@@ -51,6 +51,10 @@ pub enum Command {
     Settings,
     QuickLook,
     Undo,
+    Compress,
+    Extract,
+    OpenWith,
+    ShowTrash,
 }
 
 use Command::*;
@@ -103,6 +107,10 @@ pub const ALL: &[Command] = &[
     Settings,
     QuickLook,
     Undo,
+    Compress,
+    Extract,
+    OpenWith,
+    ShowTrash,
 ];
 
 const fn sc(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
@@ -134,7 +142,7 @@ impl Command {
             Open => "Open",
             OpenTerminal => "Open terminal here",
             ToggleHidden => "Toggle hidden files",
-            TogglePreview => "Toggle inspector",
+            TogglePreview => "Toggle preview panel",
             ToggleTheme => "Toggle light/dark theme",
             SelectAll => "Select all",
             Copy => "Copy",
@@ -164,6 +172,10 @@ impl Command {
             Settings => "Settings",
             QuickLook => "Quick Look",
             Undo => "Undo",
+            Compress => "Compress to ZIP",
+            Extract => "Extract here",
+            OpenWith => "Open with…",
+            ShowTrash => "Show trash",
         }
     }
 
@@ -217,6 +229,8 @@ impl Command {
             Settings => vec![sc(CTRL, Key::Comma)],
             QuickLook => vec![sc(NONE, Key::Space)],
             Undo => vec![sc(CTRL, Key::Z)],
+            Compress | Extract | ShowTrash => vec![],
+            OpenWith => vec![sc(CTRL_SHIFT, Key::O)],
         }
     }
 
@@ -239,6 +253,6 @@ mod tests {
         let count = ALL.len();
         let unique: std::collections::HashSet<_> = ALL.iter().map(|c| format!("{c:?}")).collect();
         assert_eq!(unique.len(), count);
-        assert_eq!(count, Undo as usize + 1);
+        assert_eq!(count, ShowTrash as usize + 1);
     }
 }

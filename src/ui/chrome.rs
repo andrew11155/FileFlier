@@ -26,6 +26,7 @@ impl FileFlier {
         let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         if drag.drag_started() {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+            self.release_after_grab = true;
         }
         if drag.double_clicked() {
             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
@@ -216,6 +217,7 @@ impl FileFlier {
             }
             if resp.drag_started() {
                 ctx.send_viewport_cmd(ViewportCommand::BeginResize(dir));
+                self.release_after_grab = true;
             }
         }
         // A 1px frame so the borderless window reads as a window.

@@ -811,7 +811,8 @@ impl FileFlier {
                     tab.scroll_to_cursor = false;
                 }
                 ItemAction::Context(vi, pos) => {
-                    let is_dir = tab.entry_at(vi).is_some_and(|e| e.is_dir);
+                    let (is_dir, archive) =
+                        tab.entry_at(vi).map(|e| (e.is_dir, crate::archive::can_extract(&e.path))).unwrap_or_default();
                     let already = tab.entry_at(vi).is_some_and(|e| tab.selected.contains(&e.path));
                     if already {
                         tab.cursor = vi;
@@ -820,7 +821,7 @@ impl FileFlier {
                     }
                     tab.scroll_to_cursor = false;
                     self.actions.push(Action::Activate(idx));
-                    self.actions.push(Action::OpenMenu(pos, entry_menu(is_dir)));
+                    self.actions.push(Action::OpenMenu(pos, entry_menu(is_dir, archive)));
                 }
                 ItemAction::Open(vi) => {
                     tab.move_cursor(vi, false);
@@ -941,11 +942,16 @@ impl FileFlier {
     }
 }
 
-pub fn entry_menu(is_dir: bool) -> Vec<MenuItem> {
+pub fn entry_menu(is_dir: bool, archive: bool) -> Vec<MenuItem> {
     use Command::*;
     let mut v = vec![MenuItem::Cmd(Open)];
     if is_dir {
         v.push(MenuItem::Cmd(OpenInNewTab));
+    } else {
+        v.push(MenuItem::Cmd(OpenWith));
+    }
+    if archive {
+        v.push(MenuItem::Cmd(Extract));
     }
     v.extend([
         MenuItem::Cmd(OpenTerminal),
@@ -960,6 +966,7 @@ pub fn entry_menu(is_dir: bool) -> Vec<MenuItem> {
         MenuItem::Cmd(Trash),
         MenuItem::Cmd(DeletePermanently),
         MenuItem::Cmd(Rename),
+        MenuItem::Cmd(Compress),
         MenuItem::Sep,
         MenuItem::Cmd(TogglePreview),
     ]);

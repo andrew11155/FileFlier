@@ -45,14 +45,61 @@ pub struct Renaming {
 }
 
 pub enum Dialog {
-    Palette { query: String, cursor: usize },
-    GoTo { text: String, cursor: usize },
-    Search { query: String, root: PathBuf, search: Option<Search>, cursor: usize },
-    Rename { path: PathBuf, name: String, init: bool, error: Option<String> },
-    Create { dir: PathBuf, name: String, folder: bool, error: Option<String> },
-    ConfirmDelete { paths: Vec<PathBuf> },
+    Palette {
+        query: String,
+        cursor: usize,
+    },
+    GoTo {
+        text: String,
+        cursor: usize,
+    },
+    Search {
+        query: String,
+        root: PathBuf,
+        search: Option<Search>,
+        cursor: usize,
+    },
+    Rename {
+        path: PathBuf,
+        name: String,
+        init: bool,
+        error: Option<String>,
+    },
+    Create {
+        dir: PathBuf,
+        name: String,
+        folder: bool,
+        error: Option<String>,
+    },
+    ConfirmDelete {
+        paths: Vec<PathBuf>,
+    },
+    /// A paste/drop where some names already exist in the destination.
+    Conflict(Conflict),
+    Trash(crate::trashview::TrashView),
+    OpenWith(crate::openwith::OpenWithView),
     Help,
     Settings,
+}
+
+/// What to do when a pasted item's name is already taken.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Resolve {
+    KeepBoth,
+    Replace,
+    Skip,
+}
+
+pub struct Conflict {
+    pub paths: Vec<PathBuf>,
+    pub dest: PathBuf,
+    pub cut: bool,
+    /// Indices into `paths` whose name exists in `dest`.
+    pub conflicts: Vec<usize>,
+    /// Which conflict is being asked about.
+    pub pos: usize,
+    pub choices: Vec<Resolve>,
+    pub apply_all: bool,
 }
 
 /// A popup command menu (right-click menu, ⋮ menu, filter options).
@@ -89,6 +136,9 @@ pub enum Action {
     MoveTab(usize, usize, usize),
     Drop { paths: Vec<PathBuf>, dest: PathBuf, force_copy: bool },
     OpenMenu(Pos2, Vec<MenuItem>),
+    TrashPaths(Vec<PathBuf>),
+    MountVolume(String),
+    EjectVolume(crate::udisks::Volume),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -133,6 +183,15 @@ pub struct FileFlier {
     pub toast_undo: bool,
     pub quicklook: bool,
     pub renaming: Option<Renaming>,
+    /// Where a drive mounted from the sidebar ended up (opened when the job finishes).
+    mounted_at: Arc<Mutex<Option<PathBuf>>>,
+    /// Clipboard and drag-and-drop with other apps (set up on the first frame).
+    native: Option<crate::native::Native>,
+    /// The current in-app drag has been handed to the desktop.
+    drag_out: bool,
+    /// A window move/resize was handed to the compositor, which swallows the
+    /// button release; we synthesize it so egui doesn't think the button is stuck.
+    pub release_after_grab: bool,
 }
 
 impl FileFlier {
@@ -200,6 +259,10 @@ impl FileFlier {
             toast_undo: false,
             quicklook: false,
             renaming: None,
+            mounted_at: Default::default(),
+            native: None,
+            drag_out: false,
+            release_after_grab: false,
         }
     }
 
@@ -311,7 +374,7 @@ impl FileFlier {
         }
     }
 
-    fn start_job<F>(&mut self, label: String, work: F)
+    pub(crate) fn start_job<F>(&mut self, label: String, work: F)
     where
         F: FnOnce(&Mutex<String>) -> JobResult + Send + 'static,
     {
@@ -328,8 +391,37 @@ impl FileFlier {
         self.job = Some(Job { label, progress, rx });
     }
 
-    /// Copies or moves `paths` into `dest` on a worker thread.
+    /// Copies or moves `paths` into `dest`, first asking what to do about names
+    /// that already exist there.
     pub fn transfer(&mut self, paths: Vec<PathBuf>, dest: PathBuf, cut: bool) {
+        if paths.is_empty() {
+            return;
+        }
+        let conflicts: Vec<usize> = paths
+            .iter()
+            .enumerate()
+            .filter(|(_, src)| {
+                let Some(name) = src.file_name() else { return false };
+                let target = dest.join(name);
+                // Copying into its own folder is a plain duplicate ("name (2)").
+                target != **src && std::fs::symlink_metadata(&target).is_ok()
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let choices = vec![Resolve::KeepBoth; paths.len()];
+        if conflicts.is_empty() {
+            self.transfer_resolved(paths, dest, cut, choices);
+        } else {
+            self.dialog =
+                Some(Dialog::Conflict(Conflict { paths, dest, cut, conflicts, pos: 0, choices, apply_all: false }));
+        }
+    }
+
+    /// Copies or moves `paths` into `dest` on a worker thread. "Replace" moves the
+    /// existing item to the trash first, so nothing is ever lost.
+    pub fn transfer_resolved(&mut self, paths: Vec<PathBuf>, dest: PathBuf, cut: bool, choices: Vec<Resolve>) {
+        let (paths, choices): (Vec<PathBuf>, Vec<Resolve>) =
+            paths.into_iter().zip(choices).filter(|(_, c)| *c != Resolve::Skip).unzip();
         if paths.is_empty() {
             return;
         }
@@ -339,13 +431,37 @@ impl FileFlier {
             let mut errors = Vec::new();
             let mut done = 0;
             let mut pairs = Vec::new();
-            for src in &paths {
+            let mut replaced = Vec::new();
+            let started = std::time::SystemTime::now();
+            for (src, choice) in paths.iter().zip(&choices) {
                 let Some(name) = src.file_name() else { continue };
                 *progress.lock().unwrap() = name.to_string_lossy().into_owned();
                 if cut && src.parent() == Some(dest.as_path()) {
                     continue; // moving onto itself is a no-op
                 }
-                let target = ops::unique_dest(&dest, &name.to_string_lossy());
+                let target = if *choice == Resolve::Replace {
+                    let target = dest.join(name);
+                    if src.starts_with(&target) {
+                        errors.push(format!(
+                            "{}: can't replace a folder with something inside it",
+                            name.to_string_lossy()
+                        ));
+                        continue;
+                    }
+                    if std::fs::symlink_metadata(&target).is_ok() {
+                        if let Err(e) = ops::trash(std::slice::from_ref(&target)) {
+                            errors.push(format!(
+                                "{}: couldn't move the old one to the trash ({e})",
+                                name.to_string_lossy()
+                            ));
+                            continue;
+                        }
+                        replaced.push(target.clone());
+                    }
+                    target
+                } else {
+                    ops::unique_dest(&dest, &name.to_string_lossy())
+                };
                 let res = if cut { ops::move_path(src, &target) } else { ops::copy_recursive(src, &target) };
                 match res {
                     Ok(()) => {
@@ -356,8 +472,26 @@ impl FileFlier {
                 }
             }
             if errors.is_empty() {
-                let msg = format!("{} {done} item{}", if cut { "Moved" } else { "Copied" }, plural(done));
-                let op = (!pairs.is_empty()).then_some(UndoOp::Transfer { pairs, moved: cut });
+                let mut msg = format!("{} {done} item{}", if cut { "Moved" } else { "Copied" }, plural(done));
+                if !replaced.is_empty() {
+                    msg.push_str(&format!(
+                        " (replaced {} — the old one{} went to the trash)",
+                        replaced.len(),
+                        if replaced.len() == 1 { "" } else { "s" }
+                    ));
+                }
+                let mut ops_done = Vec::new();
+                if !replaced.is_empty() {
+                    ops_done.push(undo::trashed(&replaced, started));
+                }
+                if !pairs.is_empty() {
+                    ops_done.push(UndoOp::Transfer { pairs, moved: cut });
+                }
+                let op = match ops_done.len() {
+                    0 => None,
+                    1 => ops_done.pop(),
+                    _ => Some(UndoOp::Many(ops_done)),
+                };
                 Ok((msg, op))
             } else {
                 Err(errors.join("; "))
@@ -439,6 +573,47 @@ impl FileFlier {
                 self.renaming = Some(rn);
             }
         }
+    }
+
+    pub fn show_trash(&mut self) {
+        self.dialog = Some(Dialog::Trash(crate::trashview::TrashView::open()));
+    }
+
+    pub fn open_with(&mut self, ctx: &egui::Context) {
+        let files: Vec<PathBuf> = self.tab().targets().into_iter().filter(|p| !p.is_dir()).collect();
+        if files.is_empty() {
+            self.error("Select a file to open with another app");
+            return;
+        }
+        if ops::in_flatpak() {
+            // The sandbox can't see or start host apps; the desktop shows its own chooser.
+            let file = files[0].clone();
+            self.start_job("Opening the app chooser".into(), move |_| {
+                crate::openwith::portal_open_with(&file)?;
+                Ok((String::new(), None))
+            });
+            return;
+        }
+        self.dialog = Some(Dialog::OpenWith(crate::openwith::OpenWithView::new(files, ctx)));
+    }
+
+    pub fn trash_paths(&mut self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        let when = SystemTime::now();
+        match ops::trash(&paths) {
+            Ok(()) => {
+                let msg = format!("Moved {} item{} to trash", paths.len(), plural(paths.len()));
+                if undo::CAN_RESTORE_TRASH {
+                    self.info_undoable(msg, UndoOp::Trash { originals: paths, when });
+                } else {
+                    self.info(msg);
+                }
+            }
+            Err(e) => self.error(format!("Trash failed: {e}")),
+        }
+        self.reload_all();
     }
 
     pub fn start_delete(&mut self, paths: Vec<PathBuf>) {
@@ -610,8 +785,12 @@ impl FileFlier {
                     let cut = cmd == Cut;
                     let n = paths.len();
                     self.info(format!("{} {n} item{}", if cut { "Cut" } else { "Copied" }, plural(n)));
-                    // Mirror to the system clipboard so paths can be pasted elsewhere.
-                    ctx.copy_text(paths_text(&paths));
+                    // Put real files on the system clipboard so other apps (file
+                    // managers, chat apps, browsers) can paste them; plain paths otherwise.
+                    let native = self.native.as_ref().is_some_and(|n| n.set_clipboard(&paths, cut));
+                    if !native {
+                        ctx.copy_text(paths_text(&paths));
+                    }
                     self.clipboard = Some(Clip { paths, cut });
                 }
             }
@@ -638,22 +817,7 @@ impl FileFlier {
             }
             Trash => {
                 let paths = self.tab().targets();
-                if paths.is_empty() {
-                    return;
-                }
-                let when = SystemTime::now();
-                match ops::trash(&paths) {
-                    Ok(()) => {
-                        let msg = format!("Moved {} item{} to trash", paths.len(), plural(paths.len()));
-                        if undo::CAN_RESTORE_TRASH {
-                            self.info_undoable(msg, UndoOp::Trash { originals: paths, when });
-                        } else {
-                            self.info(msg);
-                        }
-                    }
-                    Err(e) => self.error(format!("Trash failed: {e}")),
-                }
-                self.reload_all();
+                self.trash_paths(paths);
             }
             DeletePermanently => {
                 let paths = self.tab().targets();
@@ -678,6 +842,51 @@ impl FileFlier {
                 self.quicklook = !self.quicklook && self.tab().cursor_entry().is_some();
             }
             Undo => self.undo_last(),
+            Compress => {
+                let paths = self.tab().targets();
+                if paths.is_empty() {
+                    return;
+                }
+                let dir = self.tab().path.clone();
+                let name =
+                    if paths.len() == 1 { format!("{}.zip", display_name(&paths[0])) } else { "Archive.zip".into() };
+                let out = ops::unique_dest(&dir, &name);
+                let n = paths.len();
+                self.start_job(format!("Compressing {n} item{}", plural(n)), move |progress| {
+                    crate::archive::compress(&paths, &out, progress)?;
+                    Ok((format!("Created {}", display_name(&out)), Some(UndoOp::Create { path: out })))
+                });
+            }
+            Extract => {
+                let archives: Vec<PathBuf> =
+                    self.tab().targets().into_iter().filter(|p| crate::archive::can_extract(p)).collect();
+                if archives.is_empty() {
+                    self.error("Select an archive (zip, tar, 7z...) to extract");
+                    return;
+                }
+                let dir = self.tab().path.clone();
+                let n = archives.len();
+                self.start_job(format!("Extracting {n} archive{}", plural(n)), move |progress| {
+                    let mut created = Vec::new();
+                    for a in &archives {
+                        created.push(
+                            crate::archive::extract(a, &dir, progress)
+                                .map_err(|e| format!("{}: {e}", display_name(a)))?,
+                        );
+                    }
+                    let msg = match created.as_slice() {
+                        [one] => format!("Extracted to {}", display_name(one)),
+                        _ => format!("Extracted {} archives", created.len()),
+                    };
+                    let op = match created.len() {
+                        1 => UndoOp::Create { path: created.pop().unwrap() },
+                        _ => UndoOp::Many(created.into_iter().map(|path| UndoOp::Create { path }).collect()),
+                    };
+                    Ok((msg, Some(op)))
+                });
+            }
+            OpenWith => self.open_with(ctx),
+            ShowTrash => self.show_trash(),
             NewFolder | NewFile => {
                 let dir = self.tab().path.clone();
                 let folder = cmd == NewFolder;
@@ -939,6 +1148,39 @@ impl FileFlier {
         }
     }
 
+    /// Drags that leave the window go to the desktop; files dropped from other
+    /// apps (Wayland) are copied into the current folder.
+    fn native_dnd(&mut self, ctx: &egui::Context) {
+        let Some(native) = &self.native else { return };
+        let payload = egui::DragAndDrop::payload::<DragPaths>(ctx);
+        match payload {
+            Some(p) if !self.drag_out => {
+                // The pointer left the window mid-drag (winit may stop reporting
+                // positions outside it, so a missing hover position counts too).
+                let inside = ctx.content_rect().shrink(2.0);
+                let outside = ctx.input(|i| match i.pointer.hover_pos() {
+                    None => i.pointer.latest_pos().is_some(),
+                    Some(pos) => !inside.contains(pos),
+                });
+                if outside && native.start_drag(&p.0) {
+                    // The desktop owns the drag now; dropping back on File Flier cancels it.
+                    self.drag_out = true;
+                    egui::DragAndDrop::clear_payload(ctx);
+                }
+            }
+            None => self.drag_out = false,
+            _ => {}
+        }
+        let drops = native.take_drops();
+        for d in drops {
+            let dest = self.tab().path.clone();
+            let paths: Vec<PathBuf> = d.paths.into_iter().filter(|p| p.parent() != Some(dest.as_path())).collect();
+            if !paths.is_empty() {
+                self.transfer(paths, dest, false);
+            }
+        }
+    }
+
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         if !dropped.is_empty() {
@@ -1001,10 +1243,15 @@ impl FileFlier {
                     let ok = res.is_ok();
                     match res {
                         Ok((msg, Some(op))) => self.info_undoable(msg, op),
-                        Ok((msg, None)) => self.info(msg),
+                        Ok((msg, None)) if !msg.is_empty() => self.info(msg),
+                        Ok(_) => {}
                         Err(e) => self.error(e),
                     }
                     self.reload_all();
+                    let mounted = self.mounted_at.lock().unwrap().take();
+                    if let Some(p) = mounted {
+                        self.navigate(p);
+                    }
                     if let Some(uri) = self.pending_uri.take()
                         && ok
                     {
@@ -1056,6 +1303,31 @@ impl FileFlier {
                     }
                 }
                 Action::Drop { paths, dest, force_copy } => self.drop_paths(paths, dest, force_copy),
+                Action::TrashPaths(paths) => self.trash_paths(paths),
+                Action::MountVolume(object) => {
+                    let slot = self.mounted_at.clone();
+                    self.start_job("Mounting drive".into(), move |_| {
+                        let path = crate::udisks::mount(&object)?;
+                        *slot.lock().unwrap() = Some(path.clone());
+                        Ok((format!("Mounted at {}", path.display()), None))
+                    });
+                }
+                Action::EjectVolume(vol) => {
+                    // Leave the drive first so it isn't busy.
+                    for i in 0..2 {
+                        if vol.mount_points.iter().any(|m| self.panes[i].tab().path.starts_with(m))
+                            && let Some(home) = dirs::home_dir()
+                        {
+                            self.panes[i].tab_mut().navigate(home, self.cfg.show_hidden, self.cfg.sort);
+                        }
+                    }
+                    let all: Vec<crate::udisks::Volume> = self.mounts.iter().filter_map(|m| m.volume.clone()).collect();
+                    let name = vol.label.clone();
+                    self.start_job(format!("Ejecting {name}"), move |_| {
+                        crate::udisks::eject(&vol, &all)?;
+                        Ok((format!("{name} can be unplugged safely"), None))
+                    });
+                }
                 Action::OpenMenu(pos, items) => {
                     self.menu = Some(Menu { pos, query: String::new(), cursor: 0, items, opened: Instant::now() })
                 }
@@ -1131,6 +1403,22 @@ pub enum PaletteItem {
 }
 
 impl eframe::App for FileFlier {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if self.release_after_grab {
+            self.release_after_grab = false;
+            let pos = ctx.input(|i| i.pointer.latest_pos()).unwrap_or_default();
+            raw.events.insert(
+                0,
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: raw.modifiers,
+                },
+            );
+        }
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         if self.fx().see_through {
             return [0.0; 4]; // let the (compositor-blurred) desktop show through
@@ -1141,6 +1429,10 @@ impl eframe::App for FileFlier {
 
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.native.is_none() {
+            self.native = Some(crate::native::Native::new(frame, &ctx));
+        }
+        self.native_dnd(&ctx);
         let pal = self.pal();
         self.poll_background(&ctx);
         self.persist_ui_state(&ctx);

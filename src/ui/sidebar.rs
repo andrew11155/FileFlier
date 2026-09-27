@@ -17,6 +17,8 @@ struct Item {
     label: String,
     path: PathBuf,
     space: Option<crate::app::DiskSpace>,
+    /// UDisks volume: unmounted ones mount on click, removable ones get an eject button.
+    volume: Option<crate::udisks::Volume>,
 }
 
 impl FileFlier {
@@ -58,18 +60,24 @@ impl FileFlier {
             (Place::Music, "Music".into(), std_dir(dirs::audio_dir(), "Music")),
             (Place::Pictures, "Pictures".into(), std_dir(dirs::picture_dir(), "Pictures")),
             (Place::Videos, "Videos".into(), std_dir(dirs::video_dir(), "Videos")),
-            (Place::Trash, "Trash".into(), dirs::data_dir().map(|d| d.join("Trash/files"))),
+            (Place::Trash, "Trash".into(), dirs::data_dir().map(|d| d.join("Trash"))),
         ]
         .into_iter()
         .filter_map(|(icon, label, path)| {
-            path.filter(|p| p.is_dir()).map(|path| Item { icon, label, path, space: None })
+            path.filter(|p| p.is_dir() || matches!(icon, Place::Trash)).map(|path| Item {
+                icon,
+                label,
+                path,
+                space: None,
+                volume: None,
+            })
         })
         .collect();
         let bookmarks: Vec<Item> = self
             .cfg
             .bookmarks
             .iter()
-            .map(|b| Item { icon: Place::Folder, label: display_name(b), path: b.clone(), space: None })
+            .map(|b| Item { icon: Place::Folder, label: display_name(b), path: b.clone(), space: None, volume: None })
             .collect();
         let recents: Vec<Item> = self
             .cfg
@@ -77,7 +85,7 @@ impl FileFlier {
             .iter()
             .filter(|p| p.is_dir())
             .take(10)
-            .map(|p| Item { icon: Place::Folder, label: display_name(p), path: p.clone(), space: None })
+            .map(|p| Item { icon: Place::Folder, label: display_name(p), path: p.clone(), space: None, volume: None })
             .collect();
         let storage: Vec<Item> = self
             .mounts
@@ -86,9 +94,9 @@ impl FileFlier {
                 let icon = match m.kind {
                     MountKind::Network => Place::Network,
                     MountKind::Cloud => Place::Cloud,
-                    MountKind::Root | MountKind::Removable => Place::Drive,
+                    MountKind::Root | MountKind::Removable | MountKind::Unmounted => Place::Drive,
                 };
-                Item { icon, label: m.name.clone(), path: m.path.clone(), space: m.space }
+                Item { icon, label: m.name.clone(), path: m.path.clone(), space: m.space, volume: m.volume.clone() }
             })
             .collect();
 
@@ -173,8 +181,17 @@ impl FileFlier {
                         let text_y = if item.space.is_some() { r.top() + 13.0 } else { r.center().y };
                         let ir = Rect::from_center_size(pos2(r.left() + 40.0, text_y), vec2(18.0, 18.0));
                         icons::place(p, ir, item.icon, pal);
-                        let color = if is_current { pal.text_strong } else { pal.text };
-                        let g = elided(p, &item.label, 14.0, color, r.right() - (r.left() + 58.0) - 6.0);
+                        let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty());
+                        let ejectable = item.volume.as_ref().is_some_and(|v| v.removable && !v.mount_points.is_empty());
+                        let color = if is_current {
+                            pal.text_strong
+                        } else if unmounted {
+                            pal.text_dim
+                        } else {
+                            pal.text
+                        };
+                        let eject_w = if ejectable { 26.0 } else { 0.0 };
+                        let g = elided(p, &item.label, 14.0, color, r.right() - (r.left() + 58.0) - 6.0 - eject_w);
                         p.galley(pos2(r.left() + 58.0, text_y - g.size().y / 2.0), g, color);
                         if let Some(u) = item.space.map(|s| s.used()) {
                             let bar = Rect::from_min_size(
@@ -199,9 +216,35 @@ impl FileFlier {
                             ),
                             None => item.path.display().to_string(),
                         };
+                        let tip =
+                            if unmounted { format!("{} — not mounted. Click to mount.", item.label) } else { tip };
+                        let mut eject_clicked = false;
+                        if ejectable && let Some(v) = &item.volume {
+                            let er = Rect::from_center_size(pos2(r.right() - 14.0, text_y), vec2(22.0, 22.0));
+                            let eresp = ui.interact(er, Id::new(("eject", &v.object)), Sense::click());
+                            let c = if eresp.hovered() { pal.text_strong } else { pal.text_dim };
+                            if eresp.hovered() {
+                                ui.painter().rect_filled(er, 4.0, pal.tab_hover);
+                            }
+                            icons::eject(ui.painter(), er.shrink(4.0), c);
+                            if eresp.on_hover_text("Eject — safe to unplug afterwards").clicked() {
+                                actions.push(Action::EjectVolume(v.clone()));
+                                eject_clicked = true;
+                            }
+                        }
                         let resp = resp.on_hover_text(tip);
-                        if resp.clicked() {
-                            actions.push(Action::Navigate(item.path.clone()));
+                        if resp.clicked() && eject_clicked {
+                            // handled by the eject button
+                        } else if resp.clicked() && unmounted {
+                            if let Some(v) = &item.volume {
+                                actions.push(Action::MountVolume(v.object.clone()));
+                            }
+                        } else if resp.clicked() {
+                            if matches!(item.icon, Place::Trash) {
+                                actions.push(Action::Run(crate::commands::Command::ShowTrash));
+                            } else {
+                                actions.push(Action::Navigate(item.path.clone()));
+                            }
                         }
                         if resp.middle_clicked() {
                             actions.push(Action::OpenInNewTab(item.path.clone()));
@@ -218,7 +261,11 @@ impl FileFlier {
                             actions.push(Action::OpenMenu(pos, items));
                         }
                         if let Some(pl) = resp.dnd_release_payload::<DragPaths>() {
-                            actions.push(Action::Drop { paths: pl.0.clone(), dest: item.path.clone(), force_copy });
+                            if matches!(item.icon, Place::Trash) {
+                                actions.push(Action::TrashPaths(pl.0.clone()));
+                            } else {
+                                actions.push(Action::Drop { paths: pl.0.clone(), dest: item.path.clone(), force_copy });
+                            }
                         }
                     }
                     ui.add_space(6.0);

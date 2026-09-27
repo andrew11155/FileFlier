@@ -25,6 +25,8 @@
       <li>Bookmarks, recent folders, drives and network shares in the sidebar</li>
       <li>Eight themes, custom accent colors, adjustable size and an optional frosted glass style</li>
       <li>Quick Look previews, inline rename and undo</li>
+      <li>Compress and extract archives, Open With, a trash browser, and drive mounting and ejecting</li>
+      <li>Copy, paste and drag files to and from other apps</li>
     </ul>
   </description>
 
@@ -36,23 +38,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/main.png</image>
       <caption>Split panes with a thumbnail grid and the inspector</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/quicklook.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/quicklook.png</image>
       <caption>Quick Look preview (Space)</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/glass.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/glass.png</image>
       <caption>Optional frosted glass style</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/menu.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/menu.png</image>
       <caption>Searchable context menu with keyboard shortcuts</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.4.0/docs/screenshots/palette.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/palette.png</image>
       <caption>Command palette</caption>
     </screenshot>
   </screenshots>
@@ -78,6 +80,20 @@
   </categories>
 
   <releases>
+    <release version="0.5.0" date="2026-09-27">
+      <description>
+        <p>Everyday file management:</p>
+        <ul>
+          <li>Replace, Keep Both or Skip when a pasted name already exists; replaced items go to the trash</li>
+          <li>Compress to ZIP and Extract Here (ZIP, tar, 7z, RAR and more)</li>
+          <li>Open With any installed app, and set the default app for a file type</li>
+          <li>Browse the trash: restore, delete forever or empty it</li>
+          <li>Mount drives from the sidebar and safely eject USB drives</li>
+          <li>Copy files to the clipboard as real files and drag them into other apps</li>
+          <li>Move to Trash and Delete are shown in red in right-click menus</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-09-26">
       <description>
         <p>Previews for almost everything:</p>
