@@ -22,21 +22,29 @@ fn square(r: Rect) -> Rect {
 // --------------------------------------------------------------- files
 
 pub fn folder(p: &Painter, r: Rect, pal: &Palette) {
-    let r = square(r);
-    let back = Rect::from_min_max(at(r, 0.06, 0.16), at(r, 0.94, 0.84));
-    // Tab on the back sheet.
-    p.add(PathShape::convex_polygon(
-        vec![at(r, 0.06, 0.2), at(r, 0.1, 0.14), at(r, 0.38, 0.14), at(r, 0.46, 0.24), at(r, 0.06, 0.24)],
+    let r = snap(p, square(r));
+    let lighter = |c: Color32, t: f32| mix(c, Color32::WHITE, t);
+    // Back sheet with its tab.
+    gradient(
+        p,
+        PathShape::convex_polygon(
+            vec![at(r, 0.06, 0.2), at(r, 0.1, 0.13), at(r, 0.38, 0.13), at(r, 0.46, 0.23), at(r, 0.06, 0.23)],
+            Color32::WHITE,
+            Stroke::NONE,
+        )
+        .into(),
+        lighter(pal.folder_back, 0.08),
         pal.folder_back,
-        Stroke::NONE,
-    ));
-    p.rect_filled(back.with_min_y(at(r, 0.0, 0.22).y), 2.0, pal.folder_back);
-    let front = Rect::from_min_max(at(r, 0.06, 0.32), at(r, 0.94, 0.84));
-    p.rect_filled(front, 2.0, pal.folder);
-    // Soft highlight along the front's top edge.
+    );
+    let back = Rect::from_min_max(at(r, 0.06, 0.21), at(r, 0.94, 0.86));
+    p.rect_filled(back, 2.0, pal.folder_back);
+    // Front sheet: a soft top-to-bottom gradient gives it some depth.
+    let front = Rect::from_min_max(at(r, 0.06, 0.32), at(r, 0.94, 0.86));
+    gradient(p, egui::Shape::rect_filled(front, 2.0, Color32::WHITE), lighter(pal.folder, 0.22), pal.folder);
+    let hl = (r.width() / 20.0).max(1.0);
     p.line_segment(
-        [at(r, 0.1, 0.35), at(r, 0.9, 0.35)],
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 70)),
+        [pos2(front.left() + 1.5, front.top() + hl * 0.5), pos2(front.right() - 1.5, front.top() + hl * 0.5)],
+        Stroke::new(hl, Color32::from_rgba_unmultiplied(255, 255, 255, 90)),
     );
 }
 
@@ -71,13 +79,20 @@ pub fn file_outline(p: &Painter, r: Rect, c: Color32) {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
+    /// Unknown or binary data: a blank page.
     Plain,
+    /// Plain text: a page with lines.
+    Text,
     Image,
     Audio,
     Video,
     Archive,
     Code,
     Document,
+    Spreadsheet,
+    Presentation,
+    Pdf,
+    Font,
     Executable,
 }
 
@@ -86,90 +101,188 @@ impl FileKind {
         match ext {
             "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tif" | "tiff" | "heic" | "heif"
             | "avif" | "jxl" | "cr2" | "cr3" | "nef" | "arw" | "dng" | "raf" | "orf" | "rw2" | "tga" | "exr"
-            | "hdr" => Self::Image,
-            "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" | "aiff" | "wma" | "m4b" => Self::Audio,
-            "mp4" | "mkv" | "webm" | "avi" | "mov" | "wmv" | "m4v" | "mpg" | "mpeg" | "3gp" | "mts" => Self::Video,
-            "zip" | "tar" | "gz" | "xz" | "bz2" | "7z" | "rar" | "zst" | "deb" | "rpm" | "tgz" => Self::Archive,
-            "rs" | "c" | "h" | "cpp" | "hpp" | "py" | "js" | "ts" | "go" | "java" | "sh" | "toml" | "json" | "yaml"
-            | "yml" | "html" | "css" | "lua" | "rb" | "zig" | "kt" | "cs" => Self::Code,
-            "pdf" | "doc" | "docx" | "odt" | "md" | "txt" | "rtf" | "csv" | "xls" | "xlsx" | "ods" | "ppt" | "pptx"
-            | "odp" | "epub" | "pages" | "numbers" | "key" | "tsv" => Self::Document,
-            "appimage" | "bin" | "run" | "exe" => Self::Executable,
+            | "hdr" | "psd" | "xcf" | "kra" => Self::Image,
+            "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" | "aiff" | "wma" | "m4b" | "mid" | "midi" => {
+                Self::Audio
+            }
+            "mp4" | "mkv" | "webm" | "avi" | "mov" | "wmv" | "m4v" | "mpg" | "mpeg" | "3gp" | "mts" | "ogv" => {
+                Self::Video
+            }
+            "zip" | "tar" | "gz" | "xz" | "bz2" | "7z" | "rar" | "zst" | "deb" | "rpm" | "tgz" | "tbz2" | "txz"
+            | "lz" | "lzma" | "cab" | "jar" | "apk" | "iso" | "img" | "dmg" => Self::Archive,
+            "rs" | "c" | "h" | "cpp" | "cc" | "hpp" | "py" | "js" | "mjs" | "ts" | "jsx" | "tsx" | "go" | "java"
+            | "sh" | "bash" | "zsh" | "fish" | "toml" | "json" | "yaml" | "yml" | "html" | "htm" | "css" | "scss"
+            | "lua" | "rb" | "zig" | "kt" | "cs" | "php" | "swift" | "dart" | "scala" | "sql" | "xml" | "vue"
+            | "svelte" | "nix" | "hs" | "ex" | "exs" | "el" | "vim" | "ini" | "conf" | "cfg" => Self::Code,
+            "txt" | "md" | "markdown" | "log" | "rst" | "org" | "nfo" => Self::Text,
+            "doc" | "docx" | "odt" | "fodt" | "rtf" | "pages" | "epub" | "wpd" | "tex" => Self::Document,
+            "xls" | "xlsx" | "ods" | "fods" | "csv" | "tsv" | "numbers" => Self::Spreadsheet,
+            "ppt" | "pptx" | "odp" | "fodp" | "key" => Self::Presentation,
+            "pdf" | "xps" | "djvu" => Self::Pdf,
+            "ttf" | "otf" | "woff" | "woff2" | "ttc" => Self::Font,
+            "appimage" | "run" | "exe" | "msi" | "flatpak" | "snap" => Self::Executable,
             _ => Self::Plain,
         }
     }
 
+    /// The icon's color; `None` for the neutral paper-colored kinds.
     fn color(self) -> Option<Color32> {
         Some(match self {
-            Self::Plain => return None,
-            Self::Image => Color32::from_rgb(38, 132, 214),
-            Self::Audio => Color32::from_rgb(214, 86, 150),
-            Self::Video => Color32::from_rgb(142, 90, 220),
-            Self::Archive => Color32::from_rgb(196, 138, 60),
-            Self::Code => Color32::from_rgb(60, 170, 110),
-            Self::Document => Color32::from_rgb(110, 128, 150),
-            Self::Executable => Color32::from_rgb(210, 80, 70),
+            Self::Plain | Self::Text => return None,
+            Self::Image => Color32::from_rgb(16, 165, 200),
+            Self::Audio => Color32::from_rgb(230, 72, 142),
+            Self::Video => Color32::from_rgb(139, 92, 246),
+            Self::Archive => Color32::from_rgb(224, 150, 28),
+            Self::Code => Color32::from_rgb(14, 163, 150),
+            Self::Document => Color32::from_rgb(47, 123, 245),
+            Self::Spreadsheet => Color32::from_rgb(30, 160, 84),
+            Self::Presentation => Color32::from_rgb(242, 107, 42),
+            Self::Pdf => Color32::from_rgb(229, 65, 60),
+            Self::Font => Color32::from_rgb(120, 132, 150),
+            Self::Executable => Color32::from_rgb(92, 106, 128),
         })
     }
 }
 
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgba_premultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
+}
+
+/// Snaps an icon's box to whole physical pixels so its straight edges stay sharp.
+fn snap(p: &Painter, r: Rect) -> Rect {
+    let ppp = p.pixels_per_point();
+    let s = (r.width() * ppp).round() / ppp;
+    let min = pos2((r.left() * ppp).round() / ppp, (r.top() * ppp).round() / ppp);
+    Rect::from_min_size(min, vec2(s, s))
+}
+
+/// Paints `shape` (drawn in opaque white) with a vertical gradient, keeping its
+/// anti-aliased edges: the shape is tessellated and each vertex recolored by height.
+fn gradient(p: &Painter, shape: egui::Shape, top: Color32, bottom: Color32) {
+    use egui::epaint::{Mesh, Tessellator};
+    let bounds = shape.visual_bounding_rect();
+    let options = p.ctx().options(|o| o.tessellation_options);
+    let mut tess = Tessellator::new(p.pixels_per_point(), options, [1, 1], vec![]);
+    let mut mesh = Mesh::default();
+    tess.tessellate_shape(shape, &mut mesh);
+    let h = bounds.height().max(1.0);
+    for v in &mut mesh.vertices {
+        let t = ((v.pos.y - bounds.top()) / h).clamp(0.0, 1.0);
+        v.color = mix(top, bottom, t).linear_multiply(v.color.a() as f32 / 255.0);
+    }
+    p.add(mesh);
+}
+
 pub fn file(p: &Painter, r: Rect, kind: FileKind, pal: &Palette) {
-    let r = square(r);
-    let (l, t, rr, b) = (0.2, 0.08, 0.8, 0.92);
-    let fold = 0.2;
-    let body = vec![at(r, l, t), at(r, rr - fold, t), at(r, rr, t + fold * 0.9), at(r, rr, b), at(r, l, b)];
-    p.add(PathShape::convex_polygon(body, pal.page, Stroke::new(1.0, Color32::from_black_alpha(60))));
-    p.add(PathShape::convex_polygon(
-        vec![at(r, rr - fold, t), at(r, rr, t + fold * 0.9), at(r, rr - fold, t + fold * 0.9)],
-        Color32::from_rgb(196, 202, 210),
-        Stroke::NONE,
-    ));
+    let r = snap(p, square(r));
+    let (l, t, rr, b) = (0.17, 0.05, 0.83, 0.95);
+    let fold = 0.26;
+    let fy = t + fold * r.width() / r.height();
+    let body = vec![at(r, l, t), at(r, rr - fold, t), at(r, rr, fy), at(r, rr, b), at(r, l, b)];
+    let corner = vec![at(r, rr - fold, t), at(r, rr, fy), at(r, rr - fold + 0.04, fy)];
+    let px = (r.width() / 18.0).max(1.0);
     let Some(c) = kind.color() else {
-        for y in [0.45, 0.58, 0.71] {
-            p.line_segment([at(r, 0.3, y), at(r, 0.7, y)], Stroke::new(1.0, Color32::from_rgb(170, 176, 184)));
+        // Neutral paper.
+        let (paper, edge) = if pal.is_dark {
+            (Color32::from_rgb(232, 235, 240), Color32::from_rgb(196, 201, 209))
+        } else {
+            (Color32::WHITE, Color32::from_rgb(170, 176, 186))
+        };
+        let outline = if pal.is_dark { Stroke::NONE } else { Stroke::new(px * 0.9, edge) };
+        gradient(
+            p,
+            PathShape::convex_polygon(body.clone(), Color32::WHITE, Stroke::NONE).into(),
+            paper,
+            mix(paper, edge, 0.35),
+        );
+        if outline != Stroke::NONE {
+            p.add(PathShape::convex_polygon(body, Color32::TRANSPARENT, outline));
+        }
+        p.add(PathShape::convex_polygon(corner, edge, Stroke::NONE));
+        if kind == FileKind::Text {
+            let s = Stroke::new(px, mix(edge, Color32::BLACK, 0.2));
+            for (y, w) in [(0.46, 0.66), (0.6, 0.66), (0.74, 0.5)] {
+                p.line_segment([at(r, 0.3, y), at(r, 0.3 + (w - 0.3) * 1.0, y)], s);
+            }
         }
         return;
     };
-    let badge = Rect::from_min_max(at(r, 0.28, 0.42), at(r, 0.72, 0.82));
-    p.rect_filled(badge, 1.5, c);
+    gradient(
+        p,
+        PathShape::convex_polygon(body, Color32::WHITE, Stroke::NONE).into(),
+        mix(c, Color32::WHITE, 0.16),
+        mix(c, Color32::BLACK, 0.06),
+    );
+    p.add(PathShape::convex_polygon(corner, mix(c, Color32::WHITE, 0.5), Stroke::NONE));
+    // White glyph in the lower part of the page.
+    let g = Rect::from_min_max(at(r, 0.29, 0.42), at(r, 0.71, 0.84));
+    let w = Color32::WHITE;
+    let s = Stroke::new(px * 1.1, w);
     match kind {
         Kind::Image => {
-            // Little mountain + sun.
             p.add(PathShape::convex_polygon(
-                vec![at(badge, 0.08, 0.9), at(badge, 0.42, 0.42), at(badge, 0.7, 0.9)],
-                Color32::WHITE,
+                vec![at(g, 0.0, 0.92), at(g, 0.4, 0.38), at(g, 0.78, 0.92)],
+                w,
                 Stroke::NONE,
             ));
-            p.circle_filled(at(badge, 0.72, 0.3), badge.width() * 0.12, Color32::WHITE);
+            p.add(PathShape::convex_polygon(
+                vec![at(g, 0.5, 0.92), at(g, 0.74, 0.6), at(g, 1.0, 0.92)],
+                w.gamma_multiply(0.8),
+                Stroke::NONE,
+            ));
+            p.circle_filled(at(g, 0.78, 0.2), g.width() * 0.14, w);
         }
         Kind::Audio => {
-            let s = Stroke::new(1.2, Color32::WHITE);
-            p.line_segment([at(badge, 0.62, 0.2), at(badge, 0.62, 0.72)], s);
-            p.circle_filled(at(badge, 0.48, 0.74), badge.width() * 0.13, Color32::WHITE);
+            p.line_segment([at(g, 0.64, 0.08), at(g, 0.64, 0.74)], s);
+            p.line_segment([at(g, 0.64, 0.1), at(g, 0.9, 0.24)], s);
+            p.circle_filled(at(g, 0.46, 0.76), g.width() * 0.2, w);
         }
         Kind::Video => {
             p.add(PathShape::convex_polygon(
-                vec![at(badge, 0.36, 0.25), at(badge, 0.72, 0.5), at(badge, 0.36, 0.75)],
-                Color32::WHITE,
+                vec![at(g, 0.26, 0.12), at(g, 0.86, 0.5), at(g, 0.26, 0.88)],
+                w,
                 Stroke::NONE,
             ));
         }
         Kind::Archive => {
-            for y in [0.2, 0.4, 0.6] {
-                p.rect_filled(
-                    Rect::from_center_size(at(badge, 0.5, y), vec2(badge.width() * 0.22, 1.6)),
-                    0.0,
-                    Color32::WHITE,
-                );
+            // Zipper.
+            let zw = g.width() * 0.2;
+            for (k, y) in [0.0, 0.2, 0.4, 0.6].into_iter().enumerate() {
+                let x = if k % 2 == 0 { 0.4 } else { 0.6 };
+                p.rect_filled(Rect::from_center_size(at(g, x, y + 0.06), vec2(zw, px * 1.4)), 0.0, w);
             }
+            p.rect_filled(Rect::from_min_max(at(g, 0.36, 0.72), at(g, 0.64, 1.0)), px, w);
         }
         Kind::Code => {
-            line(p, &[at(badge, 0.4, 0.28), at(badge, 0.2, 0.5), at(badge, 0.4, 0.72)], Color32::WHITE, 1.2);
-            line(p, &[at(badge, 0.6, 0.28), at(badge, 0.8, 0.5), at(badge, 0.6, 0.72)], Color32::WHITE, 1.2);
+            line(p, &[at(g, 0.36, 0.2), at(g, 0.06, 0.5), at(g, 0.36, 0.8)], w, px * 1.3);
+            line(p, &[at(g, 0.64, 0.2), at(g, 0.94, 0.5), at(g, 0.64, 0.8)], w, px * 1.3);
         }
-        Kind::Document | Kind::Executable | Kind::Plain => {
-            for y in [0.3, 0.5, 0.7] {
-                p.line_segment([at(badge, 0.2, y), at(badge, 0.8, y)], Stroke::new(1.0, Color32::WHITE));
+        Kind::Spreadsheet => {
+            let cell = Rect::from_min_max(at(g, 0.0, 0.06), at(g, 1.0, 0.94));
+            p.rect_stroke(cell, 0.5, s, StrokeKind::Inside);
+            p.line_segment([at(cell, 0.42, 0.0), at(cell, 0.42, 1.0)], s);
+            for y in [0.36, 0.66] {
+                p.line_segment([at(cell, 0.0, y), at(cell, 1.0, y)], s);
+            }
+        }
+        Kind::Presentation => {
+            for (x, h) in [(0.12, 0.45), (0.42, 0.75), (0.72, 0.3)] {
+                let top = 0.95 - h;
+                p.rect_filled(Rect::from_min_max(at(g, x, top), at(g, x + 0.2, 0.95)), 0.0, w);
+            }
+        }
+        Kind::Font => {
+            let size = g.height() * 1.05;
+            p.text(g.center() + vec2(0.0, px * 0.3), egui::Align2::CENTER_CENTER, "A", crate::ui::bold(size), w);
+        }
+        Kind::Executable => {
+            line(p, &[at(g, 0.06, 0.2), at(g, 0.38, 0.48), at(g, 0.06, 0.76)], w, px * 1.3);
+            p.line_segment([at(g, 0.5, 0.8), at(g, 0.94, 0.8)], Stroke::new(px * 1.3, w));
+        }
+        Kind::Document | Kind::Pdf | Kind::Plain | Kind::Text => {
+            for (y, x1) in [(0.14, 1.0), (0.42, 1.0), (0.7, 0.62)] {
+                p.line_segment([at(g, 0.0, y), at(g, x1, y)], s);
             }
         }
     }
@@ -460,5 +573,23 @@ pub fn place(p: &Painter, r: Rect, kind: Place, pal: &Palette) {
         Place::Folder => folder(p, r, pal),
         Place::Bookmark => bookmark(p, r, pal.text_dim, false),
         Place::Recent => clock(p, r, pal.text_dim),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileKind;
+
+    #[test]
+    fn file_kinds() {
+        assert!(FileKind::from_ext("pdf") == FileKind::Pdf);
+        assert!(FileKind::from_ext("xlsx") == FileKind::Spreadsheet);
+        assert!(FileKind::from_ext("csv") == FileKind::Spreadsheet);
+        assert!(FileKind::from_ext("pptx") == FileKind::Presentation);
+        assert!(FileKind::from_ext("docx") == FileKind::Document);
+        assert!(FileKind::from_ext("md") == FileKind::Text);
+        // Arbitrary binary data is not a program.
+        assert!(FileKind::from_ext("bin") == FileKind::Plain);
+        assert!(FileKind::from_ext("appimage") == FileKind::Executable);
     }
 }

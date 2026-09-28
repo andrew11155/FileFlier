@@ -139,7 +139,8 @@ impl FileFlier {
                         }
                         other => icons::place(p, ir, other, pal),
                     }
-                    text(p, pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, title, 14.0, pal.text);
+                    let hc = if hresp.hovered() { pal.text_strong } else { pal.text_dim };
+                    super::text_bold(p, pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, title, 13.0, hc);
                     let cr = Rect::from_center_size(pos2(hr.right() - 14.0, hr.center().y), vec2(16.0, 16.0));
                     if collapsed {
                         icons::chevron_right(p, cr, pal.text_dim);
@@ -172,6 +173,9 @@ impl FileFlier {
                         let p = ui.painter();
                         if is_current {
                             p.rect_filled(r, 4.0, pal.tab_hover);
+                            // Accent marker for where you are.
+                            let m = Rect::from_center_size(pos2(r.left() + 1.5, r.center().y), vec2(3.0, h * 0.5));
+                            p.rect_filled(m, 1.5, pal.accent);
                         } else if resp.hovered() {
                             p.rect_filled(r, 4.0, pal.hover);
                         }

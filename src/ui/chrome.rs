@@ -82,9 +82,10 @@ impl FileFlier {
                 painter.rect_filled(r, radius, fill);
                 if pane_active {
                     // Thin accent on top of the active pane's current tab.
-                    painter.line_segment(
-                        [pos2(r.left() + 7.0, r.top() + 0.5), pos2(r.right() - 7.0, r.top() + 0.5)],
-                        Stroke::new(1.0, pal.border),
+                    painter.rect_filled(
+                        Rect::from_min_max(pos2(r.left() + 10.0, r.top()), pos2(r.right() - 10.0, r.top() + 2.0)),
+                        1.0,
+                        pal.accent,
                     );
                 }
             } else if hovered {

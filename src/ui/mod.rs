@@ -28,6 +28,16 @@ pub fn font(size: f32) -> FontId {
     FontId::proportional(size)
 }
 
+/// The semibold UI font, for headings and emphasis.
+pub fn bold(size: f32) -> FontId {
+    FontId::new(size, egui::FontFamily::Name(crate::theme::SEMIBOLD.into()))
+}
+
+/// Like [`text`], in semibold.
+pub fn text_bold(p: &Painter, pos: egui::Pos2, align: Align2, s: impl ToString, size: f32, color: Color32) -> Rect {
+    p.text(pos, align, s.to_string(), bold(size), color)
+}
+
 pub fn text(p: &Painter, pos: egui::Pos2, align: Align2, s: impl ToString, size: f32, color: Color32) -> Rect {
     p.text(pos, align, s.to_string(), font(size), color)
 }
@@ -41,7 +51,12 @@ pub fn elided(p: &Painter, s: &str, size: f32, color: Color32, max_w: f32) -> Ar
 
 /// Text wrapped to at most `rows` lines, ellipsized.
 pub fn wrapped(p: &Painter, s: &str, size: f32, color: Color32, max_w: f32, rows: usize) -> Arc<Galley> {
-    let mut job = LayoutJob::simple(s.to_string(), font(size), color, max_w);
+    wrapped_in(p, s, font(size), color, max_w, rows)
+}
+
+/// [`wrapped`] with an explicit font.
+pub fn wrapped_in(p: &Painter, s: &str, font: FontId, color: Color32, max_w: f32, rows: usize) -> Arc<Galley> {
+    let mut job = LayoutJob::simple(s.to_string(), font, color, max_w);
     job.wrap =
         TextWrapping { max_width: max_w, max_rows: rows, break_anywhere: false, overflow_character: Some('…') };
     job.halign = Align::Center;

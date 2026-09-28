@@ -345,14 +345,15 @@ impl FileFlier {
                     let hr = Rect::from_min_max(pos2(l, h.top()), pos2(r, h.bottom()));
                     let resp = ui.interact(hr, Id::new(("hdr", idx, label)), Sense::click());
                     let p = ui.painter();
-                    let color = if resp.hovered() { pal.text_strong } else { pal.text };
+                    let active = key.is_some() && key == Some(sort.key);
+                    let color = if resp.hovered() || active { pal.text_strong } else { pal.text_dim };
                     if sep {
                         p.vline(l - 8.0, cy - 9.0..=cy + 9.0, Stroke::new(1.0, pal.border));
                     }
                     let label_rect = if right_align {
-                        text(p, pos2(r, cy), Align2::RIGHT_CENTER, label, 14.0, color)
+                        super::text_bold(p, pos2(r, cy), Align2::RIGHT_CENTER, label, 12.5, color)
                     } else {
-                        text(p, pos2(l, cy), Align2::LEFT_CENTER, label, 14.0, color)
+                        super::text_bold(p, pos2(l, cy), Align2::LEFT_CENTER, label, 12.5, color)
                     };
                     if key == Some(sort.key) {
                         let ax = if key == Some(SortKey::Name) {
@@ -365,7 +366,7 @@ impl FileFlier {
                         icons::sort_arrow(
                             p,
                             Rect::from_center_size(pos2(ax, cy), vec2(13.0, 13.0)),
-                            pal.text,
+                            pal.accent,
                             sort.descending,
                         );
                     }
@@ -658,16 +659,25 @@ impl FileFlier {
                                                 let g = elided(p, &type_label(e), 13.0, dim_color, r - l);
                                                 p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
                                             }
-                                            if let Some((l, _)) = cols.items {
-                                                let s = match e.is_dir.then(|| counts.get(&e.path)) {
-                                                    Some(Count::Items(n)) => short_count(n),
-                                                    Some(Count::Pending) => "…".into(),
-                                                    _ => "--".into(),
+                                            // Placeholders are drawn fainter than real values.
+                                            let faint = if on_accent { dim_color } else { pal.text_faint };
+                                            if let Some((l, _)) = cols.items
+                                                && e.is_dir
+                                            {
+                                                let (s, c) = match counts.get(&e.path) {
+                                                    Count::Items(0) => ("--".to_string(), faint),
+                                                    Count::Items(n) => (short_count(n), dim_color),
+                                                    Count::Pending => ("…".into(), faint),
+                                                    _ => ("--".into(), faint),
                                                 };
-                                                text(p, pos2(l, cy), Align2::LEFT_CENTER, s, 13.0, dim_color);
+                                                text(p, pos2(l, cy), Align2::LEFT_CENTER, s, 13.0, c);
                                             }
-                                            let size = if e.is_dir { "--".to_string() } else { human_size(e.size) };
-                                            text(p, pos2(cols.size.1, cy), Align2::RIGHT_CENTER, size, 13.0, dim_color);
+                                            let (size, c) = if e.is_dir {
+                                                ("--".to_string(), faint)
+                                            } else {
+                                                (human_size(e.size), dim_color)
+                                            };
+                                            text(p, pos2(cols.size.1, cy), Align2::RIGHT_CENTER, size, 13.0, c);
                                             if let Some((l, r)) = cols.modified {
                                                 let d =
                                                     e.modified.map(|m| format_time(m, date_style)).unwrap_or_default();
@@ -791,6 +801,10 @@ impl FileFlier {
         if n == 0 {
             let msg = match (&tab.error, tab.filter.is_empty()) {
                 (Some(e), _) => format!("⚠ {e}"),
+                (None, true) if !tab.entries.is_empty() => {
+                    let k = tab.entries.len();
+                    format!("{k} hidden item{} — press Ctrl+H to show", crate::app::plural(k))
+                }
                 (None, true) => "This folder is empty".into(),
                 (None, false) => "No items match the filter".into(),
             };

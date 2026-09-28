@@ -12,7 +12,7 @@ const SCALES: [f32; 6] = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
 fn section(ui: &mut Ui, pal: &Palette, title: &str) {
     ui.add_space(14.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-    text(ui.painter(), r.left_center(), Align2::LEFT_CENTER, title.to_uppercase(), 11.5, pal.text_dim);
+    super::text_bold(ui.painter(), r.left_center(), Align2::LEFT_CENTER, title.to_uppercase(), 11.5, pal.text_dim);
     ui.add_space(2.0);
 }
 
@@ -167,7 +167,14 @@ impl FileFlier {
 
         // Header.
         let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-        text(ui.painter(), hr.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, "Settings", 18.0, pal.text_strong);
+        super::text_bold(
+            ui.painter(),
+            hr.left_center() + vec2(4.0, 0.0),
+            Align2::LEFT_CENTER,
+            "Settings",
+            18.0,
+            pal.text_strong,
+        );
         let cr = Rect::from_center_size(pos2(hr.right() - 16.0, hr.center().y), vec2(28.0, 28.0));
         if super::icon_button(ui, cr, Id::new("settings_close"), true, pal, "Close (Esc)", crate::icons::close)
             .clicked()

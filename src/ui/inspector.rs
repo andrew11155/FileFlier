@@ -4,7 +4,7 @@
 use egui::{Align2, CursorIcon, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 
 use super::preview_view::{self, Nav, Style};
-use super::{elided, text, wrapped};
+use super::{elided, text};
 use crate::app::{FileFlier, format_mode, format_time, human_size};
 use crate::preview::Content;
 use crate::ui::pane_view::type_label;
@@ -95,7 +95,7 @@ impl FileFlier {
         // Name and kind.
         let mut y = pr.bottom() + 12.0;
         let p = ui.painter();
-        let g = wrapped(p, &e.name, 16.0, pal.text_strong, inner.width(), 3);
+        let g = super::wrapped_in(p, &e.name, super::bold(16.0), pal.text_strong, inner.width(), 3);
         let name_h = g.size().y;
         p.galley(pos2(inner.center().x, y), g, pal.text_strong);
         y += name_h + 3.0;
@@ -112,7 +112,7 @@ impl FileFlier {
         let ql = ui.interact(ql_r, Id::new("insp_ql"), Sense::click());
         let p = ui.painter();
         p.rect_filled(open_r, 6.0, if open.hovered() { pal.accent.gamma_multiply(1.15) } else { pal.accent });
-        text(p, open_r.center(), Align2::CENTER_CENTER, "Open", 13.0, pal.on_accent);
+        super::text_bold(p, open_r.center(), Align2::CENTER_CENTER, "Open", 13.0, pal.on_accent);
         p.rect_filled(ql_r, 6.0, if ql.hovered() { pal.hover } else { pal.tab_hover });
         p.rect_stroke(ql_r, 6.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
         text(p, ql_r.center(), Align2::CENTER_CENTER, "Quick Look", 13.0, pal.text);
@@ -149,7 +149,7 @@ impl FileFlier {
 
         let p = ui.painter();
         p.hline(inner.x_range(), y, Stroke::new(1.0, pal.row_sep));
-        text(p, pos2(inner.left(), y + 14.0), Align2::LEFT_CENTER, "Information", 12.5, pal.text_strong);
+        super::text_bold(p, pos2(inner.left(), y + 14.0), Align2::LEFT_CENTER, "Information", 12.5, pal.text_strong);
         y += 28.0;
         let area = Rect::from_min_max(pos2(inner.left(), y), inner.max);
         if area.height() < 20.0 {

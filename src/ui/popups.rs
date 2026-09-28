@@ -112,7 +112,9 @@ fn button(ui: &mut Ui, pal: &crate::theme::Palette, label: &str, primary: bool, 
 
 fn label(ui: &mut Ui, pal: &crate::theme::Palette, s: &str, size: f32, color: Option<Color32>) {
     ui.add_space(4.0);
-    ui.label(RichText::new(s).size(size).color(color.unwrap_or(pal.text)));
+    // Dialog titles (15pt and up) are semibold.
+    let font = if size >= 15.0 { super::bold(size) } else { super::font(size) };
+    ui.label(RichText::new(s).font(font).color(color.unwrap_or(pal.text)));
     ui.add_space(4.0);
 }
 
@@ -878,7 +880,12 @@ impl FileFlier {
                                         );
                                     }
                                     None => {
-                                        p.rect_filled(ir.shrink(2.0), 5.0, pal.input);
+                                        // No icon (yet): a tile with the app's initial.
+                                        let tile = if selected { Color32::from_white_alpha(46) } else { pal.tab_hover };
+                                        p.rect_filled(ir.shrink(2.0), 5.0, tile);
+                                        let initial = app.name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                                        let c = if selected { pal.on_accent } else { pal.text_dim };
+                                        super::text_bold(p, ir.center(), Align2::CENTER_CENTER, initial, 12.0, c);
                                     }
                                 }
                                 let color = if selected { pal.on_accent } else { pal.text };

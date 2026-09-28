@@ -197,7 +197,7 @@ pub struct FileFlier {
 impl FileFlier {
     pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>, window_transparent: bool) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        theme::load_system_font(&cc.egui_ctx);
+        theme::load_fonts(&cc.egui_ctx);
         let mut cfg = Config::load();
         if !cfg.preview_panel_intro {
             // 0.4 made the preview panel much more useful: show it once to everyone.

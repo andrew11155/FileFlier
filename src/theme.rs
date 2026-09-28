@@ -24,33 +24,32 @@ pub struct Palette {
     pub close_hover: Color32,
     pub folder: Color32,
     pub folder_back: Color32,
-    pub page: Color32,
     /// Text drawn on top of `accent` (white or near-black, whichever reads better).
     pub on_accent: Color32,
 }
 
 pub const DARK: Palette = Palette {
     is_dark: true,
-    titlebar: Color32::from_rgb(30, 32, 34),
-    bg: Color32::from_rgb(23, 25, 27),
-    sidebar: Color32::from_rgb(30, 33, 35),
-    row_sep: Color32::from_rgb(33, 35, 38),
-    hover: Color32::from_rgb(36, 39, 42),
-    tab_hover: Color32::from_rgb(38, 42, 43),
-    input: Color32::from_rgb(30, 32, 34),
-    border: Color32::from_rgb(54, 58, 59),
-    text: Color32::from_rgb(218, 220, 223),
-    text_strong: Color32::from_rgb(245, 246, 247),
-    text_dim: Color32::from_rgb(142, 147, 153),
-    text_faint: Color32::from_rgb(92, 97, 102),
-    accent: Color32::from_rgb(0, 119, 165),
-    accent_dim: Color32::from_rgb(12, 62, 84),
-    grid_sel: Color32::from_rgb(14, 31, 39),
-    popup: Color32::from_rgb(28, 32, 33),
-    close_hover: Color32::from_rgb(196, 43, 28),
-    folder: Color32::from_rgb(253, 215, 108),
-    folder_back: Color32::from_rgb(232, 178, 62),
-    page: Color32::from_rgb(236, 239, 243),
+    titlebar: Color32::from_rgb(26, 28, 32),
+    bg: Color32::from_rgb(19, 21, 24),
+    sidebar: Color32::from_rgb(25, 27, 31),
+    row_sep: Color32::from_rgb(30, 33, 37),
+    hover: Color32::from_rgb(33, 37, 43),
+    tab_hover: Color32::from_rgb(39, 43, 50),
+    input: Color32::from_rgb(27, 30, 34),
+    border: Color32::from_rgb(48, 53, 60),
+    text: Color32::from_rgb(230, 232, 236),
+    text_strong: Color32::from_rgb(250, 251, 252),
+    text_dim: Color32::from_rgb(148, 155, 165),
+    text_faint: Color32::from_rgb(94, 100, 110),
+    // A vivid azure: the selection is the brightest thing on screen.
+    accent: Color32::from_rgb(20, 132, 222),
+    accent_dim: Color32::from_rgb(20, 66, 102),
+    grid_sel: Color32::from_rgb(19, 39, 57),
+    popup: Color32::from_rgb(28, 31, 36),
+    close_hover: Color32::from_rgb(210, 45, 40),
+    folder: Color32::from_rgb(255, 209, 92),
+    folder_back: Color32::from_rgb(236, 168, 44),
     on_accent: Color32::WHITE,
 };
 
@@ -68,14 +67,13 @@ pub const LIGHT: Palette = Palette {
     text_strong: Color32::from_rgb(0, 0, 0),
     text_dim: Color32::from_rgb(98, 104, 110),
     text_faint: Color32::from_rgb(160, 165, 170),
-    accent: Color32::from_rgb(0, 119, 165),
-    accent_dim: Color32::from_rgb(190, 222, 238),
-    grid_sel: Color32::from_rgb(222, 238, 246),
+    accent: Color32::from_rgb(0, 114, 214),
+    accent_dim: Color32::from_rgb(184, 214, 242),
+    grid_sel: Color32::from_rgb(220, 235, 250),
     popup: Color32::from_rgb(252, 252, 253),
     close_hover: Color32::from_rgb(196, 43, 28),
-    folder: Color32::from_rgb(250, 200, 80),
-    folder_back: Color32::from_rgb(222, 165, 45),
-    page: Color32::from_rgb(255, 255, 255),
+    folder: Color32::from_rgb(255, 202, 72),
+    folder_back: Color32::from_rgb(230, 160, 30),
     on_accent: Color32::WHITE,
 };
 
@@ -186,7 +184,6 @@ fn from_spec(s: Spec) -> Palette {
         close_hover: Color32::from_rgb(196, 43, 28),
         folder,
         folder_back: mix(folder, Color32::BLACK, 0.12),
-        page: if s.is_dark { Color32::from_rgb(236, 239, 243) } else { Color32::WHITE },
         on_accent: Color32::WHITE,
     };
     set_accent(&mut p, accent);
@@ -359,30 +356,39 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
     });
 }
 
-/// Prefer a crisp system UI font when one is installed; egui's bundled fonts stay as fallback.
-pub fn load_system_font(ctx: &egui::Context) {
-    const CANDIDATES: &[&str] = &[
-        "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
-        "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
-        "/usr/share/fonts/inter/Inter-Regular.otf",
-        "/usr/share/fonts/TTF/Inter-Regular.ttf",
+/// Font family used for headings and labels that need weight ([`crate::ui::bold`]).
+pub const SEMIBOLD: &str = "semibold";
+
+/// Inter (SIL Open Font License, see `assets/fonts/Inter-OFL.txt`), bundled so text
+/// looks the same crisp way on every distro. One variable font gives both weights.
+static INTER: &[u8] = include_bytes!("../assets/fonts/InterVariable.ttf");
+
+/// Installs Inter as the UI font (regular and semibold), with the system's sans
+/// font and egui's defaults behind it for scripts Inter doesn't cover.
+pub fn load_fonts(ctx: &egui::Context) {
+    use egui::epaint::text::{FontData, FontDefinitions, FontFamily, FontTweak, VariationCoords};
+    let tweak = |weight: f32| FontTweak { coords: VariationCoords::new([(b"wght", weight)]), ..Default::default() };
+    let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert("inter".into(), FontData::from_static(INTER).tweak(tweak(420.0)).into());
+    fonts.font_data.insert("inter-semibold".into(), FontData::from_static(INTER).tweak(tweak(620.0)).into());
+    let mut fallback = Vec::new();
+    const SYSTEM: &[&str] = &[
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
-        "/usr/share/fonts/cantarell/Cantarell-VF.otf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
     ];
-    let Some(bytes) = CANDIDATES.iter().find_map(|p| std::fs::read(p).ok()) else { return };
-    ctx.add_font(egui::epaint::text::FontInsert::new(
-        "system-ui",
-        egui::FontData::from_owned(bytes),
-        vec![egui::epaint::text::InsertFontFamily {
-            family: egui::FontFamily::Proportional,
-            priority: egui::epaint::text::FontPriority::Highest,
-        }],
-    ));
+    if let Some(bytes) = SYSTEM.iter().find_map(|p| std::fs::read(p).ok()) {
+        fonts.font_data.insert("system-ui".into(), FontData::from_owned(bytes).into());
+        fallback.push("system-ui".to_string());
+    }
+    let defaults = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    let regular: Vec<String> = std::iter::once("inter".to_string()).chain(fallback).chain(defaults).collect();
+    let semibold = std::iter::once("inter-semibold".to_string()).chain(regular.iter().cloned()).collect();
+    fonts.families.insert(FontFamily::Proportional, regular);
+    fonts.families.insert(FontFamily::Name(SEMIBOLD.into()), semibold);
+    ctx.set_fonts(fonts);
 }
 
 #[cfg(test)]

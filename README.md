@@ -364,3 +364,6 @@ File Flier is free software, licensed under the
 [GNU General Public License v3.0 or later](LICENSE). You may use, study, share
 and modify it. If you distribute a modified version, you must also make its
 source available under the same license.
+
+The bundled [Inter](https://rsms.me/inter/) typeface is by Rasmus Andersson
+and is licensed under the [SIL Open Font License 1.1](assets/fonts/Inter-OFL.txt).
