@@ -38,23 +38,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/main.png</image>
       <caption>Split panes with a thumbnail grid and the inspector</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/quicklook.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/quicklook.png</image>
       <caption>Quick Look preview (Space)</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/glass.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/glass.png</image>
       <caption>Optional frosted glass style</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/menu.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/menu.png</image>
       <caption>Searchable context menu with keyboard shortcuts</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.0/docs/screenshots/palette.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/palette.png</image>
       <caption>Command palette</caption>
     </screenshot>
   </screenshots>
@@ -80,6 +80,18 @@
   </categories>
 
   <releases>
+    <release version="0.5.1" date="2026-09-28">
+      <description>
+        <p>A crisper, more colorful look:</p>
+        <ul>
+          <li>The Inter typeface is now built in, with semibold headings</li>
+          <li>Colorful file icons by type: PDFs, documents, spreadsheets, presentations, images, audio, video, archives, code and more</li>
+          <li>A deeper dark theme with brighter text and a vivid accent color</li>
+          <li>The active tab and current sidebar location are marked with the accent color</li>
+          <li>Folders with only hidden files say so, and how to show them</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-09-27">
       <description>
         <p>Everyday file management:</p>
