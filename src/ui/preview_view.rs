@@ -8,7 +8,7 @@ use egui::{
 use super::{elided, text, wrapped};
 use crate::fs_model::Entry;
 use crate::icons::{self, FileKind};
-use crate::preview::{Block, Content, Shown};
+use crate::preview::{Block, Content, Shown, model3d};
 use crate::theme::Palette;
 use crate::ui::pane_view::file_kind;
 
@@ -20,6 +20,19 @@ pub struct ViewState {
     pub zoom: f32,
     /// Point of the image (0..1) shown at the center of the area.
     center: Vec2,
+    /// Camera and renders for 3D models.
+    model: ModelView,
+}
+
+/// Orbit state of a 3D preview. Renders run on a worker thread so dragging stays
+/// smooth even for big meshes.
+#[derive(Default)]
+struct ModelView {
+    view: Option<model3d::View>,
+    /// What `tex` shows: camera and pixel size.
+    rendered: Option<(model3d::View, u32)>,
+    tex: Option<egui::TextureHandle>,
+    job: Option<std::sync::mpsc::Receiver<(model3d::View, u32, crate::preview::Rgba)>>,
 }
 
 impl ViewState {
@@ -33,6 +46,7 @@ impl ViewState {
     pub fn reset(&mut self) {
         self.zoom = 1.0;
         self.center = vec2(0.5, 0.5);
+        self.model = ModelView::default();
     }
 
     pub fn zoom_by(&mut self, factor: f32) {
@@ -86,6 +100,11 @@ pub fn show(
             }
             if *count > 1 {
                 nav = page_nav(ui, rect, *index, *count, pal);
+            }
+        }
+        Content::Model { mesh, .. } => {
+            if let Some(tex) = &shown.tex {
+                model_view(ui, rect, mesh, tex, view, pal);
             }
         }
         Content::Text { text: t, syntax, truncated } => text_view(ui, rect, e, t, syntax, *truncated, pal, &style),
@@ -205,6 +224,87 @@ fn zoom_image(
     // Zoom controls while hovering (or zoomed).
     if resp.hovered() || view.zoom > 1.0 {
         zoom_controls(ui, rect, view, pal, fit);
+    }
+}
+
+/// A 3D model: drag to orbit, scroll to zoom, double-click to reset.
+fn model_view(
+    ui: &mut Ui,
+    rect: Rect,
+    mesh: &std::sync::Arc<model3d::Mesh>,
+    first: &egui::TextureHandle,
+    state: &mut ViewState,
+    pal: &Palette,
+) {
+    let ctx = ui.ctx().clone();
+    let area = rect.shrink(6.0);
+    let resp =
+        ui.interact(rect, Id::new(("model_view", rect.min.x as i32, rect.min.y as i32)), Sense::click_and_drag());
+    let mv = &mut state.model;
+    let mut cam = mv.view.unwrap_or_default();
+    if resp.dragged() {
+        let d = resp.drag_delta();
+        cam.yaw -= d.x * 0.012;
+        cam.pitch = (cam.pitch + d.y * 0.012).clamp(-1.55, 1.55);
+    }
+    if resp.hovered() {
+        let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+        let f = pinch * (scroll * 0.0025).exp();
+        if (f - 1.0).abs() > 1e-4 {
+            cam.zoom = (cam.zoom * f).clamp(0.4, 12.0);
+            ui.input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
+        }
+        ctx.set_cursor_icon(if resp.dragged() { CursorIcon::Grabbing } else { CursorIcon::Grab });
+    }
+    if resp.double_clicked() {
+        cam = model3d::View::default();
+    }
+    mv.view = Some(cam);
+
+    // Collect a finished render.
+    if let Some(rx) = &mv.job {
+        match rx.try_recv() {
+            Ok((v, px, img)) => {
+                mv.tex = Some(ctx.load_texture("model", img.to_color_image(), egui::TextureOptions::LINEAR));
+                mv.rendered = Some((v, px));
+                mv.job = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
+            Err(_) => mv.job = None,
+        }
+    }
+    // Start a new one if the camera or size changed; lower resolution while dragging.
+    let full = ((area.width().min(area.height()) * ctx.pixels_per_point()) as u32).clamp(64, 1400);
+    let want = if resp.dragged() { (full * 3 / 5).max(64) } else { full };
+    let is_first = cam == model3d::View::default() && mv.rendered.is_none();
+    if mv.job.is_none() && !is_first && mv.rendered != Some((cam, want)) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mesh = mesh.clone();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let img = model3d::render(&mesh, cam, want, want);
+            let _ = tx.send((cam, want, img));
+            c.request_repaint();
+        });
+        mv.job = Some(rx);
+    }
+
+    let tex = mv.tex.as_ref().unwrap_or(first);
+    let side = area.width().min(area.height());
+    let r = Rect::from_center_size(area.center(), vec2(side, side));
+    let p = ui.painter().with_clip_rect(area.intersect(ui.clip_rect()));
+    // Soft floor shadow under the model.
+    p.add(
+        egui::Shadow { offset: [0, 0], blur: (side * 0.12) as u8, spread: 0, color: Color32::from_black_alpha(55) }
+            .as_shape(Rect::from_center_size(r.center() + vec2(0.0, side * 0.36), vec2(side * 0.5, side * 0.04)), 50),
+    );
+    p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    if resp.hovered() && !resp.dragged() {
+        let hint = "Drag to rotate · scroll to zoom · double-click to reset";
+        let g = elided(&p, hint, 11.5, pal.text_dim, rect.width() - 24.0);
+        let pr = Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 18.0), g.size() + vec2(16.0, 8.0));
+        pill(ui, pr, pal);
+        ui.painter().galley(pr.center() - g.size() / 2.0, g, pal.text_dim);
     }
 }
 

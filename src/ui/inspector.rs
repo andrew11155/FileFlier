@@ -63,6 +63,7 @@ impl FileFlier {
                     | Content::Dir(_)
                     | Content::Listing(_)
                     | Content::Page { .. }
+                    | Content::Model { .. }
             )
         });
         let preview_h = if reading {

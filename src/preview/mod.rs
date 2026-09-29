@@ -12,6 +12,7 @@ pub mod helper;
 mod images;
 mod media;
 mod misc;
+pub mod model3d;
 pub mod thumbs;
 
 use std::io::Read;
@@ -85,6 +86,11 @@ pub enum Content {
         thumb: Option<Rgba>,
         blocks: Vec<Block>,
     },
+    /// A 3D model: the mesh (so the view can be turned) and a first render.
+    Model {
+        mesh: Arc<model3d::Mesh>,
+        img: Rgba,
+    },
     Dir(Vec<Entry>),
     Listing(Vec<ListItem>),
     /// Nothing to draw beyond the file's icon, optionally with a note.
@@ -154,6 +160,8 @@ pub enum Kind {
     Font,
     Csv,
     Other,
+    Model3d,
+    Gcode,
 }
 
 pub fn ext_of(path: &Path) -> String {
@@ -192,6 +200,8 @@ pub fn classify(path: &Path) -> Kind {
         "tgz" => Kind::TarGz,
         "ttf" | "otf" | "ttc" | "otc" => Kind::Font,
         "csv" | "tsv" => Kind::Csv,
+        "stl" | "obj" | "ply" | "3mf" => Kind::Model3d,
+        "gcode" | "gco" | "g" => Kind::Gcode,
         _ => Kind::Other,
     }
 }
@@ -222,6 +232,8 @@ impl Kind {
                 | Kind::Epub
                 | Kind::IWork
                 | Kind::Zip
+                | Kind::Model3d
+                | Kind::Gcode
         )
     }
 }
@@ -269,6 +281,8 @@ fn load(path: &Path, is_dir: bool, page: usize, opts: &Options, cx: &Cx) {
         Kind::Zip | Kind::Tar | Kind::TarGz => misc::load_archive(path, kind),
         Kind::Font => misc::load_font(path),
         Kind::Csv => misc::load_csv(path),
+        Kind::Model3d => model3d::load(path),
+        Kind::Gcode => model3d::load_gcode(path),
         Kind::Other => misc::load_text_or_binary(path),
         _ => docs::load(path, kind),
     };
@@ -313,6 +327,8 @@ pub fn thumbnail(path: &Path, max: u32) -> Option<Rgba> {
         Kind::Video => media::video_frame(path, max, None),
         Kind::Audio => media::audio_cover(path, max),
         Kind::Zip => misc::comic_cover(path, max),
+        Kind::Model3d => model3d::thumbnail(path, max),
+        Kind::Gcode => model3d::gcode_thumb(path, max),
         _ => docs::embedded_thumbnail(path, kind, max).or_else(|| {
             // Office files previewed before have a LibreOffice-rendered PDF cached.
             let pdf = docs::converted_pdf(path).filter(|_| kind.is_office())?;
@@ -437,7 +453,7 @@ impl Previewer {
                 continue;
             }
             let img = match &loaded.content {
-                Content::Image(i) | Content::Page { img: i, .. } => Some(i),
+                Content::Image(i) | Content::Page { img: i, .. } | Content::Model { img: i, .. } => Some(i),
                 Content::Document { thumb: Some(i), .. } => Some(i),
                 _ => None,
             };
@@ -493,6 +509,11 @@ pub fn friendly_kind(e: &Entry) -> Option<String> {
         "txt" => "Plain text",
         "md" | "markdown" => "Markdown document",
         "csv" => "CSV spreadsheet",
+        "stl" => "STL 3D model",
+        "obj" => "OBJ 3D model",
+        "ply" => "PLY 3D model",
+        "3mf" => "3MF 3D model",
+        "gcode" | "gco" => "3D printer G-code",
         "html" | "htm" => "HTML document",
         "json" => "JSON file",
         "mp3" => "MP3 audio",

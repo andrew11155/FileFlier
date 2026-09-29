@@ -700,12 +700,15 @@ impl FileFlier {
                                             let scale = (thumb.width() / sz.x).min(thumb.height() / sz.y).min(1.0);
                                             let fit = Rect::from_center_size(thumb.center(), sz * scale);
                                             let p = ui.painter();
+                                            // 3D renders have a transparent background: no photo shadow.
+                                            let model =
+                                                crate::preview::classify(&e.path) == crate::preview::Kind::Model3d;
                                             p.add(
                                                 egui::Shadow {
                                                     offset: [0, 1],
                                                     blur: 6,
                                                     spread: 0,
-                                                    color: Color32::from_black_alpha(50),
+                                                    color: Color32::from_black_alpha(if model { 0 } else { 50 }),
                                                 }
                                                 .as_shape(fit, 3),
                                             );

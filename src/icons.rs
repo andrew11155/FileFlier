@@ -94,6 +94,7 @@ pub enum FileKind {
     Pdf,
     Font,
     Executable,
+    Model3d,
 }
 
 impl FileKind {
@@ -119,6 +120,8 @@ impl FileKind {
             "xls" | "xlsx" | "ods" | "fods" | "csv" | "tsv" | "numbers" => Self::Spreadsheet,
             "ppt" | "pptx" | "odp" | "fodp" | "key" => Self::Presentation,
             "pdf" | "xps" | "djvu" => Self::Pdf,
+            "stl" | "obj" | "ply" | "3mf" | "step" | "stp" | "fbx" | "glb" | "gltf" | "blend" | "scad" | "f3d"
+            | "gcode" | "bgcode" => Self::Model3d,
             "ttf" | "otf" | "woff" | "woff2" | "ttc" => Self::Font,
             "appimage" | "run" | "exe" | "msi" | "flatpak" | "snap" => Self::Executable,
             _ => Self::Plain,
@@ -140,6 +143,7 @@ impl FileKind {
             Self::Pdf => Color32::from_rgb(229, 65, 60),
             Self::Font => Color32::from_rgb(120, 132, 150),
             Self::Executable => Color32::from_rgb(92, 106, 128),
+            Self::Model3d => Color32::from_rgb(236, 88, 64),
         })
     }
 }
@@ -275,6 +279,16 @@ pub fn file(p: &Painter, r: Rect, kind: FileKind, pal: &Palette) {
         Kind::Font => {
             let size = g.height() * 1.05;
             p.text(g.center() + vec2(0.0, px * 0.3), egui::Align2::CENTER_CENTER, "A", crate::ui::bold(size), w);
+        }
+        Kind::Model3d => {
+            // An isometric cube.
+            let (c, s2) = (at(g, 0.5, 0.52), g.width() * 0.46);
+            let top = [c + vec2(0.0, -s2), c + vec2(s2 * 0.87, -s2 * 0.5), c, c + vec2(-s2 * 0.87, -s2 * 0.5)];
+            p.add(PathShape::convex_polygon(top.to_vec(), w, Stroke::NONE));
+            let left = [top[3], c, c + vec2(0.0, s2), top[3] + vec2(0.0, s2)];
+            p.add(PathShape::convex_polygon(left.to_vec(), w.gamma_multiply(0.75), Stroke::NONE));
+            let right = [c, top[1], top[1] + vec2(0.0, s2), c + vec2(0.0, s2)];
+            p.add(PathShape::convex_polygon(right.to_vec(), w.gamma_multiply(0.55), Stroke::NONE));
         }
         Kind::Executable => {
             line(p, &[at(g, 0.06, 0.2), at(g, 0.38, 0.48), at(g, 0.06, 0.76)], w, px * 1.3);
