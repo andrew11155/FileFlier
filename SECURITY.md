@@ -4,7 +4,7 @@
 
 Please **don't** open a public issue for security problems. Report them
 privately through GitHub's
-[private vulnerability reporting](https://github.com/andrew11155/FileFlier/security/advisories/new)
+[private vulnerability reporting](https://github.com/andrew11155/File-Flier/security/advisories/new)
 (Security → Report a vulnerability).
 
 Include:

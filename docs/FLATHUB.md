@@ -11,7 +11,7 @@ it's done, each new version is a small pull request.
 
 1. **Rename the repo to `FileFlier`** (Settings → General → Repository name).
    Flathub checks that the app ID `io.github.andrew11155.FileFlier` matches a
-   real repo at `github.com/andrew11155/FileFlier`. GitHub redirects the old
+   real repo at `github.com/andrew11155/File-Flier`. GitHub redirects the old
    `File-Flier` URLs automatically.
 2. **Make the repo public** (Settings → General → Danger Zone → Change
    visibility). Flathub only builds from public source.
@@ -34,7 +34,7 @@ then replace the local `type: dir` source with the tagged release:
 ```yaml
     sources:
       - type: git
-        url: https://github.com/andrew11155/FileFlier.git
+        url: https://github.com/andrew11155/File-Flier.git
         tag: v0.1.0
         commit: <full commit hash of v0.1.0>   # git rev-parse v0.1.0^{commit}
       - cargo-sources.json

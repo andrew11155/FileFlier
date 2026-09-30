@@ -1,6 +1,6 @@
 # File Flier
 
-A fast, keyboard-driven file manager for Linux, modeled closely on
+A fast, keyboard-driven file manager for Linux and macOS, modeled closely on
 [File Pilot](https://filepilot.tech) for Windows. It is written in Rust with
 [egui](https://github.com/emilk/egui) and draws all of its own UI, so it looks
 the same on every desktop environment.
@@ -191,13 +191,45 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 
 ## Installing
 
+### macOS
+
+Download **`File-Flier.dmg`** from the
+[Releases](https://github.com/andrew11155/File-Flier/releases) page, open it and
+drag **File Flier** into **Applications**. It runs natively on Apple silicon and
+Intel Macs (macOS 11 or newer), and updates itself from GitHub releases.
+
+The first time File Flier opens Desktop, Documents, Downloads, a USB drive or a
+network share, macOS asks for permission; the first time you move something to
+the Trash, macOS asks whether File Flier may use Finder for it (that's what
+keeps *Put Back* working). To browse everything without prompts, add File Flier
+under *System Settings → Privacy & Security → Full Disk Access*.
+
+If a release isn't signed yet, macOS says it can't check the app for malware:
+right-click **File Flier** in Applications, choose **Open**, then **Open** again.
+You only need to do this once.
+
+On a Mac:
+
+- Your cloud drives come from the providers' own apps (Google Drive, OneDrive,
+  Dropbox, iCloud Drive), which keep them in `~/Library/CloudStorage`; they
+  appear under *Storage*. USB drives get an eject button.
+- HEIC, AVIF and camera RAW previews work out of the box; video frames and
+  office page previews use `ffmpeg` and LibreOffice when installed (e.g.
+  `brew install ffmpeg`, LibreOffice from libreoffice.org).
+- The Trash opens in Finder, which handles *Put Back* and *Empty Trash*.
+
+**From source:** install Rust ([rustup.rs](https://rustup.rs)) and the Xcode
+command-line tools (`xcode-select --install`), then run
+`cargo build --release` for a plain binary or `scripts/macos-app.sh` to build
+`dist/File Flier.app` and the disk image.
+
 ### Bazzite, Silverblue, SteamOS and other immutable distros
 
 On these systems the OS is read-only, so File Flier installs as a **Flatpak**.
 Nothing is layered onto the system and nothing needs root.
 
 **From a release:** download `file-flier.flatpak` from the
-[Releases](https://github.com/andrew11155/FileFlier/releases) page, or from the
+[Releases](https://github.com/andrew11155/File-Flier/releases) page, or from the
 latest *Release* workflow run under Actions, then run:
 
 ```sh
@@ -207,8 +239,8 @@ flatpak install --user file-flier.flatpak
 **From source:**
 
 ```sh
-git clone https://github.com/andrew11155/FileFlier.git
-cd FileFlier
+git clone https://github.com/andrew11155/File-Flier.git
+cd File-Flier
 ./install.sh
 ```
 
@@ -285,8 +317,19 @@ terminal emulators in turn.
 - Publishing on Flathub is described step by step in
   [docs/FLATHUB.md](docs/FLATHUB.md).
 - Pushing a tag such as `v0.1.0` runs the *Release* workflow. It attaches
-  `file-flier.flatpak` and `file-flier-x86_64-linux.tar.gz` to a GitHub release.
-  You can also run the workflow by hand from the Actions tab.
+  `file-flier.flatpak`, `file-flier-x86_64-linux.tar.gz`, `File-Flier.dmg` and
+  `File-Flier-macos.zip` (used by the Mac updater) to a GitHub release. You can
+  also run the workflow by hand from the Actions tab.
+- **Signing the Mac app.** Without these repository secrets the Mac build is
+  ad-hoc signed (users right-click → Open once). With an Apple Developer
+  account, add them under *Settings → Secrets and variables → Actions* and the
+  release workflow signs and notarizes it:
+  - `MACOS_CERTIFICATE`: your *Developer ID Application* certificate exported
+    from Keychain Access as a `.p12`, base64-encoded (`base64 -i cert.p12 | pbcopy`)
+  - `MACOS_CERTIFICATE_PASSWORD`: the password you gave the `.p12`
+  - `APPLE_ID`: your Apple ID email
+  - `APPLE_TEAM_ID`: your 10-character team ID (developer.apple.com → Membership)
+  - `APPLE_APP_PASSWORD`: an app-specific password from account.apple.com
 
 ## Network shares and cloud storage
 

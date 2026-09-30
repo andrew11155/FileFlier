@@ -17,6 +17,17 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
   flatpak-sources:
     # The Flatpak builds offline from flatpak/cargo-sources.json; it must match Cargo.lock.
     runs-on: ubuntu-latest

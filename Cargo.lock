@@ -1179,7 +1179,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "file-flier"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ab_glyph",
  "cfb",
@@ -1198,6 +1198,9 @@ dependencies = [
  "libloading 0.9.0",
  "lofty",
  "md-5",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "open",
  "png",
  "quick-xml 0.42.0",
@@ -2433,6 +2436,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.2",
+ "block2 0.6.2",
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-core-graphics",

@@ -80,13 +80,18 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Renames without replacing an existing `dst` (atomically, via renameat2).
+/// Renames without replacing an existing `dst` (atomically: renameat2 on Linux,
+/// renamex_np on macOS).
 pub fn rename_noreplace(src: &Path, dst: &Path) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let c = |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(io::Error::other);
     let (s, d) = (c(src)?, c(dst)?);
     // SAFETY: both arguments are valid NUL-terminated paths.
+    #[cfg(target_os = "linux")]
     let r = unsafe { libc::renameat2(libc::AT_FDCWD, s.as_ptr(), libc::AT_FDCWD, d.as_ptr(), libc::RENAME_NOREPLACE) };
+    // SAFETY: as above.
+    #[cfg(target_os = "macos")]
+    let r = unsafe { libc::renamex_np(s.as_ptr(), d.as_ptr(), libc::RENAME_EXCL) };
     if r == 0 {
         return Ok(());
     }
@@ -184,6 +189,19 @@ pub enum TerminalError {
 /// Launches a terminal emulator in `dir`. In Flatpak, returns the `flatpak-spawn`
 /// process so the caller can notice if no terminal was found on the host (exit 127).
 pub fn open_terminal(dir: &Path) -> Result<Option<std::process::Child>, TerminalError> {
+    if cfg!(target_os = "macos") {
+        // A new window of the user's terminal app (iTerm or Ghostty if installed, else Terminal) in `dir`.
+        let app = ["iTerm", "Ghostty"]
+            .into_iter()
+            .find(|a| Path::new(&format!("/Applications/{a}.app")).exists())
+            .unwrap_or("Terminal");
+        return std::process::Command::new("open")
+            .args(["-a", app])
+            .arg(dir)
+            .spawn()
+            .map(|_| None)
+            .map_err(|e| TerminalError::Failed(format!("Could not open {app}: {e}")));
+    }
     let preferred = std::env::var("TERMINAL").ok().filter(|t| !t.trim().is_empty());
     if in_flatpak() {
         if !flatpak_can_spawn_on_host() {

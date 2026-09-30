@@ -94,6 +94,9 @@ fn connect() -> Result<zbus::blocking::Connection, String> {
 
 /// All volumes UDisks knows about, or an error if UDisks isn't available.
 pub fn list() -> Result<Vec<Volume>, String> {
+    if cfg!(target_os = "macos") {
+        return Ok(Vec::new()); // macOS mounts drives itself; see mounts::scan_macos
+    }
     let conn = connect()?;
     let proxy =
         zbus::blocking::Proxy::new(&conn, DEST, "/org/freedesktop/UDisks2", "org.freedesktop.DBus.ObjectManager")
@@ -151,6 +154,24 @@ pub fn mount(object: &str) -> Result<PathBuf, String> {
 
 /// Unmounts every volume on the drive, then ejects or powers it off so it's safe to unplug.
 pub fn eject(vol: &Volume, all: &[Volume]) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: diskutil unmounts every volume on the disk and ejects it.
+        let _ = all;
+        let mp = vol.mount_points.first().ok_or("Nothing to eject")?;
+        let out = std::process::Command::new("diskutil")
+            .arg("eject")
+            .arg(mp)
+            .output()
+            .map_err(|e| format!("Couldn't run diskutil: {e}"))?;
+        return if out.status.success() {
+            Ok(())
+        } else {
+            let msg = String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
+            Err(nice_error(msg.trim()))
+        };
+    }
+    #[allow(unreachable_code)]
     let conn = connect()?;
     let siblings: Vec<&Volume> = match &vol.drive {
         Some(d) => all.iter().filter(|v| v.drive.as_ref() == Some(d)).collect(),
@@ -174,7 +195,7 @@ pub fn eject(vol: &Volume, all: &[Volume]) -> Result<(), String> {
 }
 
 fn nice_error(e: &str) -> String {
-    if e.contains("target is busy") || e.contains("DeviceBusy") {
+    if e.contains("target is busy") || e.contains("DeviceBusy") || e.contains("dissented") || e.contains("in use") {
         "The drive is in use. Close any files or apps using it, then try again.".into()
     } else if e.contains("NotAuthorized") {
         "Not allowed to do that (the password prompt was cancelled or denied).".into()

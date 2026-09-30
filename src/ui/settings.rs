@@ -374,7 +374,7 @@ impl FileFlier {
                 }
 
                 section(ui, pal, "Browsing");
-                if row(ui, pal, "Show hidden files", "Files starting with a dot (Ctrl+H)", |ui| {
+                if row(ui, pal, "Show hidden files", &super::keys("Files starting with a dot (Ctrl+H)"), |ui| {
                     toggle(ui, pal, Id::new("hidden"), self.cfg.show_hidden)
                 }) {
                     self.cfg.show_hidden = !self.cfg.show_hidden;

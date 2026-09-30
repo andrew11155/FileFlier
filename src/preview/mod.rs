@@ -622,7 +622,8 @@ pub fn have_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| is_executable(&d.join(program))))
 }
 
-/// Loads a PNG/SVG/etc. icon at about `size` pixels.
+/// Loads a PNG/SVG/etc. icon at about `size` pixels (Linux app icons).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn load_icon(path: &Path, size: u32) -> Option<Rgba> {
     catch_unwind(AssertUnwindSafe(|| images::icon(path, size))).ok().flatten()
 }

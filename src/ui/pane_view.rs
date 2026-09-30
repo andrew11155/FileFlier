@@ -817,7 +817,7 @@ impl FileFlier {
                 (Some(e), _) => format!("⚠ {e}"),
                 (None, true) if !tab.entries.is_empty() => {
                     let k = tab.entries.len();
-                    format!("{k} hidden item{} — press Ctrl+H to show", crate::app::plural(k))
+                    super::keys(&format!("{k} hidden item{} — press Ctrl+H to show", crate::app::plural(k)))
                 }
                 (None, true) => "This folder is empty".into(),
                 (None, false) => "No items match the filter".into(),

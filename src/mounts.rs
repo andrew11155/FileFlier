@@ -188,6 +188,8 @@ fn scan() -> Vec<Mount> {
             .and_then(|h| crate::app::disk_space(&h))
             .or_else(|| crate::app::disk_space(Path::new("/"))),
     }];
+    #[cfg(target_os = "macos")]
+    scan_macos(&mut mounts);
     let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
     for (path, kind) in parse_proc_mounts(&text) {
         // Only local disks get a usage bar: statvfs on a dead network share can hang.
@@ -286,6 +288,124 @@ impl SpaceCache {
     }
 }
 
+/// What a macOS mount under /Volumes is, from its filesystem type.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn classify_macos(mountpoint: &str, fstype: &str) -> Option<MountKind> {
+    if !mountpoint.starts_with("/Volumes/") {
+        return None;
+    }
+    Some(match fstype {
+        "smbfs" | "afpfs" | "nfs" | "webdav" | "ftp" => MountKind::Network,
+        "macfuse" | "osxfuse" | "fuse" => MountKind::Cloud,
+        _ => MountKind::Removable,
+    })
+}
+
+/// "GoogleDrive-me@gmail.com" → "Google Drive (me@gmail.com)" for ~/Library/CloudStorage.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn cloud_storage_label(name: &str) -> String {
+    let (provider, account) = name.split_once('-').unwrap_or((name, ""));
+    let provider = match provider {
+        "GoogleDrive" => "Google Drive",
+        "OneDrive" => "OneDrive",
+        "Dropbox" => "Dropbox",
+        "Box" => "Box",
+        other => other,
+    };
+    if account.is_empty() || account == provider { provider.to_string() } else { format!("{provider} ({account})") }
+}
+
+/// Drives under /Volumes (from `getmntinfo`), cloud folders the providers' own apps
+/// keep in ~/Library/CloudStorage, and iCloud Drive.
+#[cfg(target_os = "macos")]
+fn scan_macos(mounts: &mut Vec<Mount>) {
+    use std::ffi::CStr;
+    let mut buf: *mut libc::statfs = std::ptr::null_mut();
+    // SAFETY: getmntinfo points `buf` at a static array of `n` entries owned by libc.
+    let n = unsafe { libc::getmntinfo(&mut buf, libc::MNT_NOWAIT) };
+    let list = if n > 0 && !buf.is_null() {
+        // SAFETY: as above; the array stays valid until the next getmntinfo call on this thread.
+        unsafe { std::slice::from_raw_parts(buf, n as usize) }
+    } else {
+        &[]
+    };
+    let mut found: Vec<Mount> = Vec::new();
+    for st in list {
+        // SAFETY: the kernel fills these as NUL-terminated strings.
+        let (mp, fstype) = unsafe {
+            (
+                CStr::from_ptr(st.f_mntonname.as_ptr()).to_string_lossy().into_owned(),
+                CStr::from_ptr(st.f_fstypename.as_ptr()).to_string_lossy().into_owned(),
+            )
+        };
+        if st.f_flags & (libc::MNT_DONTBROWSE as u32) != 0 {
+            continue; // system volumes macOS hides from Finder
+        }
+        let Some(kind) = classify_macos(&mp, &fstype) else { continue };
+        let path = PathBuf::from(&mp);
+        let name = crate::app::display_name(&path);
+        // Local drives get a usage bar now; network ones get it from the watcher (off-thread).
+        let space = if kind == MountKind::Removable { crate::app::disk_space(&path) } else { None };
+        // Removable drives get an eject button through the same Volume type as on Linux.
+        let volume = (kind == MountKind::Removable).then(|| crate::udisks::Volume {
+            object: mp.clone(),
+            label: name.clone(),
+            size: space.map(|s| s.total).unwrap_or(0),
+            mount_points: vec![path.clone()],
+            removable: true,
+            drive: None,
+            can_eject: true,
+            can_power_off: false,
+        });
+        found.push(Mount { path, name, kind, space, volume, cloud: None });
+    }
+    found.sort_by_key(|m| m.name.to_lowercase());
+    mounts.extend(found);
+
+    let Some(home) = dirs::home_dir() else { return };
+    let mut cloud: Vec<Mount> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(home.join("Library/CloudStorage")) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || !e.path().is_dir() {
+                continue;
+            }
+            cloud.push(Mount {
+                path: e.path(),
+                name: cloud_storage_label(&name),
+                kind: MountKind::Cloud,
+                space: None,
+                volume: None,
+                cloud: None,
+            });
+        }
+    }
+    let icloud = home.join("Library/Mobile Documents/com~apple~CloudDocs");
+    if icloud.is_dir() {
+        cloud.push(Mount {
+            path: icloud,
+            name: "iCloud Drive".into(),
+            kind: MountKind::Cloud,
+            space: None,
+            volume: None,
+            cloud: None,
+        });
+    }
+    cloud.sort_by_key(|m| m.name.to_lowercase());
+    mounts.extend(cloud);
+}
+
+/// macOS cloud folders (~/Library/CloudStorage, iCloud Drive) live on the Mac's own
+/// disk, so their "free space" would be the Mac's, not the account's: no bar for those.
+fn on_home_disk(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
+    dirs::home_dir().is_some_and(|h| dev(&h).is_some() && dev(&h) == dev(path))
+}
+
 /// Keeps an up-to-date mount list, refreshed on a background thread.
 pub struct MountWatcher {
     latest: Arc<Mutex<Vec<Mount>>>,
@@ -303,7 +423,7 @@ impl MountWatcher {
                 loop {
                     let mut mounts = scan();
                     for m in &mut mounts {
-                        if matches!(m.kind, MountKind::Network | MountKind::Cloud) {
+                        if matches!(m.kind, MountKind::Network | MountKind::Cloud) && !on_home_disk(&m.path) {
                             m.space = spaces.get(&m.path);
                         }
                     }
@@ -369,6 +489,16 @@ gdrive: /home/me/GoogleDrive fuse.rclone rw 0 0
 ";
         let got = parse_proc_mounts(text);
         assert_eq!(got, vec![(PathBuf::from("/home/me/GoogleDrive"), MountKind::Cloud)]);
+    }
+
+    #[test]
+    fn macos_mounts_and_cloud_folders() {
+        assert_eq!(classify_macos("/Volumes/USB", "exfat"), Some(MountKind::Removable));
+        assert_eq!(classify_macos("/Volumes/share", "smbfs"), Some(MountKind::Network));
+        assert_eq!(classify_macos("/System/Volumes/Data", "apfs"), None);
+        assert_eq!(cloud_storage_label("GoogleDrive-me@gmail.com"), "Google Drive (me@gmail.com)");
+        assert_eq!(cloud_storage_label("OneDrive-Personal"), "OneDrive (Personal)");
+        assert_eq!(cloud_storage_label("Dropbox"), "Dropbox");
     }
 
     #[test]

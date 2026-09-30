@@ -2,6 +2,11 @@
 //! clipboard (so other apps can paste them), dragging files out of the window, and
 //! (on Wayland) receiving dropped files.
 
+// The Linux backends share the MIME formats below; macOS uses AppKit directly.
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_os = "linux")]
 mod wayland;
 #[cfg(target_os = "linux")]
@@ -84,6 +89,8 @@ pub enum Native {
     Wayland(wayland::Handle),
     #[cfg(target_os = "linux")]
     X11(x11::Handle),
+    #[cfg(target_os = "macos")]
+    MacOs(macos::Handle),
     #[default]
     Unsupported,
 }
@@ -115,6 +122,17 @@ impl Native {
                 _ => {}
             }
         }
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(w) = frame.window_handle()
+                && let RawWindowHandle::AppKit(h) = w.as_raw()
+                // SAFETY: our window's live NSView.
+                && let Some(h) = unsafe { macos::Handle::new(h.ns_view.as_ptr()) }
+            {
+                return Native::MacOs(h);
+            }
+        }
         let _ = (frame, ctx);
         Native::Unsupported
     }
@@ -125,6 +143,8 @@ impl Native {
             Native::Wayland(h) => h.send(cmd),
             #[cfg(target_os = "linux")]
             Native::X11(h) => h.send(cmd),
+            #[cfg(target_os = "macos")]
+            Native::MacOs(_) => unreachable!("macOS is handled directly"),
             Native::Unsupported => {
                 let _ = cmd;
                 false
@@ -134,11 +154,19 @@ impl Native {
 
     /// Puts files on the system clipboard. Returns false if unsupported.
     pub fn set_clipboard(&self, paths: &[PathBuf], cut: bool) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Native::MacOs(h) = self {
+            return h.set_clipboard(paths); // Finder has no "cut" for files; pasting copies
+        }
         self.send(Cmd::Clipboard(Payload { paths: paths.to_vec(), cut }))
     }
 
     /// Hands a drag that left the window over to the desktop.
-    pub fn start_drag(&self, paths: &[PathBuf]) -> bool {
+    pub fn start_drag(&mut self, paths: &[PathBuf]) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Native::MacOs(h) = self {
+            return h.start_drag(paths);
+        }
         self.send(Cmd::Drag(Payload { paths: paths.to_vec(), cut: false }))
     }
 

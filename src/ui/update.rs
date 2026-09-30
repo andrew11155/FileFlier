@@ -102,6 +102,9 @@ impl FileFlier {
                 if !can_install {
                     ui.add_space(8.0);
                     let why = match self.updater.kind {
+                        updater::InstallKind::Unmanaged if cfg!(target_os = "macos") => {
+                            "Move File Flier to your Applications folder to update it from here, or download the release."
+                        }
                         updater::InstallKind::Unmanaged => {
                             "This copy is managed by your system: update it with your package manager, or download the release."
                         }

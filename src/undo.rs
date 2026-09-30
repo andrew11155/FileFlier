@@ -25,6 +25,7 @@ pub enum UndoOp {
         path: PathBuf,
     },
     /// Specific items in the trash to put back (e.g. files replaced by a paste).
+    #[cfg_attr(target_os = "macos", allow(dead_code))] // trash restore is Finder's job on macOS
     Restore {
         items: Vec<trash::TrashItem>,
     },

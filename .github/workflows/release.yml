@@ -52,3 +52,33 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: file-flier-x86_64-linux.tar.gz
+
+  macos:
+    # Universal "File Flier.app" as a .dmg (to install) and a .zip (for the in-app updater).
+    # Signed and notarized when the MACOS_* / APPLE_* secrets are set (see README → Packaging).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/macos-app.sh
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-flier-macos
+          path: |
+            dist/File-Flier.dmg
+            dist/File-Flier-macos.zip
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/File-Flier.dmg
+            dist/File-Flier-macos.zip

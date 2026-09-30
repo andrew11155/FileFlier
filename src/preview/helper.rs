@@ -196,10 +196,18 @@ mod heif {
         // check every error, and release everything we allocate. This runs in the
         // short-lived helper process, so a crash inside libheif can't affect the app.
         unsafe {
-            let lib = ["libheif.so.1", "libheif.so", "libheif.1.dylib", "libheif.dylib"]
-                .iter()
-                .find_map(|n| libloading::Library::new(*n).ok())
-                .ok_or("HEIC support needs libheif, which isn't installed")?;
+            let lib = [
+                "libheif.so.1",
+                "libheif.so",
+                "libheif.1.dylib",
+                "libheif.dylib",
+                // Homebrew, which macOS doesn't search by default.
+                "/opt/homebrew/lib/libheif.dylib",
+                "/usr/local/lib/libheif.dylib",
+            ]
+            .iter()
+            .find_map(|n| libloading::Library::new(*n).ok())
+            .ok_or("HEIC support needs libheif, which isn't installed")?;
             macro_rules! sym {
                 ($name:literal, $ty:ty) => {
                     *lib.get::<$ty>($name).map_err(|e| e.to_string())?

@@ -378,6 +378,9 @@ pub fn load_fonts(ctx: &egui::Context) {
         "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        // macOS: broad Unicode coverage (CJK and more).
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
     ];
     if let Some(bytes) = SYSTEM.iter().find_map(|p| std::fs::read(p).ok()) {
         fonts.font_data.insert("system-ui".into(), FontData::from_owned(bytes).into());

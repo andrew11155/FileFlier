@@ -20,9 +20,11 @@ use crate::config::Config;
 pub const ENABLED: bool = option_env!("FILE_FLIER_NO_UPDATER").is_none();
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const API_URL: &str = "https://api.github.com/repos/andrew11155/FileFlier/releases/latest";
+const API_URL: &str = "https://api.github.com/repos/andrew11155/File-Flier/releases/latest";
 const BINARY_ASSET: &str = "file-flier-x86_64-linux.tar.gz";
 const FLATPAK_ASSET: &str = "file-flier.flatpak";
+/// macOS app bundle (universal: Apple silicon and Intel), zipped with `ditto`.
+const MAC_ASSET: &str = "File-Flier-macos.zip";
 /// Refuse downloads larger than this.
 const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
 const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
@@ -33,6 +35,8 @@ pub enum InstallKind {
     Flatpak,
     /// A user-writable binary that can replace itself.
     Binary,
+    /// A macOS app bundle in a folder we can write to (e.g. /Applications).
+    MacApp(PathBuf),
     /// Installed by a package manager or a build tree; only the release page is offered.
     Unmanaged,
 }
@@ -240,12 +244,25 @@ pub fn install_kind() -> InstallKind {
         return InstallKind::Flatpak;
     }
     let Ok(exe) = std::env::current_exe() else { return InstallKind::Unmanaged };
-    let dir_writable = exe.parent().is_some_and(|d| {
+    let writable = |d: &Path| {
         std::ffi::CString::new(d.as_os_str().as_encoded_bytes())
             // SAFETY: a valid NUL-terminated path; `access` only reads it.
             .is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
-    });
-    classify(&exe, dir_writable)
+    };
+    if cfg!(target_os = "macos") {
+        return match app_bundle(&exe) {
+            Some(app) if app.parent().is_some_and(writable) => InstallKind::MacApp(app),
+            _ => InstallKind::Unmanaged,
+        };
+    }
+    classify(&exe, exe.parent().is_some_and(writable))
+}
+
+/// The `.app` bundle an executable lives in (`X.app/Contents/MacOS/x`).
+fn app_bundle(exe: &Path) -> Option<PathBuf> {
+    let app = exe.parent()?.parent()?.parent()?;
+    (app.extension().is_some_and(|e| e == "app") && exe.parent()?.ends_with("Contents/MacOS"))
+        .then(|| app.to_path_buf())
 }
 
 /// Package-manager paths and cargo build trees are left alone.
@@ -328,6 +345,7 @@ pub fn select_asset<'a>(release: &'a Release, kind: &InstallKind) -> Option<&'a 
     let name = match kind {
         InstallKind::Flatpak => FLATPAK_ASSET,
         InstallKind::Binary if cfg!(target_arch = "x86_64") => BINARY_ASSET,
+        InstallKind::MacApp(_) => MAC_ASSET,
         _ => return None,
     };
     release.assets.iter().find(|a| a.name == name)
@@ -515,6 +533,46 @@ fn apply(release: &Release, kind: &InstallKind, progress: &Progress, repaint: &d
             repaint();
             install_bundle(&bundle)
         }
+        InstallKind::MacApp(app) => {
+            let dir = app.parent().ok_or("Could not locate File Flier's folder")?;
+            let archive = dir.join(".File-Flier-update.zip");
+            let staging = dir.join(".File-Flier-update");
+            let old = dir.join(".File-Flier-old.app");
+            let result = (|| {
+                download(asset, &archive, progress, repaint)?;
+                progress.installing.store(true, Ordering::Relaxed);
+                repaint();
+                let _ = std::fs::remove_dir_all(&staging);
+                // ditto keeps the bundle's code signature, permissions and attributes intact.
+                let st = std::process::Command::new("ditto")
+                    .args(["-x", "-k"])
+                    .arg(&archive)
+                    .arg(&staging)
+                    .status()
+                    .map_err(|e| format!("Could not unpack the update: {e}"))?;
+                if !st.success() {
+                    return Err("Could not unpack the update".into());
+                }
+                let new_app = std::fs::read_dir(&staging)
+                    .map_err(|e| e.to_string())?
+                    .flatten()
+                    .map(|e| e.path())
+                    .find(|p| p.extension().is_some_and(|e| e == "app"))
+                    .ok_or("The update doesn't contain the app")?;
+                // Swap bundles: the running copy keeps working until the restart.
+                let _ = std::fs::remove_dir_all(&old);
+                std::fs::rename(app, &old).map_err(|e| format!("Could not replace {}: {e}", app.display()))?;
+                if let Err(e) = std::fs::rename(&new_app, app) {
+                    let _ = std::fs::rename(&old, app); // put the old one back
+                    return Err(format!("Could not install the update: {e}"));
+                }
+                let _ = std::fs::remove_dir_all(&old);
+                Ok(())
+            })();
+            let _ = std::fs::remove_file(&archive);
+            let _ = std::fs::remove_dir_all(&staging);
+            result.map(|()| Outcome::Restart(app.clone()))
+        }
         InstallKind::Unmanaged => Err("This installation is managed by your system".into()),
     }
 }
@@ -558,7 +616,15 @@ fn install_bundle(bundle: &Path) -> Result<Outcome, String> {
 
 /// Starts the new executable with the same arguments, then exits. Only returns on failure.
 pub fn restart(exe: &Path) -> String {
-    match std::process::Command::new(exe).args(std::env::args_os().skip(1)).spawn() {
+    // A macOS app bundle is started through Launch Services, as a new instance.
+    let mut cmd = if exe.extension().is_some_and(|e| e == "app") {
+        let mut c = std::process::Command::new("open");
+        c.arg("-n").arg(exe).arg("--args");
+        c
+    } else {
+        std::process::Command::new(exe)
+    };
+    match cmd.args(std::env::args_os().skip(1)).spawn() {
         Ok(_) => std::process::exit(0),
         Err(e) => format!("Could not restart: {e}"),
     }
@@ -592,11 +658,16 @@ mod tests {
         assert_eq!(p("/opt/file-flier/file-flier"), InstallKind::Unmanaged);
         assert_eq!(p("/home/me/src/FileFlier/target/release/file-flier"), InstallKind::Unmanaged);
         assert_eq!(classify(Path::new("/srv/tools/file-flier"), false), InstallKind::Unmanaged);
+        assert_eq!(
+            app_bundle(Path::new("/Applications/File Flier.app/Contents/MacOS/file-flier")),
+            Some(PathBuf::from("/Applications/File Flier.app"))
+        );
+        assert_eq!(app_bundle(Path::new("/usr/local/bin/file-flier")), None);
     }
 
     const SAMPLE: &str = r###"{
         "tag_name": "v0.6.0", "name": "File Flier 0.6.0", "body": "## New\r\n* **Updater** added\r\n",
-        "html_url": "https://github.com/andrew11155/FileFlier/releases/tag/v0.6.0", "draft": false,
+        "html_url": "https://github.com/andrew11155/File-Flier/releases/tag/v0.6.0", "draft": false,
         "assets": [
           {"name": "file-flier.flatpak", "browser_download_url": "https://example.com/a", "size": 10,
            "digest": "sha256:BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"},
@@ -623,9 +694,9 @@ mod tests {
     fn parses_a_real_github_reply() {
         // Trimmed from GET /releases/latest (extra fields such as uploader are ignored).
         let json = r#"{"tag_name":"v0.5.0","name":"v0.5.0","body":"","draft":false,"prerelease":false,
-            "html_url":"https://github.com/andrew11155/FileFlier/releases/tag/v0.5.0","assets":[
+            "html_url":"https://github.com/andrew11155/File-Flier/releases/tag/v0.5.0","assets":[
             {"id":1,"name":"file-flier-x86_64-linux.tar.gz","state":"uploaded","size":11584735,
-             "browser_download_url":"https://github.com/andrew11155/FileFlier/releases/download/v0.5.0/file-flier-x86_64-linux.tar.gz",
+             "browser_download_url":"https://github.com/andrew11155/File-Flier/releases/download/v0.5.0/file-flier-x86_64-linux.tar.gz",
              "uploader":{"login":"github-actions[bot]"},
              "digest":"sha256:1f677dcbb0f957df2481acf94242386f5ca0d664174fa0d9041c0748bbd05e60"}]}"#;
         let r = parse_release(json).unwrap();

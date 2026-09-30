@@ -1034,6 +1034,11 @@ pub fn libreoffice() -> Option<&'static [String]> {
                     return Some([prefix.clone(), vec![bin.to_string()]].concat());
                 }
             }
+            // macOS: the app bundle, which isn't on PATH.
+            let mac = "/Applications/LibreOffice.app/Contents/MacOS/soffice";
+            if cfg!(target_os = "macos") && Path::new(mac).is_file() {
+                return Some(vec![mac.to_string()]);
+            }
             // LibreOffice installed from Flathub (common on Bazzite / Fedora Atomic).
             if (flatpak || super::have("flatpak"))
                 && host(&["flatpak", "info", "org.libreoffice.LibreOffice"]).is_some()

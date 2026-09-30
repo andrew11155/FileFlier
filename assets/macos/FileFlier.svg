@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- macOS app icon: the Linux icon on Apple's icon grid (824 px rounded square, 100 px margin). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2d31"/>
+      <stop offset="1" stop-color="#17191b"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="112" width="824" height="824" rx="185" fill="#000" opacity="0.28"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g transform="translate(41.143 41.143) scale(7.35714)">
+  <!-- folder -->
+  <path d="M26 44a6 6 0 0 1 6-6h20l7 8h37a6 6 0 0 1 6 6v6H26z" fill="#e8b23e"/>
+  <rect x="26" y="52" width="76" height="46" rx="6" fill="#fdd76c"/>
+  <!-- paper plane -->
+  <path d="M44 74 L108 44 L76 84 Z" fill="#ffffff"/>
+  <path d="M76 84 L108 44 L90 100 Z" fill="#c9e6f2"/>
+  <path d="M76 84 L80 98 L86 90 Z" fill="#0077a5"/>
+  </g>
+</svg>

@@ -31,6 +31,16 @@ pub fn font(size: f32) -> FontId {
     FontId::proportional(size)
 }
 
+/// Shortcut hints as the platform writes them: "Ctrl+D" stays on Linux and
+/// becomes "⌘D" on macOS (⌥ for Alt, ⇧ for Shift).
+pub fn keys(s: &str) -> String {
+    if cfg!(target_os = "macos") {
+        s.replace("Ctrl+", "⌘").replace("Alt+", "⌥").replace("Shift+", "⇧")
+    } else {
+        s.to_string()
+    }
+}
+
 /// The semibold UI font, for headings and emphasis.
 pub fn bold(size: f32) -> FontId {
     FontId::new(size, egui::FontFamily::Name(crate::theme::SEMIBOLD.into()))
@@ -90,7 +100,7 @@ pub fn icon_button(
     };
     let icon = Rect::from_center_size(rect.center(), vec2(18.0, 18.0));
     draw(ui.painter(), icon, color);
-    if hover_text.is_empty() { resp } else { resp.on_hover_text(hover_text) }
+    if hover_text.is_empty() { resp } else { resp.on_hover_text(keys(hover_text)) }
 }
 
 /// Rounded input box with a search glyph, like File Pilot's filter fields.

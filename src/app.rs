@@ -19,7 +19,11 @@ use crate::undo::{self, UndoOp};
 use crate::{fuzzy, ops};
 
 pub const TITLE_H: f32 = 40.0;
-pub const CONTROLS_W: f32 = 138.0;
+/// Width of our own minimize/maximize/close buttons. macOS uses its native
+/// traffic-light buttons instead (top left, see `TRAFFIC_LIGHTS_W`).
+pub const CONTROLS_W: f32 = if cfg!(target_os = "macos") { 0.0 } else { 138.0 };
+/// Room kept free at the left of the title bar for macOS's window buttons.
+pub const TRAFFIC_LIGHTS_W: f32 = if cfg!(target_os = "macos") { 76.0 } else { 0.0 };
 
 pub struct Clip {
     pub paths: Vec<PathBuf>,
@@ -594,6 +598,15 @@ impl FileFlier {
     }
 
     pub fn show_trash(&mut self) {
+        if cfg!(target_os = "macos") {
+            // macOS keeps the Trash to Finder (Put Back, Empty Trash); show it there.
+            if let Some(dir) = crate::trashview::trash_dir()
+                && let Err(e) = open::that(&dir)
+            {
+                self.error(format!("Couldn't open the Trash: {e}"));
+            }
+            return;
+        }
         self.dialog = Some(Dialog::Trash(crate::trashview::TrashView::open()));
     }
 
@@ -826,7 +839,7 @@ impl FileFlier {
             }
             CopyToOtherPane | MoveToOtherPane => {
                 if !self.cfg.split {
-                    self.error("Open split view (Ctrl+\\) to copy between panes");
+                    self.error(crate::ui::keys("Open split view (Ctrl+\\) to copy between panes"));
                     return;
                 }
                 let paths = self.tab().targets();
@@ -1169,7 +1182,7 @@ impl FileFlier {
     /// Drags that leave the window go to the desktop; files dropped from other
     /// apps (Wayland) are copied into the current folder.
     fn native_dnd(&mut self, ctx: &egui::Context) {
-        let Some(native) = &self.native else { return };
+        let Some(native) = &mut self.native else { return };
         let payload = egui::DragAndDrop::payload::<DragPaths>(ctx);
         match payload {
             Some(p) if !self.drag_out => {
@@ -1582,7 +1595,9 @@ impl eframe::App for FileFlier {
         let strips: Vec<(usize, f32, f32)> =
             pane_rects.iter().enumerate().map(|(i, r)| (i, r.left(), r.right())).collect();
         self.title_bar(ui, title_rect, sb_w, &strips);
-        self.resize_edges(ui, full);
+        if !cfg!(target_os = "macos") {
+            self.resize_edges(ui, full); // macOS windows keep their native edges
+        }
 
         self.quicklook_ui(&ctx);
         self.menu_ui(&ctx);

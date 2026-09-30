@@ -1,6 +1,10 @@
 //! "Open With…": finds installed apps for a file's type (freedesktop .desktop
 //! files and mimeapps.list), launches them, and can make one the default.
 //! Inside Flatpak the desktop's own chooser is used instead (the OpenURI portal).
+//! On macOS, Launch Services (through NSWorkspace) does all of this; see `mac`.
+
+// The freedesktop code is unused on macOS but kept compiling (and tested) there.
+#![cfg_attr(target_os = "macos", allow(dead_code))]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -254,6 +258,14 @@ pub fn default_app(mime: &str) -> Option<String> {
 
 /// Makes `app_id` the default for `mime` in ~/.config/mimeapps.list.
 pub fn set_default(app_id: &str, mime: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return mac::set_default(app_id, mime);
+    #[cfg(not(target_os = "macos"))]
+    set_default_mimeapps(app_id, mime)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_default_mimeapps(app_id: &str, mime: &str) -> Result<(), String> {
     let path = dirs::config_dir().ok_or("No config folder")?.join("mimeapps.list");
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let updated = with_default(&text, mime, app_id);
@@ -408,6 +420,14 @@ pub fn command_lines(app: &App, files: &[PathBuf]) -> Vec<Vec<String>> {
 }
 
 pub fn launch(app: &App, files: &[PathBuf]) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return mac::launch(app, files);
+    #[cfg(not(target_os = "macos"))]
+    launch_desktop(app, files)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_desktop(app: &App, files: &[PathBuf]) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
     for argv in command_lines(app, files) {
         let Some((prog, rest)) = argv.split_first() else { continue };
@@ -490,6 +510,14 @@ pub struct OpenWithView {
 
 impl OpenWithView {
     pub fn new(files: Vec<PathBuf>, ctx: &egui::Context) -> Self {
+        #[cfg(target_os = "macos")]
+        return mac::view(files, ctx);
+        #[cfg(not(target_os = "macos"))]
+        Self::from_desktop_files(files, ctx)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn from_desktop_files(files: Vec<PathBuf>, ctx: &egui::Context) -> Self {
         let mime = mime_for(&files[0]);
         let apps = all_apps();
         let recommended = recommended(&apps, &mime);
@@ -535,6 +563,123 @@ impl OpenWithView {
         let q = self.filter.trim().to_lowercase();
         let keep = |i: &&usize| q.is_empty() || self.apps[**i].name.to_lowercase().contains(&q);
         (self.recommended.iter().filter(keep).copied().collect(), self.others.iter().filter(keep).copied().collect())
+    }
+}
+
+// ------------------------------------------------------------------ macOS
+
+/// macOS: apps come from Launch Services and the Applications folders. An `App`'s
+/// `id` and `path` are the .app bundle; `mime` in the view holds the first file's
+/// path (Launch Services works per file, not per MIME type).
+#[cfg(target_os = "macos")]
+mod mac {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSString, NSURL};
+
+    use super::{App, OpenWithView};
+
+    fn url(p: &Path) -> Retained<NSURL> {
+        NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()))
+    }
+
+    fn app(path: PathBuf) -> App {
+        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        App { id: path.to_string_lossy().into_owned(), name, exec: String::new(), icon: None, mimes: vec![], path }
+    }
+
+    /// Every .app in the usual Applications folders.
+    fn installed() -> Vec<PathBuf> {
+        let mut roots = vec![
+            PathBuf::from("/Applications"),
+            PathBuf::from("/Applications/Utilities"),
+            PathBuf::from("/System/Applications"),
+            PathBuf::from("/System/Applications/Utilities"),
+        ];
+        if let Some(h) = dirs::home_dir() {
+            roots.push(h.join("Applications"));
+        }
+        let mut out = Vec::new();
+        for r in roots {
+            let Ok(rd) = std::fs::read_dir(r) else { continue };
+            out.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "app")));
+        }
+        out
+    }
+
+    pub fn view(files: Vec<PathBuf>, ctx: &egui::Context) -> OpenWithView {
+        let ws = NSWorkspace::sharedWorkspace();
+        let file = url(&files[0]);
+        let path_of = |u: &NSURL| u.path().map(|p| PathBuf::from(p.to_string()));
+        let default = ws.URLForApplicationToOpenURL(&file).and_then(|u| path_of(&u));
+        let mut capable: Vec<PathBuf> =
+            ws.URLsForApplicationsToOpenURL(&file).iter().filter_map(|u| path_of(&u)).collect();
+        capable.dedup();
+        let mut paths = capable.clone();
+        for p in installed() {
+            if !paths.contains(&p) {
+                paths.push(p);
+            }
+        }
+        let mut apps: Vec<App> = paths.into_iter().map(app).collect();
+        apps.sort_by_key(|a| a.name.to_lowercase());
+        // Default app first, then the others that handle this file.
+        let mut recommended: Vec<usize> = (0..apps.len()).filter(|&i| capable.contains(&apps[i].path)).collect();
+        recommended.sort_by_key(|&i| Some(&apps[i].path) != default.as_ref());
+        let others = (0..apps.len()).filter(|i| !recommended.contains(i)).collect();
+
+        let (tx, icon_rx) = std::sync::mpsc::channel();
+        let wanted: Vec<(String, PathBuf)> = apps.iter().map(|a| (a.id.clone(), a.path.clone())).collect();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let ws = NSWorkspace::sharedWorkspace();
+            for (id, path) in wanted {
+                let icon = ws.iconForFile(&NSString::from_str(&path.to_string_lossy()));
+                let Some(tiff) = icon.TIFFRepresentation() else { continue };
+                let Ok(img) = image::load_from_memory(&tiff.to_vec()) else { continue };
+                if tx.send((id, crate::preview::Rgba::from_image(img, 64))).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
+            }
+        });
+        OpenWithView {
+            mime: files[0].to_string_lossy().into_owned(),
+            files,
+            apps,
+            recommended,
+            others,
+            default: default.map(|p| p.to_string_lossy().into_owned()),
+            filter: String::new(),
+            cursor: 0,
+            always: false,
+            icons: HashMap::new(),
+            icon_rx,
+        }
+    }
+
+    pub fn launch(app: &App, files: &[PathBuf]) -> Result<(), String> {
+        let mut child = std::process::Command::new("open")
+            .arg("-a")
+            .arg(&app.path)
+            .args(files)
+            .spawn()
+            .map_err(|e| format!("Couldn't start {}: {e}", app.name))?;
+        std::thread::spawn(move || child.wait());
+        Ok(())
+    }
+
+    /// Makes the app the default for files of this one's type.
+    pub fn set_default(app_path: &str, file_path: &str) -> Result<(), String> {
+        NSWorkspace::sharedWorkspace().setDefaultApplicationAtURL_toOpenContentTypeOfFileAtURL_completionHandler(
+            &url(Path::new(app_path)),
+            &url(Path::new(file_path)),
+            None,
+        );
+        Ok(())
     }
 }
 

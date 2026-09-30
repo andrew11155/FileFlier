@@ -357,7 +357,7 @@ impl FileFlier {
                     r.request_focus();
                     changed = r.changed();
                     let status = match search.as_ref() {
-                        None => "Fuzzy-search names in all sub-folders · Enter reveals · Ctrl+Enter opens".to_string(),
+                        None => super::keys("Fuzzy-search names in all sub-folders · Enter reveals · Ctrl+Enter opens"),
                         Some(s) if !s.done => format!("Searching… {} results", s.results.len()),
                         Some(s) => {
                             let lim = if s.results.len() >= search::MAX_RESULTS { " (limit reached)" } else { "" };
@@ -991,8 +991,11 @@ impl FileFlier {
                             ("Open folder / file", vec!["Enter".into(), "→".into()]),
                             ("Parent folder", vec!["Backspace".into(), "←".into()]),
                             ("Filter this folder", vec!["Type anything".into()]),
-                            ("Multi-select", vec!["Ctrl+Click".into(), "Shift+Click".into()]),
-                            ("Copy / cut / paste", vec!["Ctrl+C".into(), "Ctrl+X".into(), "Ctrl+V".into()]),
+                            ("Multi-select", vec![super::keys("Ctrl+Click"), super::keys("Shift+Click")]),
+                            (
+                                "Copy / cut / paste",
+                                vec![super::keys("Ctrl+C"), super::keys("Ctrl+X"), super::keys("Ctrl+V")],
+                            ),
                             ("Drag files (hold Ctrl to copy)", vec!["Drag".into()]),
                         ];
                         let rows = basics.into_iter().chain(

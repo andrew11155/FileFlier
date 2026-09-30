@@ -65,8 +65,13 @@ impl FileFlier {
             (Place::Documents, "Documents".into(), std_dir(dirs::document_dir(), "Documents")),
             (Place::Music, "Music".into(), std_dir(dirs::audio_dir(), "Music")),
             (Place::Pictures, "Pictures".into(), std_dir(dirs::picture_dir(), "Pictures")),
-            (Place::Videos, "Videos".into(), std_dir(dirs::video_dir(), "Videos")),
-            (Place::Trash, "Trash".into(), dirs::data_dir().map(|d| d.join("Trash"))),
+            (
+                Place::Videos,
+                if cfg!(target_os = "macos") { "Movies" } else { "Videos" }.into(),
+                std_dir(dirs::video_dir(), "Videos"),
+            ),
+            (Place::Folder, "Applications".into(), cfg!(target_os = "macos").then(|| PathBuf::from("/Applications"))),
+            (Place::Trash, "Trash".into(), crate::trashview::trash_dir()),
         ]
         .into_iter()
         .filter_map(|(icon, label, path)| {
@@ -207,7 +212,7 @@ impl FileFlier {
                             ui.painter(),
                             pos2(r.left() + 40.0, r.center().y),
                             Align2::LEFT_CENTER,
-                            "Ctrl+D to bookmark",
+                            super::keys("Ctrl+D to bookmark"),
                             12.5,
                             pal.text_faint,
                         );

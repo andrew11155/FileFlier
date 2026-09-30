@@ -63,13 +63,14 @@ fn decode(path: &Path, kind: Kind, max: u32) -> Result<Decoded, String> {
                         .unwrap_or((o.img.w, o.img.h));
                     (o.img, dims)
                 }
-                // No libheif (e.g. some native installs): ffmpeg can often do it.
-                Err(e) => ffmpeg_image(path, max).ok_or(e)?,
+                // No libheif (e.g. some native installs): ffmpeg can often do it, and macOS can.
+                Err(e) => ffmpeg_image(path, max).or_else(|| sips_image(path, max)).ok_or(e)?,
             };
             Ok((img, dims, exif_rows(path).0))
         }
         Kind::Jxl => {
-            let (img, dims) = ffmpeg_image(path, max).ok_or("JPEG XL previews need ffmpeg")?;
+            let (img, dims) =
+                ffmpeg_image(path, max).or_else(|| sips_image(path, max)).ok_or("JPEG XL previews need ffmpeg")?;
             Ok((img, dims, Vec::new()))
         }
         Kind::Svg => svg(path, max).map(|(img, dims)| (img, dims, Vec::new())),
@@ -135,6 +136,27 @@ fn ffmpeg_image(path: &Path, max: u32) -> Option<(Rgba, (u32, u32))> {
     Some((Rgba::from_image(img, max), dims))
 }
 
+/// macOS's built-in image converter (HEIC, AVIF, JPEG XL and more), as a fallback.
+fn sips_image(path: &Path, max: u32) -> Option<(Rgba, (u32, u32))> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let out = std::env::temp_dir().join(format!("file-flier-sips-{}-{}.png", std::process::id(), rand_suffix()));
+    let mut cmd = Command::new("sips");
+    cmd.args(["-s", "format", "png", "-Z", &max.to_string()]).arg(path).arg("--out").arg(&out);
+    super::run_cmd(cmd, Duration::from_secs(20), None);
+    let img = image::open(&out).ok();
+    let _ = std::fs::remove_file(&out);
+    let img = img?;
+    let dims = (img.width(), img.height());
+    Some((Rgba::from_image(img, max), dims))
+}
+
+fn rand_suffix() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0)
+}
+
 pub fn fontdb() -> Arc<resvg::usvg::fontdb::Database> {
     static DB: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
     DB.get_or_init(|| {
@@ -166,6 +188,7 @@ fn svg(path: &Path, max: u32) -> Result<(Rgba, (u32, u32)), String> {
 }
 
 /// A small icon (PNG, SVG, XPM-less) scaled to fit `size`.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn icon(path: &Path, size: u32) -> Option<Rgba> {
     if super::ext_of(path) == "svg" {
         return svg(path, size).ok().map(|(i, _)| i);

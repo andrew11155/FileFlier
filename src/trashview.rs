@@ -99,6 +99,15 @@ pub fn list() -> Result<Vec<Entry>, String> {
         .collect())
 }
 
+/// The user's trash folder (for the sidebar).
+pub fn trash_dir() -> Option<std::path::PathBuf> {
+    if cfg!(target_os = "macos") {
+        dirs::home_dir().map(|h| h.join(".Trash"))
+    } else {
+        dirs::data_dir().map(|d| d.join("Trash"))
+    }
+}
+
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn list() -> Result<Vec<Entry>, String> {
     Err("Open the Trash in Finder to see what's in it".into())

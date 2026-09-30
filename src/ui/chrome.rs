@@ -7,7 +7,7 @@ use egui::{
 };
 
 use super::{elided, icon_button};
-use crate::app::{Action, CONTROLS_W, DragPaths, FileFlier, plural};
+use crate::app::{Action, CONTROLS_W, DragPaths, FileFlier, TRAFFIC_LIGHTS_W, plural};
 use crate::icons;
 
 const TAB_H: f32 = 32.0;
@@ -32,10 +32,14 @@ impl FileFlier {
             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
         }
 
-        // Logo + sidebar toggle.
-        let logo = Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(20.0, 20.0));
-        icons::logo(ui.painter(), logo, pal);
-        let logo_end = rect.left() + 44.0;
+        // Logo + sidebar toggle. On macOS the native window buttons sit where the logo would.
+        let logo_end = if cfg!(target_os = "macos") {
+            rect.left() + TRAFFIC_LIGHTS_W
+        } else {
+            let logo = Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(20.0, 20.0));
+            icons::logo(ui.painter(), logo, pal);
+            rect.left() + 44.0
+        };
         if sidebar_w > 90.0 {
             let r = Rect::from_center_size(pos2(rect.left() + sidebar_w - 22.0, rect.center().y), vec2(28.0, 28.0));
             if icon_button(ui, r, Id::new("sb_toggle"), true, pal, "Hide sidebar (Ctrl+B)", icons::sidebar_toggle)
@@ -54,7 +58,9 @@ impl FileFlier {
                 self.tab_strip(ui, idx, Rect::from_min_max(pos2(left, rect.top()), pos2(right, rect.bottom())));
             }
         }
-        self.window_controls(ui, Rect::from_min_max(pos2(controls_left, rect.top()), rect.max), maximized);
+        if CONTROLS_W > 0.0 {
+            self.window_controls(ui, Rect::from_min_max(pos2(controls_left, rect.top()), rect.max), maximized);
+        }
     }
 
     /// The accent "Update available" pill left of the window controls. Returns its left
@@ -321,7 +327,8 @@ impl FileFlier {
                             ui.painter().galley(r.min, g, color);
                             if show_undo {
                                 let label = egui::RichText::new("Undo").size(13.5).color(pal.accent).strong();
-                                let b = ui.add(egui::Button::new(label).frame(false)).on_hover_text("Ctrl+Z");
+                                let b =
+                                    ui.add(egui::Button::new(label).frame(false)).on_hover_text(super::keys("Ctrl+Z"));
                                 undo_clicked = b.clicked();
                             }
                         });

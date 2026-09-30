@@ -34,29 +34,29 @@
 
   <launchable type="desktop-id">io.github.andrew11155.FileFlier.desktop</launchable>
 
-  <url type="homepage">https://github.com/andrew11155/FileFlier</url>
-  <url type="bugtracker">https://github.com/andrew11155/FileFlier/issues</url>
-  <url type="vcs-browser">https://github.com/andrew11155/FileFlier</url>
+  <url type="homepage">https://github.com/andrew11155/File-Flier</url>
+  <url type="bugtracker">https://github.com/andrew11155/File-Flier/issues</url>
+  <url type="vcs-browser">https://github.com/andrew11155/File-Flier</url>
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/File-Flier/v0.7.0/docs/screenshots/main.png</image>
       <caption>Split panes with a thumbnail grid and the inspector</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/quicklook.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/File-Flier/v0.7.0/docs/screenshots/quicklook.png</image>
       <caption>Quick Look preview (Space)</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/glass.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/File-Flier/v0.7.0/docs/screenshots/glass.png</image>
       <caption>Optional frosted glass style</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/menu.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/File-Flier/v0.7.0/docs/screenshots/menu.png</image>
       <caption>Searchable context menu with keyboard shortcuts</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/palette.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/File-Flier/v0.7.0/docs/screenshots/palette.png</image>
       <caption>Command palette</caption>
     </screenshot>
   </screenshots>
@@ -82,6 +82,15 @@
   </categories>
 
   <releases>
+    <release version="0.7.0" date="2026-09-30">
+      <description>
+        <p>File Flier now also runs on macOS, and the Linux version gets small fixes:</p>
+        <ul>
+          <li>A native Mac app for Apple silicon and Intel, with the usual window buttons and ⌘ shortcuts</li>
+          <li>The update check follows the repository's new name</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-09-30">
       <description>
         <p>Cloud storage, 3D previews and updates:</p>
