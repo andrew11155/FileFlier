@@ -2,6 +2,7 @@
 //! match File Pilot closely rather than following egui's default widget style.
 
 mod chrome;
+mod cloud;
 pub mod glass;
 mod inspector;
 mod pane_view;
@@ -10,6 +11,7 @@ mod preview_view;
 mod quicklook;
 mod settings;
 mod sidebar;
+mod update;
 
 use std::sync::Arc;
 
@@ -19,6 +21,7 @@ use egui::{
     Ui, pos2, vec2,
 };
 
+pub use cloud::CloudDialog;
 pub use preview_view::ViewState;
 
 use crate::icons::{self, FileKind};

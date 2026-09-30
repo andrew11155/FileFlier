@@ -153,6 +153,70 @@ fn swatch(
 }
 
 impl FileFlier {
+    /// The Updates rows: current version with a check button, and the auto-check toggle.
+    fn updates_section(&mut self, ui: &mut Ui) {
+        use crate::updater::{Status, VERSION};
+        let pal = self.pal();
+        let ctx = ui.ctx().clone();
+        let (hint, err) = match &self.updater.status {
+            Status::Idle => ("Checks GitHub for a newer release".to_string(), false),
+            Status::Checking => ("Checking…".to_string(), false),
+            Status::UpToDate => ("You're up to date".to_string(), false),
+            Status::Available(r) => (format!("Version {} available", r.version), false),
+            Status::Failed(e) => (e.clone(), true),
+        };
+        let available = matches!(self.updater.status, Status::Available(_));
+        let busy = self.updater.checking();
+        let clicked = row(ui, pal, &format!("Version {VERSION}"), "", |ui| {
+            let label = if available { "View update" } else { "Check for updates" };
+            let g = ui.painter().layout_no_wrap(label.to_string(), super::font(13.5), pal.text);
+            let (r, resp) = ui.allocate_exact_size(vec2(g.size().x + 28.0, 28.0), Sense::click());
+            let fill = if busy {
+                pal.input
+            } else if available {
+                pal.accent
+            } else if resp.hovered() {
+                pal.tab_hover
+            } else {
+                pal.input
+            };
+            let color = if available && !busy { pal.on_accent } else { pal.text };
+            ui.painter().rect_filled(r, 5.0, fill);
+            ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            text(ui.painter(), r.center(), Align2::CENTER_CENTER, label, 13.5, color);
+            // The status sits to the left of the button.
+            let color = if err { Color32::from_rgb(255, 140, 130) } else { pal.text_dim };
+            // Leave room for the "Version X.Y.Z" label on the left; full text on hover.
+            let g = elided(ui.painter(), &hint, 12.5, color, (ui.available_width() - 150.0).max(40.0));
+            let elided_hint = g.elided;
+            let (sr, sresp) = ui.allocate_exact_size(g.size(), Sense::hover());
+            ui.painter().galley(sr.min, g, color);
+            if elided_hint {
+                sresp.on_hover_text(&hint);
+            }
+            resp.clicked() && !busy
+        });
+        if clicked {
+            if available {
+                self.cfg.skipped_version = None; // asking for it means it's wanted
+                self.cfg.save();
+                self.dialog = Some(crate::app::Dialog::Update);
+            } else {
+                self.updater.check(&ctx);
+            }
+        }
+        if row(
+            ui,
+            pal,
+            "Check for updates automatically",
+            "At most once a day. Nothing about you or your files is sent",
+            |ui| toggle(ui, pal, Id::new("autoupdate"), self.cfg.check_updates),
+        ) {
+            self.cfg.check_updates = !self.cfg.check_updates;
+            self.cfg.save();
+        }
+    }
+
     /// Draws the settings body. Returns true when the dialog should close.
     pub(crate) fn settings_ui(&mut self, ui: &mut Ui) -> bool {
         let pal = self.pal();
@@ -365,6 +429,11 @@ impl FileFlier {
                 }) {
                     self.cfg.startup = starts[i];
                     restyle = true;
+                }
+
+                if crate::updater::ENABLED {
+                    section(ui, pal, "Updates");
+                    self.updates_section(ui);
                 }
 
                 ui.add_space(16.0);

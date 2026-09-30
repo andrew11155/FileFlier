@@ -215,11 +215,22 @@ impl FileFlier {
         let mut crumbs: Vec<(String, PathBuf)> = Vec::new();
         let mut acc = PathBuf::new();
         // Network shares start at the share itself ("media on nas"), not /run/user/…/gvfs.
+        // Cloud drives likewise start at the account ("Google Drive"), not their mount folder.
         let gvfs = crate::mounts::gvfs_root();
-        let share = path.strip_prefix(&gvfs).ok().and_then(|rel| rel.components().next()).map(|c| gvfs.join(c));
+        let share = path
+            .strip_prefix(&gvfs)
+            .ok()
+            .and_then(|rel| rel.components().next())
+            .map(|c| gvfs.join(c))
+            .map(|s| (crate::mounts::gvfs_label(&crate::app::display_name(&s)), s))
+            .or_else(|| {
+                self.mounts
+                    .iter()
+                    .find(|m| m.cloud.is_some() && path.starts_with(&m.path))
+                    .map(|m| (m.name.clone(), m.path.clone()))
+            });
         let start = home.as_ref().filter(|h| path.starts_with(h) && h.parent().is_some());
-        if let Some(share) = share {
-            let label = crate::mounts::gvfs_label(&crate::app::display_name(&share));
+        if let Some((label, share)) = share {
             crumbs.push((label, share.clone()));
             acc = share.clone();
             for c in path.strip_prefix(&share).unwrap().components() {

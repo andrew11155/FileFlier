@@ -16,6 +16,8 @@ pub enum MountKind {
     Cloud,
     /// A drive UDisks knows about that isn't mounted yet (click to mount).
     Unmounted,
+    /// A signed-in cloud account that isn't connected right now (click to connect).
+    CloudOffline,
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +29,8 @@ pub struct Mount {
     pub space: Option<crate::app::DiskSpace>,
     /// The UDisks volume behind it, for mounting and ejecting.
     pub volume: Option<crate::udisks::Volume>,
+    /// The cloud account behind it, for connecting and signing out.
+    pub cloud: Option<crate::cloud::Account>,
 }
 
 const NETWORK_FS: &[&str] =
@@ -179,6 +183,7 @@ fn scan() -> Vec<Mount> {
         // Measure where the user's files live, not `/`: inside Flatpak `/` is the
         // sandbox's tiny tmpfs, and on Fedora Atomic / Bazzite it's a read-only image.
         volume: None,
+        cloud: None,
         space: dirs::home_dir()
             .and_then(|h| crate::app::disk_space(&h))
             .or_else(|| crate::app::disk_space(Path::new("/"))),
@@ -187,7 +192,7 @@ fn scan() -> Vec<Mount> {
     for (path, kind) in parse_proc_mounts(&text) {
         // Only local disks get a usage bar: statvfs on a dead network share can hang.
         let space = if kind == MountKind::Removable { crate::app::disk_space(&path) } else { None };
-        mounts.push(Mount { name: crate::app::display_name(&path), path, kind, space, volume: None });
+        mounts.push(Mount { name: crate::app::display_name(&path), path, kind, space, volume: None, cloud: None });
     }
     // Drives through UDisks: attach them to mounted entries (for eject) and list the
     // ones not mounted yet.
@@ -205,9 +210,23 @@ fn scan() -> Vec<Mount> {
                     kind: MountKind::Unmounted,
                     space: None,
                     volume: Some(v.clone()),
+                    cloud: None,
                 });
             }
         }
+    }
+    // Cloud accounts signed in through File Flier (mounted in a hidden folder, so
+    // the /proc scan above skipped them).
+    for a in crate::cloud::accounts() {
+        let kind = if crate::cloud::is_mounted(&a.mount) { MountKind::Cloud } else { MountKind::CloudOffline };
+        mounts.push(Mount {
+            path: a.mount.clone(),
+            name: a.name.clone(),
+            kind,
+            space: None,
+            volume: None,
+            cloud: Some(a),
+        });
     }
     if let Ok(rd) = std::fs::read_dir(gvfs_root()) {
         let mut gvfs: Vec<Mount> = rd
@@ -219,13 +238,52 @@ fn scan() -> Vec<Mount> {
                 } else {
                     MountKind::Network
                 };
-                Mount { name: gvfs_label(&name), path: e.path(), kind, space: None, volume: None }
+                Mount { name: gvfs_label(&name), path: e.path(), kind, space: None, volume: None, cloud: None }
             })
             .collect();
         gvfs.sort_by(|a, b| a.name.cmp(&b.name));
         mounts.extend(gvfs);
     }
     mounts
+}
+
+/// Usage of network and cloud mounts. `statvfs` there asks the server (for cloud
+/// drives, the account quota), so it's done on a helper thread with a timeout,
+/// and the answer is reused for a minute. A share that doesn't answer is left
+/// without a bar instead of stalling the scan.
+#[derive(Default)]
+struct SpaceCache {
+    known: std::collections::HashMap<PathBuf, (std::time::Instant, Option<crate::app::DiskSpace>)>,
+    /// Paths whose statvfs is still running (after a timeout).
+    pending: Arc<Mutex<std::collections::HashSet<PathBuf>>>,
+}
+
+impl SpaceCache {
+    fn get(&mut self, path: &Path) -> Option<crate::app::DiskSpace> {
+        if let Some((at, space)) = self.known.get(path)
+            && at.elapsed() < Duration::from_secs(60)
+        {
+            return *space;
+        }
+        if self.pending.lock().unwrap().contains(path) {
+            return self.known.get(path).and_then(|(_, s)| *s);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (p, pending) = (path.to_path_buf(), self.pending.clone());
+        pending.lock().unwrap().insert(p.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::app::disk_space(&p));
+            pending.lock().unwrap().remove(&p);
+        });
+        match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(space) => {
+                self.known.insert(path.to_path_buf(), (std::time::Instant::now(), space));
+                space
+            }
+            // Keep showing the last answer while the server is slow.
+            Err(_) => self.known.get(path).and_then(|(_, s)| *s),
+        }
+    }
 }
 
 /// Keeps an up-to-date mount list, refreshed on a background thread.
@@ -240,14 +298,20 @@ impl MountWatcher {
         std::thread::Builder::new()
             .name("mount-watcher".into())
             .spawn(move || {
-                let mut last_names: Vec<PathBuf> = Vec::new();
+                let mut last_seen: Vec<(PathBuf, MountKind, bool)> = Vec::new();
+                let mut spaces = SpaceCache::default();
                 loop {
-                    let mounts = scan();
-                    let names: Vec<PathBuf> = mounts.iter().map(|m| m.path.clone()).collect();
+                    let mut mounts = scan();
+                    for m in &mut mounts {
+                        if matches!(m.kind, MountKind::Network | MountKind::Cloud) {
+                            m.space = spaces.get(&m.path);
+                        }
+                    }
+                    let seen: Vec<_> = mounts.iter().map(|m| (m.path.clone(), m.kind, m.space.is_some())).collect();
                     *shared.lock().unwrap() = mounts;
-                    if names != last_names {
+                    if seen != last_seen {
                         ctx.request_repaint();
-                        last_names = names;
+                        last_seen = seen;
                     }
                     std::thread::sleep(Duration::from_secs(3));
                 }

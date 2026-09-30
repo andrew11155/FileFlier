@@ -80,6 +80,8 @@ pub enum Dialog {
     OpenWith(crate::openwith::OpenWithView),
     Help,
     Settings,
+    Update,
+    Cloud(crate::ui::CloudDialog),
 }
 
 /// What to do when a pasted item's name is already taken.
@@ -117,6 +119,9 @@ pub enum MenuItem {
     Go(PathBuf),
     NewTabAt(PathBuf),
     Unbookmark(PathBuf),
+    /// Cloud account (by name): unmount it, or sign out of it.
+    CloudDisconnect(String),
+    CloudSignOut(String),
     Sep,
 }
 
@@ -134,11 +139,18 @@ pub enum Action {
     CloseTab(usize, usize),
     NewTabIn(usize),
     MoveTab(usize, usize, usize),
-    Drop { paths: Vec<PathBuf>, dest: PathBuf, force_copy: bool },
+    Drop {
+        paths: Vec<PathBuf>,
+        dest: PathBuf,
+        force_copy: bool,
+    },
     OpenMenu(Pos2, Vec<MenuItem>),
     TrashPaths(Vec<PathBuf>),
     MountVolume(String),
     EjectVolume(crate::udisks::Volume),
+    AddCloud,
+    /// Connect (mount) a signed-in cloud account, by name.
+    CloudConnect(String),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -156,6 +168,7 @@ pub struct FileFlier {
     pub menu: Option<Menu>,
     pub status: Option<(String, Instant, bool)>,
     pub job: Option<Job>,
+    pub updater: crate::updater::Updater,
     /// Background previews (inspector, Quick Look) and grid thumbnails.
     pub pv: crate::preview::Previewer,
     pub insp_view: crate::ui::ViewState,
@@ -241,12 +254,17 @@ impl FileFlier {
             menu: None,
             status: None,
             job: None,
+            updater: crate::updater::Updater::new(),
             pv: crate::preview::Previewer::new(&cc.egui_ctx),
             insp_view: Default::default(),
             ql_view: Default::default(),
             preview_page: (PathBuf::new(), 0),
             mounts: Vec::new(),
-            mount_watcher: MountWatcher::start(cc.egui_ctx.clone()),
+            mount_watcher: {
+                // Reconnect cloud accounts from last time (in the background).
+                crate::cloud::mount_all_in_background();
+                MountWatcher::start(cc.egui_ctx.clone())
+            },
             pending_uri: None,
             actions: Vec::new(),
             geom: [PaneGeom { cols: 1, page_rows: 15 }; 2],
@@ -1261,6 +1279,13 @@ impl FileFlier {
                 Err(_) => ctx.request_repaint_after(Duration::from_millis(100)),
             }
         }
+        for (msg, err) in self.updater.poll(&mut self.cfg) {
+            if err { self.error(msg) } else { self.info(msg) }
+        }
+        self.updater.auto_check(&mut self.cfg, ctx);
+        if self.updater.installing() || self.updater.checking() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
         self.item_counts.poll();
         self.mounts = self.mount_watcher.get();
         let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
@@ -1326,6 +1351,21 @@ impl FileFlier {
                     self.start_job(format!("Ejecting {name}"), move |_| {
                         crate::udisks::eject(&vol, &all)?;
                         Ok((format!("{name} can be unplugged safely"), None))
+                    });
+                }
+                Action::AddCloud => self.dialog = Some(Dialog::Cloud(crate::ui::CloudDialog::new(ctx))),
+                Action::CloudConnect(name) => {
+                    let slot = self.mounted_at.clone();
+                    self.start_job(format!("Connecting {name}"), move |_| {
+                        let a =
+                            crate::cloud::accounts().into_iter().find(|a| a.name == name).ok_or("Account not found")?;
+                        let r = match crate::cloud::setup() {
+                            crate::cloud::Setup::Ready(r) => r,
+                            _ => return Err("rclone isn't available. Use \"Add cloud storage\" to set it up.".into()),
+                        };
+                        r.mount(&a)?;
+                        *slot.lock().unwrap() = Some(a.mount.clone());
+                        Ok((format!("{name} connected"), None))
                     });
                 }
                 Action::OpenMenu(pos, items) => {

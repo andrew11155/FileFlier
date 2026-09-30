@@ -35,7 +35,7 @@ fn tilde(p: &std::path::Path) -> String {
     p.display().to_string()
 }
 
-fn modal<R>(
+pub(super) fn modal<R>(
     ctx: &egui::Context,
     id: &str,
     width: f32,
@@ -84,7 +84,13 @@ fn plain_input(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id:
     )
 }
 
-fn button(ui: &mut Ui, pal: &crate::theme::Palette, label: &str, primary: bool, danger: bool) -> egui::Response {
+pub(super) fn button(
+    ui: &mut Ui,
+    pal: &crate::theme::Palette,
+    label: &str,
+    primary: bool,
+    danger: bool,
+) -> egui::Response {
     let g = ui.painter().layout_no_wrap(label.to_string(), font(14.0), pal.text);
     let (r, resp) = ui.allocate_exact_size(vec2(g.size().x + 32.0, 30.0), Sense::click());
     let fill = match (primary, danger, resp.hovered()) {
@@ -110,7 +116,7 @@ fn button(ui: &mut Ui, pal: &crate::theme::Palette, label: &str, primary: bool, 
     resp
 }
 
-fn label(ui: &mut Ui, pal: &crate::theme::Palette, s: &str, size: f32, color: Option<Color32>) {
+pub(super) fn label(ui: &mut Ui, pal: &crate::theme::Palette, s: &str, size: f32, color: Option<Color32>) {
     ui.add_space(4.0);
     // Dialog titles (15pt and up) are semibold.
     let font = if size >= 15.0 { super::bold(size) } else { super::font(size) };
@@ -138,6 +144,8 @@ impl FileFlier {
                 MenuItem::Go(p) => fuzzy::score(&q, &p.to_string_lossy()).is_some(),
                 MenuItem::NewTabAt(_) => fuzzy::score(&q, "Open in new tab").is_some(),
                 MenuItem::Unbookmark(_) => fuzzy::score(&q, "Remove bookmark").is_some(),
+                MenuItem::CloudDisconnect(_) => fuzzy::score(&q, "Disconnect").is_some(),
+                MenuItem::CloudSignOut(_) => fuzzy::score(&q, "Sign out").is_some(),
             })
             .collect();
         let selectable: Vec<usize> =
@@ -179,6 +187,8 @@ impl FileFlier {
                         MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
                         MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
                         MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
+                        MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
+                        MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
                         MenuItem::Sep => unreachable!(),
                     };
                     let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
@@ -221,6 +231,8 @@ impl FileFlier {
             Some(MenuItem::Go(p)) => self.actions.push(Action::Navigate(p)),
             Some(MenuItem::NewTabAt(p)) => self.actions.push(Action::OpenInNewTab(p)),
             Some(MenuItem::Unbookmark(p)) => self.toggle_bookmark(p),
+            Some(MenuItem::CloudDisconnect(n)) => self.cloud_disconnect(n, false),
+            Some(MenuItem::CloudSignOut(n)) => self.cloud_disconnect(n, true),
             _ => {}
         }
     }
@@ -957,6 +969,16 @@ impl FileFlier {
             }
             Dialog::Settings => {
                 if modal(ctx, "settings", 700.0, pal, &fx, |ui| self.settings_ui(ui)) {
+                    keep = false;
+                }
+            }
+            Dialog::Cloud(c) => {
+                if modal(ctx, "cloud", 520.0, pal, &fx, |ui| self.cloud_ui(ui, c)) {
+                    keep = false;
+                }
+            }
+            Dialog::Update => {
+                if modal(ctx, "update", 560.0, pal, &fx, |ui| self.update_ui(ui)) {
                     keep = false;
                 }
             }

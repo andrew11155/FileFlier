@@ -3,6 +3,7 @@
 
 mod app;
 mod archive;
+mod cloud;
 mod commands;
 mod config;
 mod counts;
@@ -11,6 +12,7 @@ mod fuzzy;
 mod icons;
 mod mounts;
 mod native;
+mod net;
 mod openwith;
 mod ops;
 mod pane;
@@ -21,6 +23,7 @@ mod trashview;
 mod udisks;
 mod ui;
 mod undo;
+mod updater;
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();

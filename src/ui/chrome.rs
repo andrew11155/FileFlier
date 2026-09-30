@@ -46,14 +46,41 @@ impl FileFlier {
         }
 
         let controls_left = rect.right() - CONTROLS_W;
+        let tabs_right = self.update_pill(ui, rect, controls_left).unwrap_or(controls_left);
         for &(idx, left, right) in strips {
             let left = left.max(logo_end) + 6.0;
-            let right = right.min(controls_left) - 4.0;
+            let right = right.min(tabs_right) - 4.0;
             if right > left + 40.0 {
                 self.tab_strip(ui, idx, Rect::from_min_max(pos2(left, rect.top()), pos2(right, rect.bottom())));
             }
         }
         self.window_controls(ui, Rect::from_min_max(pos2(controls_left, rect.top()), rect.max), maximized);
+    }
+
+    /// The accent "Update available" pill left of the window controls. Returns its left
+    /// edge so the tab strips can stop short of it.
+    fn update_pill(&mut self, ui: &mut Ui, rect: Rect, controls_left: f32) -> Option<f32> {
+        if !crate::updater::ENABLED {
+            return None;
+        }
+        let label = if self.updater.restart_pending() {
+            "Restart to update"
+        } else if self.updater.offered(&self.cfg).is_some() {
+            "Update available"
+        } else {
+            return None;
+        };
+        let pal = self.pal();
+        let w = ui.painter().layout_no_wrap(label.to_string(), super::bold(12.5), pal.on_accent).size().x + 24.0;
+        let r = Rect::from_min_size(pos2(controls_left - 8.0 - w, rect.center().y - 12.0), vec2(w, 24.0));
+        let resp = ui.interact(r, Id::new("update_pill"), Sense::click());
+        let fill = if resp.hovered() { pal.accent.gamma_multiply(1.2) } else { pal.accent };
+        ui.painter().rect_filled(r, 12.0, fill);
+        super::text_bold(ui.painter(), r.center(), egui::Align2::CENTER_CENTER, label, 12.5, pal.on_accent);
+        if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+            self.dialog = Some(crate::app::Dialog::Update);
+        }
+        Some(r.left())
     }
 
     fn tab_strip(&mut self, ui: &mut Ui, idx: usize, strip: Rect) {

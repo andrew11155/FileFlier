@@ -19,6 +19,12 @@ struct Item {
     space: Option<crate::app::DiskSpace>,
     /// UDisks volume: unmounted ones mount on click, removable ones get an eject button.
     volume: Option<crate::udisks::Volume>,
+    /// Cloud account signed in through File Flier.
+    cloud: Option<crate::cloud::Account>,
+    /// A cloud account that isn't connected (click to connect).
+    offline: bool,
+    /// The "Add cloud storage…" row.
+    add_cloud: bool,
 }
 
 impl FileFlier {
@@ -70,6 +76,9 @@ impl FileFlier {
                 path,
                 space: None,
                 volume: None,
+                cloud: None,
+                offline: false,
+                add_cloud: false,
             })
         })
         .collect();
@@ -77,7 +86,16 @@ impl FileFlier {
             .cfg
             .bookmarks
             .iter()
-            .map(|b| Item { icon: Place::Folder, label: display_name(b), path: b.clone(), space: None, volume: None })
+            .map(|b| Item {
+                icon: Place::Folder,
+                label: display_name(b),
+                path: b.clone(),
+                space: None,
+                volume: None,
+                cloud: None,
+                offline: false,
+                add_cloud: false,
+            })
             .collect();
         let recents: Vec<Item> = self
             .cfg
@@ -85,20 +103,50 @@ impl FileFlier {
             .iter()
             .filter(|p| p.is_dir())
             .take(10)
-            .map(|p| Item { icon: Place::Folder, label: display_name(p), path: p.clone(), space: None, volume: None })
+            .map(|p| Item {
+                icon: Place::Folder,
+                label: display_name(p),
+                path: p.clone(),
+                space: None,
+                volume: None,
+                cloud: None,
+                offline: false,
+                add_cloud: false,
+            })
             .collect();
-        let storage: Vec<Item> = self
+        let mut storage: Vec<Item> = self
             .mounts
             .iter()
             .map(|m| {
                 let icon = match m.kind {
                     MountKind::Network => Place::Network,
-                    MountKind::Cloud => Place::Cloud,
+                    MountKind::Cloud | MountKind::CloudOffline => Place::Cloud,
                     MountKind::Root | MountKind::Removable | MountKind::Unmounted => Place::Drive,
                 };
-                Item { icon, label: m.name.clone(), path: m.path.clone(), space: m.space, volume: m.volume.clone() }
+                Item {
+                    icon,
+                    label: m.name.clone(),
+                    path: m.path.clone(),
+                    space: m.space,
+                    volume: m.volume.clone(),
+                    cloud: m.cloud.clone(),
+                    offline: m.kind == MountKind::CloudOffline,
+                    add_cloud: false,
+                }
             })
             .collect();
+        if crate::cloud::SUPPORTED {
+            storage.push(Item {
+                icon: Place::Cloud,
+                label: "Add cloud storage…".into(),
+                path: PathBuf::new(),
+                space: None,
+                volume: None,
+                cloud: None,
+                offline: false,
+                add_cloud: true,
+            });
+        }
 
         let q = self.sidebar_filter.trim().to_string();
         let filt = |items: Vec<Item>| -> Vec<Item> {
@@ -184,8 +232,15 @@ impl FileFlier {
                         }
                         let text_y = if item.space.is_some() { r.top() + 13.0 } else { r.center().y };
                         let ir = Rect::from_center_size(pos2(r.left() + 40.0, text_y), vec2(18.0, 18.0));
-                        icons::place(p, ir, item.icon, pal);
-                        let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty());
+                        if item.add_cloud {
+                            let c = if resp.hovered() { pal.text_strong } else { pal.text_dim };
+                            icons::plus(p, ir.shrink(2.0), c);
+                        } else {
+                            icons::place(p, ir, item.icon, pal);
+                        }
+                        let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty())
+                            || item.offline
+                            || item.add_cloud;
                         let ejectable = item.volume.as_ref().is_some_and(|v| v.removable && !v.mount_points.is_empty());
                         let color = if is_current {
                             pal.text_strong
@@ -211,17 +266,27 @@ impl FileFlier {
                                 fill,
                             );
                         }
+                        // Cloud drives are named by account; their mount folder is an internal detail.
+                        let place =
+                            if item.cloud.is_some() { item.label.clone() } else { item.path.display().to_string() };
                         let tip = match item.space {
                             Some(s) => format!(
                                 "{}\n{} free of {}",
-                                item.path.display(),
+                                place,
                                 crate::app::human_size(s.free),
                                 crate::app::human_size(s.total)
                             ),
-                            None => item.path.display().to_string(),
+                            None => place,
                         };
-                        let tip =
-                            if unmounted { format!("{} — not mounted. Click to mount.", item.label) } else { tip };
+                        let tip = if item.add_cloud {
+                            "Sign in to Google Drive, OneDrive or Dropbox".to_string()
+                        } else if item.offline {
+                            format!("{} — not connected. Click to connect.", item.label)
+                        } else if unmounted {
+                            format!("{} — not mounted. Click to mount.", item.label)
+                        } else {
+                            tip
+                        };
                         let mut eject_clicked = false;
                         if ejectable && let Some(v) = &item.volume {
                             let er = Rect::from_center_size(pos2(r.right() - 14.0, text_y), vec2(22.0, 22.0));
@@ -239,6 +304,12 @@ impl FileFlier {
                         let resp = resp.on_hover_text(tip);
                         if resp.clicked() && eject_clicked {
                             // handled by the eject button
+                        } else if resp.clicked() && item.add_cloud {
+                            actions.push(Action::AddCloud);
+                        } else if resp.clicked() && item.offline {
+                            if let Some(a) = &item.cloud {
+                                actions.push(Action::CloudConnect(a.name.clone()));
+                            }
                         } else if resp.clicked() && unmounted {
                             if let Some(v) = &item.volume {
                                 actions.push(Action::MountVolume(v.object.clone()));
@@ -250,17 +321,35 @@ impl FileFlier {
                                 actions.push(Action::Navigate(item.path.clone()));
                             }
                         }
+                        if unmounted {
+                            // Nothing to open or drop onto yet; a signed-in account can still be signed out.
+                            if resp.secondary_clicked()
+                                && let Some(a) = &item.cloud
+                            {
+                                let pos = resp.interact_pointer_pos().unwrap_or(r.center());
+                                actions.push(Action::OpenMenu(pos, vec![MenuItem::CloudSignOut(a.name.clone())]));
+                            }
+                            continue;
+                        }
                         if resp.middle_clicked() {
                             actions.push(Action::OpenInNewTab(item.path.clone()));
                         }
                         if resp.secondary_clicked() {
                             // Bookmarks can be removed from their context menu.
                             let pos = resp.interact_pointer_pos().unwrap_or(r.center());
-                            let mut items =
-                                vec![MenuItem::Go(item.path.clone()), MenuItem::NewTabAt(item.path.clone())];
+                            let mut items = vec![MenuItem::NewTabAt(item.path.clone())];
+                            if item.cloud.is_none() {
+                                // (A cloud drive's mount folder is an internal path; clicking it opens it.)
+                                items.insert(0, MenuItem::Go(item.path.clone()));
+                            }
                             if title == "Bookmarks" {
                                 items.push(MenuItem::Sep);
                                 items.push(MenuItem::Unbookmark(item.path.clone()));
+                            }
+                            if let Some(a) = &item.cloud {
+                                items.push(MenuItem::Sep);
+                                items.push(MenuItem::CloudDisconnect(a.name.clone()));
+                                items.push(MenuItem::CloudSignOut(a.name.clone()));
                             }
                             actions.push(Action::OpenMenu(pos, items));
                         }

@@ -27,6 +27,8 @@
       <li>Quick Look previews, inline rename and undo</li>
       <li>Compress and extract archives, Open With, a trash browser, and drive mounting and ejecting</li>
       <li>Copy, paste and drag files to and from other apps</li>
+      <li>Google Drive, OneDrive and Dropbox, with sign-in in your browser</li>
+      <li>Previews of 3D models and 3D-printer G-code</li>
     </ul>
   </description>
 
@@ -38,23 +40,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/main.png</image>
       <caption>Split panes with a thumbnail grid and the inspector</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/quicklook.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/quicklook.png</image>
       <caption>Quick Look preview (Space)</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/glass.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/glass.png</image>
       <caption>Optional frosted glass style</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/menu.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/menu.png</image>
       <caption>Searchable context menu with keyboard shortcuts</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.5.1/docs/screenshots/palette.png</image>
+      <image>https://raw.githubusercontent.com/andrew11155/FileFlier/v0.6.0/docs/screenshots/palette.png</image>
       <caption>Command palette</caption>
     </screenshot>
   </screenshots>
@@ -80,6 +82,18 @@
   </categories>
 
   <releases>
+    <release version="0.6.0" date="2026-09-30">
+      <description>
+        <p>Cloud storage, 3D previews and updates:</p>
+        <ul>
+          <li>Sign in to Google Drive, OneDrive or Dropbox from the sidebar; you log in on the provider's own page in your browser</li>
+          <li>Cloud and network drives show a usage bar with free and total space</li>
+          <li>Previews of 3D models (STL, OBJ, PLY, 3MF) that you can turn, with size, volume and triangle count</li>
+          <li>3D-printer G-code shows the slicer's thumbnail and print time, filament, material and layer height</li>
+          <li>File Flier can check GitHub for new versions and update itself (can be turned off in Settings)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-09-28">
       <description>
         <p>A crisper, more colorful look:</p>

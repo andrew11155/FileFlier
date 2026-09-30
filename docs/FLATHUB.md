@@ -64,11 +64,21 @@ request description:
 > `~/.local/share/Trash`. `xdg-run/gvfs` lets it open network shares that GVFS
 > has mounted. `--system-talk-name=org.freedesktop.UDisks2` lets it mount and
 > safely eject USB drives from the sidebar, as other file managers do (the
-> desktop's polkit agent still asks for a password where required). The app has
-> no network access and does not request
+> desktop's polkit agent still asks for a password where required).
+> `--share=network` is used only by the built-in updater (a GitHub release check
+> and download, which can be switched off in Settings) and for cloud features;
+> there is no telemetry. The app does not request
 > `org.freedesktop.Flatpak` (host command execution). The optional "Open terminal
 > here" feature tells users how to enable that with `flatpak override` if they
 > want it.
+
+Flathub does not allow apps to update themselves, so the Flathub build should
+disable the updater at compile time by adding `FILE_FLIER_NO_UPDATER: '1'` to
+`build-options.env` in the manifest. That hides the Updates settings and the
+"Update available" button and makes no requests. With the updater off, the
+manifest no longer needs `--share=network` unless you rely on cloud features
+that call out, so drop it and the "no network access" claim in the description
+becomes true again.
 
 ## 4. After it's accepted
 

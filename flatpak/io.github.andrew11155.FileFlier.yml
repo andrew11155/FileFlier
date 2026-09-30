@@ -11,6 +11,10 @@ command: file-flier
 
 finish-args:
   - --share=ipc
+  # Used only to check GitHub for a new release and download it (Settings -> Updates can
+  # turn the check off), and to download rclone for cloud storage. Nothing else is sent. A Flathub build sets
+  # FILE_FLIER_NO_UPDATER=1 in build-options.env and may drop this.
+  - --share=network
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri

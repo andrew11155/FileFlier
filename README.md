@@ -91,6 +91,8 @@ to zoom, drag to pan, and double-click to switch between fit and actual size.
 | Audio | Album art, title, artist, album, duration and format |
 | EPUB, Pages, Numbers, Keynote, comic books (CBZ) | The cover or stored preview |
 | ZIP and tar archives | The files inside |
+| 3D models: STL, OBJ, PLY, 3MF (including PrusaSlicer and Bambu Studio projects) | A shaded render you can turn: drag to rotate, scroll to zoom, double-click to reset. Shows size in mm, volume, triangle count and object count |
+| 3D-printer G-code | The thumbnail your slicer embedded, plus print time, filament, material, layer height, nozzle, printer and slicer |
 | Fonts | A type sample |
 | Code and text | Syntax-highlighted text |
 
@@ -135,6 +137,13 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 - **Dates:** `2026-09-26 14:03`, "5 min ago" or `Sep 26, 2026`.
 - **Startup:** open your home folder, or restore last session's tabs and split
   panes.
+- **Updates:** File Flier checks GitHub for a new release once a day and shows
+  an **Update available** button in the title bar. **Update** replaces the
+  binary in place (then offers a restart), or, in the Flatpak, downloads the
+  bundle to your Downloads folder and installs it (needs the same host access as
+  *Open terminal here*; otherwise it opens the bundle in your software center).
+  Copies installed by a package manager only get a link to the release page.
+  Turn the daily check off in Settings.
 - **Animations:** smooth transitions for the selection highlight, scrolling,
   folders, menus, Quick Look and notifications. Turn them off to make
   everything instant.
@@ -281,8 +290,41 @@ terminal emulators in turn.
 
 ## Network shares and cloud storage
 
+### Signing in to Google Drive, OneDrive or Dropbox
+
+Click **Add cloud storage…** at the bottom of *Storage* in the sidebar, pick a
+provider, and sign in on its own page in your web browser. File Flier never
+sees your password. The drive then appears under *Storage* with a usage bar
+(free and total space of your account) and works like any folder: previews,
+copy and paste, drag-and-drop to other apps. Files are downloaded when you open
+them and cached while you use them.
+
+- Accounts reconnect automatically when File Flier starts. Right-click one to
+  **Disconnect** it or **Sign out** (your files stay in the cloud).
+- This uses [rclone](https://rclone.org), a widely used open-source tool. If it
+  isn't installed, File Flier offers to download the official build from
+  rclone.org (about 25 MB) and checks it against rclone's published SHA-256
+  checksum. Accounts are kept in File Flier's own rclone config
+  (`~/.config/file-flier/rclone.conf`), separate from any rclone setup you
+  already have.
+- Mounting needs FUSE (`fusermount3`, from the `fuse3` package), which most
+  desktops have.
+- **Google Drive:** rclone's shared Google sign-in is being retired by Google
+  during 2026. It still works for now; if it stops working, create your own
+  free Google client ID ([guide](https://rclone.org/drive/#making-your-own-client-id))
+  and paste it in the Google Drive step. On GNOME, File Flier also offers
+  **GNOME Online Accounts**, which uses Google's own sign-in; drives added
+  there show up automatically.
+- **Flatpak:** rclone has to run outside the sandbox to mount drives, so this
+  needs the same one-time permission as *Open terminal here*; the dialog shows
+  the command.
+
+### Everything else
+
 File Flier works with anything that is mounted as a folder. Drives, network
-shares and cloud mounts appear under **Storage** in the sidebar.
+shares and cloud mounts appear under **Storage** in the sidebar. Network and
+cloud drives show a usage bar when the server reports its size (Google Drive
+through GNOME and rclone mounts do).
 
 | What | How to connect it | Works in File Flier |
 | --- | --- | --- |
@@ -304,8 +346,14 @@ freeze the window.
 
 ## Security
 
-- **No network access.** File Flier sends nothing anywhere: no telemetry, no
-  update checks, no accounts.
+- **Minimal network use, no telemetry.** File Flier itself only goes online to
+  ask GitHub whether a newer release exists (at most once a day, and never
+  when you turn off **Check for updates automatically** in Settings), to
+  download an update when you click Update, and to download rclone when you
+  ask it to. Requests carry only a `User-Agent: file-flier/<version>` header,
+  and downloads are checked against their published SHA-256 checksums. Cloud
+  drives you sign in to are reached by rclone, directly from your computer to
+  the provider. There are no File Flier accounts and no analytics.
 - **It never runs code from your files.** Opening a file hands it to your
   default application, like any file manager.
 - **File operations never overwrite by accident.** Copy, move and rename use the
@@ -350,12 +398,14 @@ Source layout:
 | --- | --- |
 | `src/app.rs` | Application state, command dispatch, keyboard handling, layout |
 | `src/ui/` | Custom-drawn UI: `chrome` (title bar, tabs, window buttons), `pane_view`, `sidebar`, `inspector`, `preview_view`, `quicklook`, `popups` |
-| `src/preview/` | Preview and thumbnail loading: images, documents, media, archives, the helper process and the thumbnail cache |
+| `src/preview/` | Preview and thumbnail loading: images, documents, media, archives, 3D models and G-code (`model3d`, a small software renderer), the helper process and the thumbnail cache |
 | `src/theme.rs`, `src/icons.rs` | Color palette and the vector icon set |
 | `src/pane.rs` | Tabs, navigation history, selection and filtering |
 | `src/fs_model.rs`, `src/ops.rs` | Directory listing and sorting; copy, move, trash and rename |
 | `src/search.rs`, `src/fuzzy.rs` | Background recursive search and the fuzzy matcher |
-| `src/mounts.rs`, `src/counts.rs` | Drive, network share and cloud mount discovery; background folder item counts |
+| `src/mounts.rs`, `src/counts.rs` | Drive, network share and cloud mount discovery with usage bars; background folder item counts |
+| `src/cloud.rs`, `src/ui/cloud.rs` | Cloud accounts through rclone: sign-in, mounting, the Add cloud storage dialog |
+| `src/updater.rs`, `src/ui/update.rs`, `src/net.rs` | Update checks and installs from GitHub releases; the shared HTTPS client |
 | `src/commands.rs` | Every action and its shortcuts |
 
 ## License

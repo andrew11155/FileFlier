@@ -97,6 +97,12 @@ pub struct Config {
     pub office_previews: bool,
     /// Set once the preview panel has been turned on for existing users.
     pub preview_panel_intro: bool,
+    /// Look for a new release on GitHub shortly after startup, at most once a day.
+    pub check_updates: bool,
+    /// Unix time of the last update check.
+    pub last_update_check: u64,
+    /// A release the user chose not to be reminded about.
+    pub skipped_version: Option<String>,
 }
 
 impl Default for Config {
@@ -129,6 +135,9 @@ impl Default for Config {
             inspector_width: 340.0,
             office_previews: true,
             preview_panel_intro: false,
+            check_updates: true,
+            last_update_check: 0,
+            skipped_version: None,
         }
     }
 }
