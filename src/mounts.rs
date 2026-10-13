@@ -75,20 +75,33 @@ fn classify(mountpoint: &str, fstype: &str) -> Option<MountKind> {
 
 /// Parses /proc/mounts text into (mountpoint, kind) pairs worth showing.
 pub fn parse_proc_mounts(text: &str) -> Vec<(PathBuf, MountKind)> {
-    let mut out: Vec<(PathBuf, MountKind)> = Vec::new();
+    let home = dirs::home_dir();
+    // (mount point, kind, source device, fs type)
+    let mut out: Vec<(PathBuf, MountKind, String, String)> = Vec::new();
     for line in text.lines() {
         let mut f = line.split_whitespace();
         let (Some(dev), Some(mp), Some(fstype)) = (f.next(), f.next(), f.next()) else { continue };
-        let mp = unescape(mp);
-        if is_internal(&unescape(dev), &mp, fstype) {
+        let (dev, mp) = (unescape(dev), PathBuf::from(unescape(mp)));
+        if is_internal(&dev, &mp.to_string_lossy(), fstype) {
             continue;
         }
-        if let Some(kind) = classify(&mp, fstype)
-            && !out.iter().any(|(p, _)| p.as_os_str() == mp.as_str())
-        {
-            out.push((PathBuf::from(mp), kind));
+        let Some(kind) = classify(&mp.to_string_lossy(), fstype) else { continue };
+        // The same mount can show up twice, e.g. under /home and /var/home on Fedora
+        // Atomic / Bazzite (or bind-mounted): keep one, preferably the path under $HOME.
+        let dup = out
+            .iter()
+            .position(|(p, _, d, t)| *p == mp || (*d == dev && t == fstype && p.file_name() == mp.file_name()));
+        match dup {
+            Some(i) => {
+                let under_home = |p: &Path| home.as_ref().is_some_and(|h| p.starts_with(h));
+                if under_home(&mp) && !under_home(&out[i].0) {
+                    out[i].0 = mp;
+                }
+            }
+            None => out.push((mp, kind, dev, fstype.to_string())),
         }
     }
+    let mut out: Vec<(PathBuf, MountKind)> = out.into_iter().map(|(p, k, _, _)| (p, k)).collect();
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
@@ -486,6 +499,7 @@ Claude.AppImage /tmp/.mount_ClaudeXq1QkS fuse.Claude.AppImage ro,nosuid,nodev 0 
 appimagekit /tmp/.mount_Old fuse.appimagekit ro 0 0
 some-tool /home/me/.cache/tool-mount fuse.sometool rw 0 0
 gdrive: /home/me/GoogleDrive fuse.rclone rw 0 0
+gdrive: /var/home/me/GoogleDrive fuse.rclone rw 0 0
 ";
         let got = parse_proc_mounts(text);
         assert_eq!(got, vec![(PathBuf::from("/home/me/GoogleDrive"), MountKind::Cloud)]);

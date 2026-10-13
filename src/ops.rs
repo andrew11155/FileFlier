@@ -143,22 +143,51 @@ pub fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Terminal emulators to try, most common first (Ptyxis and Konsole are the
-/// defaults on Bazzite / Fedora Atomic GNOME and KDE).
-const TERMINALS: &[&str] = &[
-    "x-terminal-emulator",
-    "ptyxis",
-    "kgx",
-    "gnome-terminal",
-    "konsole",
-    "xfce4-terminal",
-    "kitty",
-    "alacritty",
-    "wezterm",
-    "foot",
-    "tilix",
-    "xterm",
+/// Terminal emulators to try, with the arguments that open a *new window* in a
+/// given folder (`{}`). Single-instance terminals like Ptyxis (the default on
+/// Bazzite / Fedora Atomic GNOME) just raise their existing window when started
+/// without `--new-window`, which looks like nothing happened.
+const TERMINALS: &[(&str, &[&str])] = &[
+    ("ptyxis", &["--new-window", "--working-directory={}"]),
+    ("konsole", &["--workdir", "{}"]),
+    ("kgx", &["--working-directory={}"]),
+    ("gnome-terminal", &["--window", "--working-directory={}"]),
+    ("xfce4-terminal", &["--window", "--working-directory={}"]),
+    ("kitty", &["--directory", "{}"]),
+    ("alacritty", &["--working-directory", "{}"]),
+    ("wezterm", &["start", "--cwd", "{}"]),
+    ("foot", &["--working-directory={}"]),
+    ("tilix", &["--working-directory={}"]),
+    ("x-terminal-emulator", &[]),
+    ("xterm", &[]),
 ];
+
+/// Candidate command lines for opening a terminal in `dir`: `$TERMINAL` first, then the
+/// desktop's own terminal (Konsole on KDE), then the rest.
+fn terminal_commands(dir: &Path) -> Vec<Vec<String>> {
+    let dir = dir.to_string_lossy();
+    let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.to_ascii_uppercase().contains("KDE"));
+    let mut list: Vec<&(&str, &[&str])> = TERMINALS.iter().collect();
+    if kde {
+        list.sort_by_key(|(name, _)| *name != "konsole");
+    }
+    let mut out: Vec<Vec<String>> = Vec::new();
+    if let Some(t) = std::env::var("TERMINAL").ok().filter(|t| !t.trim().is_empty()) {
+        // Use the known flags when $TERMINAL is one we recognise.
+        let base = Path::new(t.trim()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let args = TERMINALS.iter().find(|(n, _)| *n == base).map(|(_, a)| *a).unwrap_or(&[]);
+        out.push(std::iter::once(t.trim().to_string()).chain(args.iter().map(|a| a.replace("{}", &dir))).collect());
+    }
+    for (name, args) in list {
+        out.push(std::iter::once(name.to_string()).chain(args.iter().map(|a| a.replace("{}", &dir))).collect());
+    }
+    out
+}
+
+/// Quotes a string for `sh`.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
 
 /// True when running inside a Flatpak sandbox.
 pub fn in_flatpak() -> bool {
@@ -186,8 +215,8 @@ pub enum TerminalError {
     Failed(String),
 }
 
-/// Launches a terminal emulator in `dir`. In Flatpak, returns the `flatpak-spawn`
-/// process so the caller can notice if no terminal was found on the host (exit 127).
+/// Launches a terminal emulator in `dir`. Returns the launched process (`flatpak-spawn`
+/// in Flatpak) so the caller can notice a failure, e.g. no terminal on the host (exit 127).
 pub fn open_terminal(dir: &Path) -> Result<Option<std::process::Child>, TerminalError> {
     if cfg!(target_os = "macos") {
         // A new window of the user's terminal app (iTerm or Ghostty if installed, else Terminal) in `dir`.
@@ -202,7 +231,7 @@ pub fn open_terminal(dir: &Path) -> Result<Option<std::process::Child>, Terminal
             .map(|_| None)
             .map_err(|e| TerminalError::Failed(format!("Could not open {app}: {e}")));
     }
-    let preferred = std::env::var("TERMINAL").ok().filter(|t| !t.trim().is_empty());
+    let cmds = terminal_commands(dir);
     if in_flatpak() {
         if !flatpak_can_spawn_on_host() {
             return Err(TerminalError::NeedsPermission(format!(
@@ -210,21 +239,27 @@ pub fn open_terminal(dir: &Path) -> Result<Option<std::process::Child>, Terminal
                 std::env::var("FLATPAK_ID").unwrap_or_default()
             )));
         }
-        // The host's terminals aren't visible in the sandbox; ask the host to pick one.
-        let list: Vec<&str> = preferred.iter().map(String::as_str).chain(TERMINALS.iter().copied()).collect();
-        let script = "for t in \"$@\"; do command -v \"$t\" >/dev/null 2>&1 && exec \"$t\"; done; exit 127";
+        // The host's terminals aren't visible in the sandbox; the host shell picks the
+        // first one that's installed.
+        let script: String = cmds
+            .iter()
+            .map(|c| {
+                let line: Vec<String> = c.iter().map(|a| sh_quote(a)).collect();
+                format!("command -v {} >/dev/null 2>&1 && exec {}\n", sh_quote(&c[0]), line.join(" "))
+            })
+            .chain(std::iter::once("exit 127\n".to_string()))
+            .collect();
         return std::process::Command::new("flatpak-spawn")
             .arg("--host")
             .arg(format!("--directory={}", dir.display()))
-            .args(["sh", "-c", script, "sh"])
-            .args(list)
+            .args(["sh", "-c", &script])
             .spawn()
             .map(Some)
             .map_err(|e| TerminalError::Failed(format!("Could not open a terminal on the host: {e}")));
     }
-    for c in preferred.iter().map(String::as_str).chain(TERMINALS.iter().copied()) {
-        if std::process::Command::new(c).current_dir(dir).spawn().is_ok() {
-            return Ok(None);
+    for c in &cmds {
+        if let Ok(child) = std::process::Command::new(&c[0]).args(&c[1..]).current_dir(dir).spawn() {
+            return Ok(Some(child));
         }
     }
     Err(TerminalError::Failed("No terminal emulator found (set $TERMINAL)".into()))
@@ -239,6 +274,15 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn terminal_command_lines() {
+        assert_eq!(sh_quote("it's"), "'it'\\''s'");
+        let cmds = terminal_commands(Path::new("/tmp/a b"));
+        let ptyxis = cmds.iter().find(|c| c[0] == "ptyxis").unwrap();
+        assert_eq!(ptyxis[1..], ["--new-window", "--working-directory=/tmp/a b"]);
+        assert!(cmds.iter().any(|c| c[0] == "xterm" && c.len() == 1));
     }
 
     #[test]

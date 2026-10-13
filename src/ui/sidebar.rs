@@ -1,17 +1,24 @@
-//! Left sidebar: filter box plus collapsible Recents / Bookmarks / Storage / Places.
+//! Left sidebar: filter box plus collapsible Bookmarks / Places / Storage / Recents,
+//! with folders expandable into a tree of what is really on disk.
 
 use std::path::PathBuf;
 
 use egui::{Align2, CursorIcon, Id, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 
 use super::{elided, search_box, text};
-use crate::app::{Action, DragPaths, FileFlier, MenuItem, display_name};
+use crate::app::{Action, DragPaths, DropTarget, FileFlier, MenuItem, display_name};
 use crate::fuzzy;
 use crate::icons::{self, Place};
 use crate::mounts::MountKind;
 
 const ITEM_H: f32 = 30.0;
+/// Rows inside a folder tree are a little shorter, so more of the tree fits.
+const CHILD_H: f32 = 26.0;
+const INDENT: f32 = 14.0;
+/// Folders with more subfolders than this show the rest as "N more…".
+const MAX_CHILDREN: usize = 150;
 
+#[derive(Default)]
 struct Item {
     icon: Place,
     label: String,
@@ -25,12 +32,69 @@ struct Item {
     offline: bool,
     /// The "Add cloud storage…" row.
     add_cloud: bool,
+    /// Nesting level in a folder tree (0 = the section's own rows).
+    depth: usize,
+    /// A folder that can be expanded to show its subfolders.
+    tree: bool,
+    /// Whether its subfolders are showing.
+    open: bool,
+    /// The "N more…" row of a big folder (`path` is that folder).
+    more: bool,
+}
+
+impl Item {
+    fn folder(icon: Place, label: String, path: PathBuf) -> Self {
+        Item { icon, label, path, tree: true, ..Default::default() }
+    }
 }
 
 impl FileFlier {
+    /// Adds `item` to `out`, followed by its subfolders (recursively) if it's open.
+    fn push_tree(
+        &self,
+        section: &str,
+        mut item: Item,
+        icons_for: &[(PathBuf, Place)],
+        ctx: &egui::Context,
+        out: &mut Vec<Item>,
+    ) {
+        let key = (section.to_string(), item.path.clone());
+        if !item.tree || !self.sidebar_open.contains(&key) {
+            if item.tree && self.dir_tree.known_empty(&item.path, self.cfg.show_hidden) {
+                item.tree = false;
+            }
+            out.push(item);
+            return;
+        }
+        let children = self.dir_tree.children(&item.path, self.cfg.show_hidden, ctx);
+        if children.as_ref().is_some_and(|c| c.is_empty()) {
+            item.tree = false;
+        }
+        item.open = item.tree;
+        let (depth, parent) = (item.depth + 1, item.path.clone());
+        out.push(item);
+        let Some(children) = children else { return };
+        for c in children.iter().take(MAX_CHILDREN) {
+            let icon = icons_for.iter().find(|(p, _)| p == c).map(|(_, i)| *i).unwrap_or(Place::Folder);
+            let child = Item { depth, ..Item::folder(icon, display_name(c), c.clone()) };
+            self.push_tree(section, child, icons_for, ctx, out);
+        }
+        if children.len() > MAX_CHILDREN {
+            out.push(Item {
+                icon: Place::Folder,
+                label: format!("{} more…", children.len() - MAX_CHILDREN),
+                path: parent,
+                depth,
+                more: true,
+                ..Default::default()
+            });
+        }
+    }
+
     pub(crate) fn sidebar_ui(&mut self, ui: &mut Ui, rect: Rect) {
         let pal = self.pal();
         let fx = self.fx();
+        let ctx = ui.ctx().clone();
         super::surface(ui.painter(), rect, pal.sidebar, &fx, pal);
         if !fx.glass {
             ui.painter().vline(rect.right() - 0.5, rect.y_range(), Stroke::new(1.0, pal.border));
@@ -56,70 +120,34 @@ impl FileFlier {
 
         let current = self.tab().path.clone();
         let home = dirs::home_dir();
-        // Fall back to ~/Name when XDG user dirs aren't configured.
-        let std_dir = |d: Option<PathBuf>, name: &str| d.or_else(|| home.as_ref().map(|h| h.join(name)));
-        let places: Vec<Item> = [
-            (Place::Home, home.as_ref().map(|h| display_name(h)).unwrap_or_else(|| "Home".into()), home.clone()),
-            (Place::Desktop, "Desktop".into(), std_dir(dirs::desktop_dir(), "Desktop")),
-            (Place::Downloads, "Downloads".into(), std_dir(dirs::download_dir(), "Downloads")),
-            (Place::Documents, "Documents".into(), std_dir(dirs::document_dir(), "Documents")),
-            (Place::Music, "Music".into(), std_dir(dirs::audio_dir(), "Music")),
-            (Place::Pictures, "Pictures".into(), std_dir(dirs::picture_dir(), "Pictures")),
-            (
-                Place::Videos,
-                if cfg!(target_os = "macos") { "Movies" } else { "Videos" }.into(),
-                std_dir(dirs::video_dir(), "Videos"),
-            ),
-            (Place::Folder, "Applications".into(), cfg!(target_os = "macos").then(|| PathBuf::from("/Applications"))),
-            (Place::Trash, "Trash".into(), crate::trashview::trash_dir()),
+        // The user folders this system actually has (from XDG user-dirs / macOS), shown
+        // with their own icons wherever they appear in the tree.
+        // (Falls back to ~/Name when XDG user dirs aren't configured.)
+        let icons_for: Vec<(PathBuf, Place)> = [
+            (dirs::desktop_dir(), "Desktop", Place::Desktop),
+            (dirs::download_dir(), "Downloads", Place::Downloads),
+            (dirs::document_dir(), "Documents", Place::Documents),
+            (dirs::audio_dir(), "Music", Place::Music),
+            (dirs::picture_dir(), "Pictures", Place::Pictures),
+            (dirs::video_dir(), if cfg!(target_os = "macos") { "Movies" } else { "Videos" }, Place::Videos),
         ]
         .into_iter()
-        .filter_map(|(icon, label, path)| {
-            path.filter(|p| p.is_dir() || matches!(icon, Place::Trash)).map(|path| Item {
-                icon,
-                label,
-                path,
-                space: None,
-                volume: None,
-                cloud: None,
-                offline: false,
-                add_cloud: false,
-            })
+        .filter_map(|(p, name, i)| {
+            p.or_else(|| home.as_ref().map(|h| h.join(name))).filter(|p| Some(p) != home.as_ref()).map(|p| (p, i))
         })
         .collect();
-        let bookmarks: Vec<Item> = self
-            .cfg
-            .bookmarks
-            .iter()
-            .map(|b| Item {
-                icon: Place::Folder,
-                label: display_name(b),
-                path: b.clone(),
-                space: None,
-                volume: None,
-                cloud: None,
-                offline: false,
-                add_cloud: false,
-            })
-            .collect();
-        let recents: Vec<Item> = self
-            .cfg
-            .recent
-            .iter()
-            .filter(|p| p.is_dir())
-            .take(10)
-            .map(|p| Item {
-                icon: Place::Folder,
-                label: display_name(p),
-                path: p.clone(),
-                space: None,
-                volume: None,
-                cloud: None,
-                offline: false,
-                add_cloud: false,
-            })
-            .collect();
-        let mut storage: Vec<Item> = self
+
+        // Places: your home folder as a tree of the folders really in it, then Trash.
+        let mut place_roots: Vec<Item> = Vec::new();
+        if let Some(h) = &home {
+            place_roots.push(Item::folder(Place::Home, display_name(h), h.clone()));
+        }
+        if cfg!(target_os = "macos") {
+            place_roots.push(Item::folder(Place::Folder, "Applications".into(), PathBuf::from("/Applications")));
+        }
+        let bookmark_roots: Vec<Item> =
+            self.cfg.bookmarks.iter().map(|b| Item::folder(Place::Folder, display_name(b), b.clone())).collect();
+        let storage_roots: Vec<Item> = self
             .mounts
             .iter()
             .map(|m| {
@@ -128,6 +156,8 @@ impl FileFlier {
                     MountKind::Cloud | MountKind::CloudOffline => Place::Cloud,
                     MountKind::Root | MountKind::Removable | MountKind::Unmounted => Place::Drive,
                 };
+                let offline = m.kind == MountKind::CloudOffline;
+                let unmounted = m.kind == MountKind::Unmounted;
                 Item {
                     icon,
                     label: m.name.clone(),
@@ -135,44 +165,99 @@ impl FileFlier {
                     space: m.space,
                     volume: m.volume.clone(),
                     cloud: m.cloud.clone(),
-                    offline: m.kind == MountKind::CloudOffline,
-                    add_cloud: false,
+                    offline,
+                    tree: !offline && !unmounted && !m.path.as_os_str().is_empty(),
+                    ..Default::default()
                 }
             })
             .collect();
+
+        // Open the tree down to the current folder when it changes (under the closest root).
+        let reveal = self.sidebar_revealed.as_ref() != Some(&current);
+        if reveal {
+            self.sidebar_revealed = Some(current.clone());
+            if self.sidebar_open.is_empty()
+                && let Some(h) = &home
+            {
+                self.sidebar_open.insert(("Places".into(), h.clone())); // home starts open
+            }
+            let best = place_roots
+                .iter()
+                .map(|i| ("Places", &i.path))
+                .chain(storage_roots.iter().filter(|i| i.tree).map(|i| ("Storage", &i.path)))
+                .filter(|(_, p)| current.starts_with(p))
+                .max_by_key(|(_, p)| p.components().count());
+            if let Some((section, root)) = best
+                && let Ok(rel) = current.strip_prefix(root)
+            {
+                let hidden = rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+                if self.cfg.show_hidden || !hidden {
+                    let mut p = root.clone();
+                    for c in rel.components() {
+                        self.sidebar_open.insert((section.to_string(), p.clone()));
+                        p.push(c);
+                    }
+                }
+            }
+        }
+
+        let mut places: Vec<Item> = Vec::new();
+        for r in place_roots {
+            self.push_tree("Places", r, &icons_for, &ctx, &mut places);
+        }
+        if let Some(t) = crate::trashview::trash_dir() {
+            places.push(Item { icon: Place::Trash, label: "Trash".into(), path: t, ..Default::default() });
+        }
+        let mut bookmarks: Vec<Item> = Vec::new();
+        for r in bookmark_roots {
+            self.push_tree("Bookmarks", r, &icons_for, &ctx, &mut bookmarks);
+        }
+        let mut storage: Vec<Item> = Vec::new();
+        for r in storage_roots {
+            self.push_tree("Storage", r, &icons_for, &ctx, &mut storage);
+        }
         if crate::cloud::SUPPORTED {
             storage.push(Item {
                 icon: Place::Cloud,
                 label: "Add cloud storage…".into(),
-                path: PathBuf::new(),
-                space: None,
-                volume: None,
-                cloud: None,
-                offline: false,
                 add_cloud: true,
+                ..Default::default()
             });
         }
+        let recents: Vec<Item> = self
+            .cfg
+            .recent
+            .iter()
+            .filter(|p| p.is_dir())
+            .take(10)
+            .map(|p| Item { icon: Place::Folder, label: display_name(p), path: p.clone(), ..Default::default() })
+            .collect();
 
         let q = self.sidebar_filter.trim().to_string();
         let filt = |items: Vec<Item>| -> Vec<Item> {
             items.into_iter().filter(|i| q.is_empty() || fuzzy::score(&q, &i.label).is_some()).collect()
         };
         let sections = [
-            ("Recents", Place::Recent, filt(recents)),
             ("Bookmarks", Place::Bookmark, filt(bookmarks)),
-            ("Storage", Place::Drive, filt(storage)),
             ("Places", Place::Folder, filt(places)),
+            ("Storage", Place::Drive, filt(storage)),
+            ("Recents", Place::Recent, filt(recents)),
         ];
 
         let list =
             Rect::from_min_max(pos2(rect.left(), filter_r.bottom() + 8.0), pos2(rect.right() - 1.0, rect.bottom()));
         let mut toggles: Vec<String> = Vec::new();
+        let mut tree_toggles: Vec<(String, PathBuf, bool)> = Vec::new();
+        let mut new_bookmarks: Vec<PathBuf> = Vec::new();
         let mut actions: Vec<Action> = Vec::new();
+        let mut drop_target: Option<DropTarget> = None;
         let force_copy = ui.input(|i| i.modifiers.command);
+        let dragging = egui::DragAndDrop::has_payload_of_type::<DragPaths>(&ctx);
         ui.scope_builder(UiBuilder::new().max_rect(list).id_salt("sidebar"), |ui| {
             ui.set_clip_rect(list);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                super::dnd::edge_scroll(ui, list);
                 let w = ui.available_width();
                 for (title, icon, items) in sections {
                     let collapsed = self.cfg.collapsed.iter().any(|c| c == title) && q.is_empty();
@@ -182,6 +267,16 @@ impl FileFlier {
                     let p = ui.painter();
                     if hresp.hovered() {
                         p.rect_filled(hr, 4.0, pal.tab_hover);
+                    }
+                    // Folders dropped on the Bookmarks header get bookmarked.
+                    if title == "Bookmarks"
+                        && let Some(pl) = hresp.dnd_hover_payload::<DragPaths>()
+                        && pl.0.iter().any(|p| p.is_dir())
+                    {
+                        p.rect_stroke(hr, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                        if let Some(pl) = hresp.dnd_release_payload::<DragPaths>() {
+                            new_bookmarks.extend(pl.0.iter().filter(|p| p.is_dir()).cloned());
+                        }
                     }
                     let ir = Rect::from_center_size(pos2(hr.left() + 16.0, hr.center().y), vec2(17.0, 17.0));
                     match icon {
@@ -208,59 +303,110 @@ impl FileFlier {
                     }
                     if items.is_empty() && title == "Bookmarks" {
                         let (r, _) = ui.allocate_exact_size(vec2(w, ITEM_H - 4.0), Sense::hover());
+                        let hint = if dragging { "Drop folders here to bookmark" } else { "Ctrl+D to bookmark" };
                         text(
                             ui.painter(),
                             pos2(r.left() + 40.0, r.center().y),
                             Align2::LEFT_CENTER,
-                            super::keys("Ctrl+D to bookmark"),
+                            super::keys(hint),
                             12.5,
                             pal.text_faint,
                         );
                     }
                     for item in &items {
-                        let h = if item.space.is_some() { ITEM_H + 6.0 } else { ITEM_H };
+                        let h = if item.space.is_some() {
+                            ITEM_H + 6.0
+                        } else if item.depth > 0 {
+                            CHILD_H
+                        } else {
+                            ITEM_H
+                        };
                         let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
                         let r = r.shrink2(vec2(6.0, 1.0));
-                        let is_current = item.path == current;
-                        let drop_hover = resp.dnd_hover_payload::<DragPaths>().is_some();
+                        let is_current = item.path == current && !item.more;
+                        let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty())
+                            || item.offline
+                            || item.add_cloud;
+                        let droppable = !unmounted && !item.more;
+                        let drop_hover = droppable && resp.dnd_hover_payload::<DragPaths>().is_some();
+                        let indent = item.depth as f32 * INDENT;
                         let p = ui.painter();
                         if is_current {
                             p.rect_filled(r, 4.0, pal.tab_hover);
                             // Accent marker for where you are.
                             let m = Rect::from_center_size(pos2(r.left() + 1.5, r.center().y), vec2(3.0, h * 0.5));
                             p.rect_filled(m, 1.5, pal.accent);
+                            if reveal {
+                                ui.scroll_to_rect(r, None);
+                            }
                         } else if resp.hovered() {
                             p.rect_filled(r, 4.0, pal.hover);
                         }
+                        let is_trash = matches!(item.icon, Place::Trash) && item.depth == 0 && !item.tree;
                         if drop_hover {
                             p.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                            drop_target =
+                                Some(if is_trash { DropTarget::Trash } else { DropTarget::Folder(item.path.clone()) });
+                            if !is_trash {
+                                // Resting on a folder opens it (and its subfolders in the tree).
+                                let (t, fire) = super::dnd::spring(
+                                    ui.ctx(),
+                                    Id::new(("spring_sb", title, &item.path)),
+                                    super::dnd::SPRING_DELAY,
+                                );
+                                p.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.30 * t));
+                                if fire {
+                                    if item.tree && !item.open {
+                                        tree_toggles.push((title.to_string(), item.path.clone(), true));
+                                    }
+                                    actions.push(Action::Navigate(item.path.clone()));
+                                }
+                            }
                         }
                         let text_y = if item.space.is_some() { r.top() + 13.0 } else { r.center().y };
-                        let ir = Rect::from_center_size(pos2(r.left() + 40.0, text_y), vec2(18.0, 18.0));
+                        // Disclosure arrow for folders that can be expanded.
+                        let chev = Rect::from_center_size(pos2(r.left() + 13.0 + indent, text_y), vec2(18.0, 18.0));
+                        let mut chev_clicked = false;
+                        if item.tree {
+                            let cresp = ui.interact(chev, Id::new(("sb_tree", title, &item.path)), Sense::click());
+                            let c = if cresp.hovered() { pal.text_strong } else { pal.text_faint };
+                            let cr = chev.shrink(4.0);
+                            if item.open {
+                                icons::chevron_down(ui.painter(), cr, c);
+                            } else {
+                                icons::chevron_right(ui.painter(), cr, c);
+                            }
+                            if cresp.clicked() {
+                                tree_toggles.push((title.to_string(), item.path.clone(), !item.open));
+                                chev_clicked = true;
+                            }
+                        }
+                        let p = ui.painter();
+                        let isz = if item.depth > 0 { 16.0 } else { 18.0 };
+                        let ir = Rect::from_center_size(pos2(r.left() + 32.0 + indent, text_y), vec2(isz, isz));
                         if item.add_cloud {
                             let c = if resp.hovered() { pal.text_strong } else { pal.text_dim };
                             icons::plus(p, ir.shrink(2.0), c);
-                        } else {
+                        } else if !item.more {
                             icons::place(p, ir, item.icon, pal);
                         }
-                        let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty())
-                            || item.offline
-                            || item.add_cloud;
                         let ejectable = item.volume.as_ref().is_some_and(|v| v.removable && !v.mount_points.is_empty());
                         let color = if is_current {
                             pal.text_strong
-                        } else if unmounted {
+                        } else if unmounted || item.more {
                             pal.text_dim
                         } else {
                             pal.text
                         };
                         let eject_w = if ejectable { 26.0 } else { 0.0 };
-                        let g = elided(p, &item.label, 14.0, color, r.right() - (r.left() + 58.0) - 6.0 - eject_w);
-                        p.galley(pos2(r.left() + 58.0, text_y - g.size().y / 2.0), g, color);
+                        let label_x = r.left() + 48.0 + indent;
+                        let size = if item.depth > 0 { 13.5 } else { 14.0 };
+                        let g = elided(p, &item.label, size, color, r.right() - label_x - 6.0 - eject_w);
+                        p.galley(pos2(label_x, text_y - g.size().y / 2.0), g, color);
                         if let Some(u) = item.space.map(|s| s.used()) {
                             let bar = Rect::from_min_size(
-                                pos2(r.left() + 58.0, text_y + 11.0),
-                                vec2((r.width() - 74.0).max(20.0), 3.0),
+                                pos2(label_x, text_y + 11.0),
+                                vec2((r.right() - label_x - 16.0).max(20.0), 3.0),
                             );
                             p.rect_filled(bar, 1.0, pal.border);
                             let full = u > 0.9;
@@ -285,6 +431,8 @@ impl FileFlier {
                         };
                         let tip = if item.add_cloud {
                             "Sign in to Google Drive, OneDrive or Dropbox".to_string()
+                        } else if item.more {
+                            format!("Open {}", item.path.display())
                         } else if item.offline {
                             format!("{} — not connected. Click to connect.", item.label)
                         } else if unmounted {
@@ -307,8 +455,8 @@ impl FileFlier {
                             }
                         }
                         let resp = resp.on_hover_text(tip);
-                        if resp.clicked() && eject_clicked {
-                            // handled by the eject button
+                        if resp.clicked() && (eject_clicked || chev_clicked) {
+                            // handled by the eject button / disclosure arrow
                         } else if resp.clicked() && item.add_cloud {
                             actions.push(Action::AddCloud);
                         } else if resp.clicked() && item.offline {
@@ -320,11 +468,13 @@ impl FileFlier {
                                 actions.push(Action::MountVolume(v.object.clone()));
                             }
                         } else if resp.clicked() {
-                            if matches!(item.icon, Place::Trash) {
+                            if is_trash {
                                 actions.push(Action::Run(crate::commands::Command::ShowTrash));
                             } else {
                                 actions.push(Action::Navigate(item.path.clone()));
                             }
+                        } else if resp.double_clicked() && item.tree {
+                            tree_toggles.push((title.to_string(), item.path.clone(), !item.open));
                         }
                         if unmounted {
                             // Nothing to open or drop onto yet; a signed-in account can still be signed out.
@@ -334,6 +484,9 @@ impl FileFlier {
                                 let pos = resp.interact_pointer_pos().unwrap_or(r.center());
                                 actions.push(Action::OpenMenu(pos, vec![MenuItem::CloudSignOut(a.name.clone())]));
                             }
+                            continue;
+                        }
+                        if item.more {
                             continue;
                         }
                         if resp.middle_clicked() {
@@ -347,7 +500,7 @@ impl FileFlier {
                                 // (A cloud drive's mount folder is an internal path; clicking it opens it.)
                                 items.insert(0, MenuItem::Go(item.path.clone()));
                             }
-                            if title == "Bookmarks" {
+                            if title == "Bookmarks" && item.depth == 0 {
                                 items.push(MenuItem::Sep);
                                 items.push(MenuItem::Unbookmark(item.path.clone()));
                             }
@@ -359,7 +512,7 @@ impl FileFlier {
                             actions.push(Action::OpenMenu(pos, items));
                         }
                         if let Some(pl) = resp.dnd_release_payload::<DragPaths>() {
-                            if matches!(item.icon, Place::Trash) {
+                            if is_trash {
                                 actions.push(Action::TrashPaths(pl.0.clone()));
                             } else {
                                 actions.push(Action::Drop { paths: pl.0.clone(), dest: item.path.clone(), force_copy });
@@ -377,6 +530,25 @@ impl FileFlier {
                 self.cfg.collapsed.push(t);
             }
             self.cfg.save();
+        }
+        for (section, path, open) in tree_toggles {
+            if open {
+                self.sidebar_open.insert((section, path));
+            } else {
+                // Closing a folder closes everything under it too.
+                self.sidebar_open.retain(|(s, p)| !(*s == section && p.starts_with(&path)));
+            }
+        }
+        if !new_bookmarks.is_empty() {
+            for b in new_bookmarks {
+                if !self.cfg.bookmarks.contains(&b) {
+                    self.cfg.bookmarks.push(b);
+                }
+            }
+            self.cfg.save();
+        }
+        if drop_target.is_some() {
+            self.drop_target = drop_target;
         }
         self.actions.extend(actions);
     }

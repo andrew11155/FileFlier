@@ -132,6 +132,13 @@ pub enum MenuItem {
 /// Payload for dragging files around inside the app.
 pub struct DragPaths(pub Vec<PathBuf>);
 
+/// What a drag is over: a folder to drop into, or the trash.
+#[derive(Clone, PartialEq)]
+pub enum DropTarget {
+    Folder(PathBuf),
+    Trash,
+}
+
 /// Things the UI asks the app to do after drawing (avoids borrow conflicts).
 pub enum Action {
     Activate(usize),
@@ -186,9 +193,14 @@ pub struct FileFlier {
     pub actions: Vec<Action>,
     pub geom: [PaneGeom; 2],
     pub sidebar_filter: String,
+    /// Sidebar folder-tree nodes that are open, by (section, folder).
+    pub sidebar_open: std::collections::HashSet<(String, PathBuf)>,
+    /// The folder the sidebar tree last expanded itself to show.
+    pub sidebar_revealed: Option<PathBuf>,
+    pub dir_tree: crate::dirtree::DirTree,
     /// Cached child counts for folders shown in the Items column.
     pub item_counts: ItemCounter,
-    /// A terminal just launched through `flatpak-spawn`, watched briefly for failure.
+    /// A terminal just launched, watched briefly for failure.
     terminal_launch: Option<(std::process::Child, Instant)>,
     /// Last see-through state sent to the window (blur is only toggled on change).
     blur_applied: Option<bool>,
@@ -206,6 +218,8 @@ pub struct FileFlier {
     native: Option<crate::native::Native>,
     /// The current in-app drag has been handed to the desktop.
     drag_out: bool,
+    /// Where an in-app drag would land if released now (set while drawing, shown by the drag label).
+    pub drop_target: Option<DropTarget>,
     /// A window move/resize was handed to the compositor, which swallows the
     /// button release; we synthesize it so egui doesn't think the button is stuck.
     pub release_after_grab: bool,
@@ -273,6 +287,9 @@ impl FileFlier {
             actions: Vec::new(),
             geom: [PaneGeom { cols: 1, page_rows: 15 }; 2],
             sidebar_filter: String::new(),
+            sidebar_open: Default::default(),
+            sidebar_revealed: None,
+            dir_tree: Default::default(),
             item_counts: ItemCounter::start(cc.egui_ctx.clone()),
             terminal_launch: None,
             blur_applied: None,
@@ -284,6 +301,7 @@ impl FileFlier {
             mounted_at: Default::default(),
             native: None,
             drag_out: false,
+            drop_target: None,
             release_after_grab: false,
         }
     }
@@ -667,14 +685,12 @@ impl FileFlier {
 
     /// Drag-and-drop: move within the same filesystem, copy across (or when Ctrl is held).
     fn drop_paths(&mut self, paths: Vec<PathBuf>, dest: PathBuf, force_copy: bool) {
-        use std::os::unix::fs::MetadataExt;
         let paths: Vec<PathBuf> =
             paths.into_iter().filter(|p| p.parent() != Some(dest.as_path()) && !dest.starts_with(p)).collect();
         if paths.is_empty() {
             return;
         }
-        let dev = |p: &Path| std::fs::symlink_metadata(p).map(|m| m.dev()).ok();
-        let same_fs = dev(&dest).is_some() && paths.iter().all(|p| dev(p) == dev(&dest));
+        let same_fs = paths.iter().all(|p| same_filesystem(p, &dest));
         self.transfer(paths, dest, same_fs && !force_copy);
     }
 
@@ -1252,7 +1268,7 @@ impl FileFlier {
                     match status.code() {
                         Some(0) | None => {}
                         Some(127) => self.error("No terminal app found on your system (set $TERMINAL)"),
-                        Some(_) => self.error("Could not open a terminal on the host"),
+                        Some(_) => self.error("The terminal app failed to start"),
                     }
                 }
                 // Terminals that stay attached are fine; stop watching after a few seconds.
@@ -1486,6 +1502,7 @@ impl eframe::App for FileFlier {
             self.native = Some(crate::native::Native::new(frame, &ctx));
         }
         self.native_dnd(&ctx);
+        self.drop_target = None;
         let pal = self.pal();
         self.poll_background(&ctx);
         self.persist_ui_state(&ctx);
@@ -1609,6 +1626,13 @@ impl eframe::App for FileFlier {
 }
 
 // ---------------------------------------------------------------- helpers
+
+/// Whether `a` and `b` are on the same filesystem (so a drop moves rather than copies).
+pub fn same_filesystem(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let dev = |p: &Path| std::fs::symlink_metadata(p).map(|m| m.dev()).ok();
+    dev(b).is_some() && dev(a) == dev(b)
+}
 
 pub fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }

@@ -497,7 +497,7 @@ pub fn logo(p: &Painter, r: Rect, pal: &Palette) {
 }
 
 /// Small colored glyphs for the sidebar's Places section.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum Place {
     Home,
     Desktop,
@@ -507,6 +507,7 @@ pub enum Place {
     Pictures,
     Videos,
     Trash,
+    #[default]
     Folder,
     Bookmark,
     Recent,

@@ -2,12 +2,12 @@
 //! buttons, resize edges, the split divider, toasts and the drag overlay.
 
 use egui::{
-    Color32, CornerRadius, CursorIcon, Id, LayerId, Order, Rect, ResizeDirection, Sense, Stroke, Ui, ViewportCommand,
-    pos2, vec2,
+    Color32, CornerRadius, CursorIcon, Id, LayerId, Order, Rect, ResizeDirection, Sense, Stroke, StrokeKind, Ui,
+    ViewportCommand, pos2, vec2,
 };
 
 use super::{elided, icon_button};
-use crate::app::{Action, CONTROLS_W, DragPaths, FileFlier, TRAFFIC_LIGHTS_W, plural};
+use crate::app::{Action, CONTROLS_W, DragPaths, DropTarget, FileFlier, TRAFFIC_LIGHTS_W, plural};
 use crate::icons;
 
 const TAB_H: f32 = 32.0;
@@ -154,6 +154,22 @@ impl FileFlier {
                     self.actions.push(Action::CloseTab(idx, ti));
                     continue;
                 }
+            }
+            // Files dragged onto a tab drop into its folder; resting on one switches to it.
+            if resp.dnd_hover_payload::<DragPaths>().is_some() {
+                painter.rect_stroke(r.shrink2(vec2(2.0, 3.0)), 6.0, Stroke::new(1.5, pal.accent), StrokeKind::Inside);
+                self.drop_target = Some(DropTarget::Folder(tab.path.clone()));
+                if !(is_active && pane_active) {
+                    let (t, fire) = super::dnd::spring(ui.ctx(), Id::new(("spring_tab", idx, ti)), 0.45);
+                    painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), 6.0, pal.accent.gamma_multiply(0.25 * t));
+                    if fire {
+                        self.actions.push(Action::SelectTab(idx, ti));
+                    }
+                }
+            }
+            if let Some(pl) = resp.dnd_release_payload::<DragPaths>() {
+                let force_copy = ui.input(|i| i.modifiers.command);
+                self.actions.push(Action::Drop { paths: pl.0.clone(), dest: tab.path.clone(), force_copy });
             }
             if resp.clicked() || resp.drag_started() {
                 self.actions.push(Action::SelectTab(idx, ti));
@@ -339,18 +355,41 @@ impl FileFlier {
         }
     }
 
-    /// A small label following the pointer while files are being dragged.
+    /// A small label following the pointer while files are being dragged, saying
+    /// what a release would do: "Move 2 items to Documents".
     pub(crate) fn drag_overlay(&mut self, ctx: &egui::Context) {
         let Some(payload) = egui::DragAndDrop::payload::<DragPaths>(ctx) else { return };
         let Some(pos) = ctx.pointer_hover_pos() else { return };
         let pal = self.pal();
         let painter = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("dnd")));
-        let copy = ctx.input(|i| i.modifiers.command);
         let n = payload.0.len();
-        let label = format!("{} {n} item{}", if copy { "Copy" } else { "Move" }, plural(n));
-        let g = painter.layout_no_wrap(label, super::font(13.0), pal.on_accent);
+        let what = if n == 1 { crate::app::display_name(&payload.0[0]) } else { format!("{n} item{}", plural(n)) };
+        let (label, ok) = match &self.drop_target {
+            Some(DropTarget::Trash) => (format!("Move {what} to Trash"), true),
+            Some(DropTarget::Folder(dest)) => {
+                let invalid = payload.0.iter().all(|p| p.parent() == Some(dest.as_path()))
+                    || payload.0.iter().any(|p| dest.starts_with(p));
+                if invalid {
+                    (format!("{what} — already here"), false)
+                } else {
+                    // Checked once per target rather than every frame (a stat can be slow on network mounts).
+                    let key = Id::new(("dnd_same_fs", &payload.0[0], dest));
+                    let same = ctx.data(|d| d.get_temp::<bool>(key)).unwrap_or_else(|| {
+                        let same = crate::app::same_filesystem(&payload.0[0], dest);
+                        ctx.data_mut(|d| d.insert_temp(key, same));
+                        same
+                    });
+                    let copy = ctx.input(|i| i.modifiers.command) || !same;
+                    let verb = if copy { "Copy" } else { "Move" };
+                    (format!("{verb} {what} to {}", crate::app::display_name(dest)), true)
+                }
+            }
+            None => (what, false),
+        };
+        let (fill, fg) = if ok { (pal.accent, pal.on_accent) } else { (pal.tab_hover, pal.text) };
+        let g = painter.layout_no_wrap(label, super::font(13.0), fg);
         let at = pos + vec2(18.0, 14.0);
-        painter.rect_filled(Rect::from_min_size(at, g.size()).expand2(vec2(8.0, 4.0)), 4.0, pal.accent);
-        painter.galley(at, g, pal.on_accent);
+        painter.rect_filled(Rect::from_min_size(at, g.size()).expand2(vec2(8.0, 4.0)), 4.0, fill);
+        painter.galley(at, g, fg);
     }
 }

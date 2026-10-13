@@ -3,6 +3,7 @@
 
 mod chrome;
 mod cloud;
+mod dnd;
 pub mod glass;
 mod inspector;
 mod pane_view;

@@ -32,8 +32,10 @@ the same on every desktop environment.
   show each command's shortcut.
 - **Preview panel** (`F3`). A Finder-style panel with a large, zoomable
   preview of the selected item and its details. See [Previews](#previews).
-- **Sidebar.** Has its own filter box and collapsible sections for Recents,
-  Bookmarks, Storage (drives with usage bars) and Places.
+- **Sidebar.** Has its own filter box and collapsible sections for Bookmarks,
+  Places, Storage (drives with usage bars) and Recents. *Places* is your home
+  folder as a tree of the folders really in it, and every folder or drive
+  expands with its arrow. The tree opens itself to the folder you're in.
 - **File operations.** Copy, cut, paste, drag-and-drop (moves within a
   filesystem; hold `Ctrl` to copy), move to trash, permanent delete, rename,
   new file or folder, and copy or move to the other pane (`F5` / `F6`).
@@ -43,6 +45,12 @@ the same on every desktop environment.
 
 ## Working with files
 
+- **Drag and drop.** Drop files on a folder, a tab, a breadcrumb, or a folder
+  in the sidebar. Hold the drag on a folder for a moment and it opens, so you
+  can go deeper without letting go. Resting on a tab switches to it. Dragging
+  near the top or bottom edge of a list scrolls it. The label next to the
+  pointer says what will happen ("Move 3 items to Documents"). `Esc` cancels.
+  Drop folders on the *Bookmarks* heading to bookmark them.
 - **Name conflicts.** When you paste or drop something whose name already
   exists, File Flier asks: *Replace*, *Keep Both* (adds a number) or *Skip*,
   with an option to apply the choice to every conflict. *Replace* moves the
@@ -298,8 +306,10 @@ cargo run --release              # opens your home folder
 cargo run --release -- ~/Projects   # opens a specific folder
 ```
 
-The terminal command opens `$TERMINAL` if it is set. Otherwise it tries common
-terminal emulators in turn.
+The terminal command opens `$TERMINAL` if it is set. Otherwise it tries your
+desktop's terminal and then other common ones (Ptyxis, Konsole, GNOME Console,
+GNOME Terminal, kitty, Alacritty, WezTerm, foot and more), always in a new
+window in the current folder.
 
 ### Packaging
 

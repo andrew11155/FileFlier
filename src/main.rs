@@ -7,6 +7,7 @@ mod cloud;
 mod commands;
 mod config;
 mod counts;
+mod dirtree;
 mod fs_model;
 mod fuzzy;
 mod icons;

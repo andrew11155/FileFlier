@@ -295,6 +295,17 @@ impl FileFlier {
             if resp.hovered() || drop_hover {
                 painter.rect_filled(r, 4.0, pal.tab_hover);
             }
+            if drop_hover && !last {
+                // Resting on a parent crumb goes there.
+                let (t, fire) = super::dnd::spring(ui.ctx(), Id::new(("spring", target)), super::dnd::SPRING_DELAY);
+                painter.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.30 * t));
+                painter.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), StrokeKind::Inside);
+                self.drop_target = Some(crate::app::DropTarget::Folder(target.clone()));
+                if fire {
+                    self.actions.push(Action::Activate(idx));
+                    self.actions.push(Action::Navigate(target.clone()));
+                }
+            }
             let color = if last || resp.hovered() { pal.text_strong } else { pal.text_dim };
             let g = elided(&painter, label, 14.0, color, (rect.right() - r.left() - 12.0).min(w));
             painter.galley(pos2(r.left() + 6.0, r.center().y - g.size().y / 2.0), g, color);
@@ -483,6 +494,9 @@ impl FileFlier {
 
         let mut item_actions: Vec<ItemAction> = Vec::new();
         let mut drops: Vec<(Vec<PathBuf>, PathBuf)> = Vec::new();
+        // A folder the drag is over (shown by the drag label), and one it rested on long enough to open.
+        let mut drop_folder: Option<PathBuf> = None;
+        let mut spring_open: Option<PathBuf> = None;
         let force_copy = ui.input(|i| i.modifiers.command);
         let sel_fill = if is_active { pal.accent } else { pal.accent_dim };
 
@@ -506,6 +520,7 @@ impl FileFlier {
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                     ui.multiply_opacity(nav_t);
                     area.show_rows(ui, pitch, rows, |ui, range| {
+                        super::dnd::edge_scroll(ui, list_rect);
                         if single_sel {
                             // Content-space origin of row 0, so the highlight scrolls with the rows.
                             let origin = ui.cursor().top() - range.start as f32 * pitch;
@@ -545,7 +560,9 @@ impl FileFlier {
                                 let resp = ui.interact(item, Id::new(("item", idx, vi)), Sense::click_and_drag());
                                 let selected = tab.selected.contains(&e.path);
                                 let is_cursor = is_active && vi == tab.cursor;
-                                let drop_target = e.is_dir && resp.dnd_hover_payload::<DragPaths>().is_some();
+                                // Not a target for itself (dragging a folder over its own row).
+                                let drop_target = e.is_dir
+                                    && resp.dnd_hover_payload::<DragPaths>().is_some_and(|pl| !pl.0.contains(&e.path));
                                 let dim = e.is_hidden() || cut_paths.contains(&e.path);
                                 let p = &ui.painter().clone();
 
@@ -577,7 +594,18 @@ impl FileFlier {
                                     p.rect_stroke(bg_rect, 4.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
                                 }
                                 if drop_target {
+                                    // Resting on a folder opens it; the fill builds up until it does.
+                                    let (t, fire) = super::dnd::spring(
+                                        ui.ctx(),
+                                        Id::new(("spring", &e.path)),
+                                        super::dnd::SPRING_DELAY,
+                                    );
+                                    p.rect_filled(bg_rect, 4.0, pal.accent.gamma_multiply(0.10 + 0.30 * t));
                                     p.rect_stroke(bg_rect, 4.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
+                                    drop_folder = Some(e.path.clone());
+                                    if fire {
+                                        spring_open = Some(e.path.clone());
+                                    }
                                 }
                                 if view != ViewMode::Grid && !selected {
                                     p.hline(item.x_range(), item.bottom() - 0.5, Stroke::new(1.0, pal.row_sep));
@@ -802,6 +830,29 @@ impl FileFlier {
             PaneGeom { cols: ncols, page_rows: (out.inner_rect.height() / pitch).floor().max(1.0) as usize };
 
         // Dropping onto the pane itself copies/moves into its folder.
+        let tab = self.panes[idx].tab_mut();
+        let over_pane = ctx.pointer_hover_pos().is_some_and(|p| list_rect.contains(p));
+        if let Some(pl) = egui::DragAndDrop::payload::<DragPaths>(&ctx)
+            && over_pane
+        {
+            if drop_folder.is_none() {
+                let here = pl.0.iter().all(|p| p.parent() == Some(tab.path.as_path()));
+                if !here {
+                    ui.painter().rect_stroke(
+                        list_rect.shrink(2.0),
+                        6.0,
+                        Stroke::new(2.0, pal.accent),
+                        StrokeKind::Inside,
+                    );
+                }
+                drop_folder = Some(tab.path.clone());
+            }
+            self.drop_target = drop_folder.map(crate::app::DropTarget::Folder);
+        }
+        if let Some(dir) = spring_open {
+            self.actions.push(Action::Activate(idx));
+            self.actions.push(Action::Navigate(dir));
+        }
         let tab = self.panes[idx].tab_mut();
         let released_here = ctx.input(|i| i.pointer.any_released())
             && ctx.pointer_interact_pos().is_some_and(|p| list_rect.contains(p));
