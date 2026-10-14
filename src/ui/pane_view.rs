@@ -238,7 +238,7 @@ impl FileFlier {
                 crumbs.push((c.as_os_str().to_string_lossy().into_owned(), acc.clone()));
             }
         } else if let Some(h) = start {
-            crumbs.push((crate::app::display_name(h), h.clone()));
+            crumbs.push(("Home".to_string(), h.clone()));
             acc = h.clone();
             for c in path.strip_prefix(h).unwrap().components() {
                 acc.push(c);
@@ -520,7 +520,7 @@ impl FileFlier {
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                     ui.multiply_opacity(nav_t);
                     area.show_rows(ui, pitch, rows, |ui, range| {
-                        super::dnd::edge_scroll(ui, list_rect);
+                        super::dnd::drag_scroll(ui, list_rect);
                         if single_sel {
                             // Content-space origin of row 0, so the highlight scrolls with the rows.
                             let origin = ui.cursor().top() - range.start as f32 * pitch;

@@ -1,4 +1,4 @@
-//! Drag-and-drop helpers: spring-loaded folders and edge auto-scrolling.
+//! Drag-and-drop helpers: spring-loaded folders and scrolling while dragging.
 
 use egui::{Context, Id, Rect, Ui, vec2};
 
@@ -28,9 +28,10 @@ pub fn spring(ctx: &Context, id: Id, delay: f64) -> (f32, bool) {
     (if fired { 0.0 } else { t }, fire)
 }
 
-/// While files are dragged near the top or bottom edge of `rect` (or just past it),
-/// scrolls the enclosing scroll area. Call inside the scroll area's contents.
-pub fn edge_scroll(ui: &Ui, rect: Rect) {
+/// Scrolling while files are dragged: the mouse wheel (egui ignores it while any
+/// widget is being dragged), and automatic scrolling near the top or bottom edge of
+/// `rect` (or just past it). Call inside the scroll area's contents.
+pub fn drag_scroll(ui: &Ui, rect: Rect) {
     let ctx = ui.ctx();
     if !egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) {
         return;
@@ -38,6 +39,13 @@ pub fn edge_scroll(ui: &Ui, rect: Rect) {
     let Some(pos) = ctx.pointer_hover_pos() else { return };
     if !rect.x_range().contains(pos.x) {
         return;
+    }
+    let none = egui::style::ScrollAnimation::none();
+    if rect.contains(pos) && ctx.dragged_id().is_some() {
+        let wheel = ctx.input(|i| i.smooth_scroll_delta.y);
+        if wheel != 0.0 {
+            ui.scroll_with_delta_animation(vec2(0.0, wheel), none);
+        }
     }
     let zone = (rect.height() * 0.15).clamp(18.0, 48.0);
     // Positive = towards the top; speed grows the deeper into the zone (or past the edge).
@@ -50,6 +58,6 @@ pub fn edge_scroll(ui: &Ui, rect: Rect) {
     };
     let speed = 900.0 * depth.clamp(-1.6, 1.6);
     let dt = ctx.input(|i| i.stable_dt).min(0.05);
-    ui.scroll_with_delta_animation(vec2(0.0, speed * dt), egui::style::ScrollAnimation::none());
+    ui.scroll_with_delta_animation(vec2(0.0, speed * dt), none);
     ctx.request_repaint();
 }

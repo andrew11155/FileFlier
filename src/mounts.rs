@@ -218,6 +218,16 @@ fn scan() -> Vec<Mount> {
                     m.name = v.label.clone();
                 }
                 m.volume = Some(v.clone());
+            } else if let Some(mp) = v.mount_points.iter().find(|m| crate::udisks::user_visible_mount(m)) {
+                // Mounted, but not in our /proc/self/mounts (e.g. outside the Flatpak sandbox's view).
+                mounts.push(Mount {
+                    path: mp.clone(),
+                    name: v.label.clone(),
+                    kind: MountKind::Removable,
+                    space: crate::app::disk_space(mp),
+                    volume: Some(v.clone()),
+                    cloud: None,
+                });
             } else if v.mount_points.is_empty() {
                 mounts.push(Mount {
                     path: PathBuf::new(),

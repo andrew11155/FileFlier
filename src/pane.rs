@@ -33,7 +33,7 @@ pub struct Tab {
 impl Tab {
     pub fn new(path: PathBuf, show_hidden: bool, sort: Sort, view: ViewMode) -> Self {
         let mut t = Self {
-            path,
+            path: fs_model::canonical(&path),
             entries: Vec::new(),
             visible: Vec::new(),
             selected: HashSet::new(),
@@ -56,6 +56,9 @@ impl Tab {
     pub fn title(&self) -> String {
         if self.path == Path::new("/") {
             return "/".into();
+        }
+        if dirs::home_dir().is_some_and(|h| h == self.path) {
+            return "Home".into();
         }
         self.path
             .file_name()
@@ -125,7 +128,7 @@ impl Tab {
     }
 
     pub fn navigate(&mut self, path: PathBuf, show_hidden: bool, sort: Sort) {
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let path = fs_model::canonical(&path);
         if path == self.path {
             return;
         }

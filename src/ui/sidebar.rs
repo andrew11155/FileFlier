@@ -40,6 +40,14 @@ struct Item {
     open: bool,
     /// The "N more…" row of a big folder (`path` is that folder).
     more: bool,
+    /// Which tree the row belongs to (section and root folder), so the same folder can
+    /// appear in two trees without sharing open/closed state or widget IDs.
+    tree_key: String,
+}
+
+/// Identifies one folder tree in the sidebar.
+fn tree_key(section: &str, root: &std::path::Path) -> String {
+    format!("{section}|{}", root.display())
 }
 
 impl Item {
@@ -58,6 +66,7 @@ impl FileFlier {
         ctx: &egui::Context,
         out: &mut Vec<Item>,
     ) {
+        item.tree_key = section.to_string();
         let key = (section.to_string(), item.path.clone());
         if !item.tree || !self.sidebar_open.contains(&key) {
             if item.tree && self.dir_tree.known_empty(&item.path, self.cfg.show_hidden) {
@@ -125,8 +134,8 @@ impl FileFlier {
         // (Falls back to ~/Name when XDG user dirs aren't configured.)
         let icons_for: Vec<(PathBuf, Place)> = [
             (dirs::desktop_dir(), "Desktop", Place::Desktop),
-            (dirs::download_dir(), "Downloads", Place::Downloads),
             (dirs::document_dir(), "Documents", Place::Documents),
+            (dirs::download_dir(), "Downloads", Place::Downloads),
             (dirs::audio_dir(), "Music", Place::Music),
             (dirs::picture_dir(), "Pictures", Place::Pictures),
             (dirs::video_dir(), if cfg!(target_os = "macos") { "Movies" } else { "Videos" }, Place::Videos),
@@ -137,13 +146,29 @@ impl FileFlier {
         })
         .collect();
 
-        // Places: your home folder as a tree of the folders really in it, then Trash.
+        // Places, like Dolphin's or GNOME Files': Home and the standard folders that
+        // exist here (under their real, possibly translated, names), the folders
+        // bookmarked in the desktop's file manager, then Trash. Each one expands.
         let mut place_roots: Vec<Item> = Vec::new();
         if let Some(h) = &home {
-            place_roots.push(Item::folder(Place::Home, display_name(h), h.clone()));
+            place_roots.push(Item::folder(Place::Home, "Home".into(), h.clone()));
+        }
+        for (p, icon) in &icons_for {
+            if p.is_dir() {
+                place_roots.push(Item::folder(*icon, display_name(p), p.clone()));
+            }
         }
         if cfg!(target_os = "macos") {
             place_roots.push(Item::folder(Place::Folder, "Applications".into(), PathBuf::from("/Applications")));
+        }
+        for (label, p) in self.dir_tree.system_bookmarks() {
+            let shown = place_roots.iter().any(|i| i.path == p) || self.cfg.bookmarks.contains(&p);
+            let trash = crate::trashview::trash_dir().is_some_and(|t| t == p);
+            if !shown && !trash {
+                let cloud = self.mounts.iter().any(|m| m.cloud.is_some() || m.kind == MountKind::Cloud)
+                    && crate::mounts::is_remote_path(&p, &self.mounts);
+                place_roots.push(Item::folder(if cloud { Place::Cloud } else { Place::Folder }, label, p));
+            }
         }
         let bookmark_roots: Vec<Item> =
             self.cfg.bookmarks.iter().map(|b| Item::folder(Place::Folder, display_name(b), b.clone())).collect();
@@ -176,11 +201,6 @@ impl FileFlier {
         let reveal = self.sidebar_revealed.as_ref() != Some(&current);
         if reveal {
             self.sidebar_revealed = Some(current.clone());
-            if self.sidebar_open.is_empty()
-                && let Some(h) = &home
-            {
-                self.sidebar_open.insert(("Places".into(), h.clone())); // home starts open
-            }
             let best = place_roots
                 .iter()
                 .map(|i| ("Places", &i.path))
@@ -194,7 +214,7 @@ impl FileFlier {
                 if self.cfg.show_hidden || !hidden {
                     let mut p = root.clone();
                     for c in rel.components() {
-                        self.sidebar_open.insert((section.to_string(), p.clone()));
+                        self.sidebar_open.insert((tree_key(section, root), p.clone()));
                         p.push(c);
                     }
                 }
@@ -203,18 +223,18 @@ impl FileFlier {
 
         let mut places: Vec<Item> = Vec::new();
         for r in place_roots {
-            self.push_tree("Places", r, &icons_for, &ctx, &mut places);
+            self.push_tree(&tree_key("Places", &r.path), r, &icons_for, &ctx, &mut places);
         }
         if let Some(t) = crate::trashview::trash_dir() {
             places.push(Item { icon: Place::Trash, label: "Trash".into(), path: t, ..Default::default() });
         }
         let mut bookmarks: Vec<Item> = Vec::new();
         for r in bookmark_roots {
-            self.push_tree("Bookmarks", r, &icons_for, &ctx, &mut bookmarks);
+            self.push_tree(&tree_key("Bookmarks", &r.path), r, &icons_for, &ctx, &mut bookmarks);
         }
         let mut storage: Vec<Item> = Vec::new();
         for r in storage_roots {
-            self.push_tree("Storage", r, &icons_for, &ctx, &mut storage);
+            self.push_tree(&tree_key("Storage", &r.path), r, &icons_for, &ctx, &mut storage);
         }
         if crate::cloud::SUPPORTED {
             storage.push(Item {
@@ -257,7 +277,7 @@ impl FileFlier {
             ui.set_clip_rect(list);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                super::dnd::edge_scroll(ui, list);
+                super::dnd::drag_scroll(ui, list);
                 let w = ui.available_width();
                 for (title, icon, items) in sections {
                     let collapsed = self.cfg.collapsed.iter().any(|c| c == title) && q.is_empty();
@@ -303,7 +323,7 @@ impl FileFlier {
                     }
                     if items.is_empty() && title == "Bookmarks" {
                         let (r, _) = ui.allocate_exact_size(vec2(w, ITEM_H - 4.0), Sense::hover());
-                        let hint = if dragging { "Drop folders here to bookmark" } else { "Ctrl+D to bookmark" };
+                        let hint = if dragging { "Drop folders here" } else { "Ctrl+D to bookmark" };
                         text(
                             ui.painter(),
                             pos2(r.left() + 40.0, r.center().y),
@@ -351,13 +371,13 @@ impl FileFlier {
                                 // Resting on a folder opens it (and its subfolders in the tree).
                                 let (t, fire) = super::dnd::spring(
                                     ui.ctx(),
-                                    Id::new(("spring_sb", title, &item.path)),
+                                    Id::new(("spring_sb", title, &item.tree_key, &item.path)),
                                     super::dnd::SPRING_DELAY,
                                 );
                                 p.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.30 * t));
                                 if fire {
                                     if item.tree && !item.open {
-                                        tree_toggles.push((title.to_string(), item.path.clone(), true));
+                                        tree_toggles.push((item.tree_key.clone(), item.path.clone(), true));
                                     }
                                     actions.push(Action::Navigate(item.path.clone()));
                                 }
@@ -368,7 +388,8 @@ impl FileFlier {
                         let chev = Rect::from_center_size(pos2(r.left() + 13.0 + indent, text_y), vec2(18.0, 18.0));
                         let mut chev_clicked = false;
                         if item.tree {
-                            let cresp = ui.interact(chev, Id::new(("sb_tree", title, &item.path)), Sense::click());
+                            let cresp =
+                                ui.interact(chev, Id::new(("sb_tree", &item.tree_key, &item.path)), Sense::click());
                             let c = if cresp.hovered() { pal.text_strong } else { pal.text_faint };
                             let cr = chev.shrink(4.0);
                             if item.open {
@@ -377,7 +398,7 @@ impl FileFlier {
                                 icons::chevron_right(ui.painter(), cr, c);
                             }
                             if cresp.clicked() {
-                                tree_toggles.push((title.to_string(), item.path.clone(), !item.open));
+                                tree_toggles.push((item.tree_key.clone(), item.path.clone(), !item.open));
                                 chev_clicked = true;
                             }
                         }
@@ -474,7 +495,7 @@ impl FileFlier {
                                 actions.push(Action::Navigate(item.path.clone()));
                             }
                         } else if resp.double_clicked() && item.tree {
-                            tree_toggles.push((title.to_string(), item.path.clone(), !item.open));
+                            tree_toggles.push((item.tree_key.clone(), item.path.clone(), !item.open));
                         }
                         if unmounted {
                             // Nothing to open or drop onto yet; a signed-in account can still be signed out.

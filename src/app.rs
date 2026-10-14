@@ -238,7 +238,7 @@ impl FileFlier {
         }
         crate::preview::warm_up();
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        let cli_start = start.and_then(|p| std::fs::canonicalize(p).ok()).filter(|p| p.is_dir());
+        let cli_start = start.map(|p| crate::fs_model::canonical(&p)).filter(|p| p.is_dir());
         let restore = cli_start.is_none() && cfg.startup == crate::config::Startup::RestoreSession;
         let start = cli_start.unwrap_or_else(|| home.clone());
         let mut panes = [

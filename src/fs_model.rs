@@ -135,6 +135,21 @@ pub fn sort_entries(entries: &mut [Entry], sort: Sort) {
     });
 }
 
+/// Resolves `p` like `fs::canonicalize`, but keeps paths under the home folder
+/// spelled the way `$HOME` spells them. On Fedora Atomic / Bazzite `/home` is a
+/// symlink to `/var/home`, and showing `/var/home/me` would hide that it's home.
+pub fn canonical(p: &Path) -> PathBuf {
+    let real = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if let Some(home) = dirs::home_dir()
+        && let Ok(real_home) = std::fs::canonicalize(&home)
+        && real_home != home
+        && let Ok(rel) = real.strip_prefix(&real_home)
+    {
+        return if rel.as_os_str().is_empty() { home } else { home.join(rel) };
+    }
+    real
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

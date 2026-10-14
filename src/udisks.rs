@@ -30,11 +30,12 @@ pub struct RawBlock {
     pub usage: String,
     pub size: u64,
     pub hint_ignore: bool,
-    pub hint_system: bool,
     pub hint_name: String,
     pub drive: String,
     pub has_fs: bool,
     pub mount_points: Vec<PathBuf>,
+    /// GPT/MBR partition type, for hiding EFI, recovery and similar partitions.
+    pub part_type: String,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -44,8 +45,30 @@ pub struct RawDrive {
     pub can_power_off: bool,
 }
 
-/// Which volumes to show, the way desktop file managers do: real filesystems that
-/// aren't hidden, and not system partitions unless they're on removable media.
+/// Partition types that are never user storage: EFI system, BIOS boot, Microsoft
+/// reserved, Windows recovery, Apple boot (GPT GUIDs, lowercase) and MBR equivalents.
+const HIDDEN_PART_TYPES: &[&str] = &[
+    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+    "21686148-6449-6e6f-744e-656564454649",
+    "e3c9e316-0b5c-4db8-817d-f92df00215ae",
+    "de94bba4-06d1-4d40-a16a-bfd50179d6ac",
+    "426f6f74-0000-11aa-aa11-00306543ecac",
+    "0xef",
+    "0x27",
+];
+
+/// Whether a mount point is where users keep things (rather than part of the OS:
+/// `/`, `/boot`, `/var`, `/sysroot` and so on).
+pub fn user_visible_mount(p: &std::path::Path) -> bool {
+    let home = dirs::home_dir();
+    ["/run/media/", "/media/", "/mnt/", "/Volumes/"].iter().any(|r| p.starts_with(r) && p != std::path::Path::new(r))
+        || home.is_some_and(|h| p.starts_with(&h) && p != h)
+}
+
+/// Which volumes to show, the way GNOME Files and Dolphin do: real filesystems that
+/// aren't hidden, except the system's own (mounted at `/`, `/boot`, …) and boot/EFI/
+/// recovery partitions. Internal drives count: UDisks flags every internal partition
+/// as "system", so that hint alone isn't a reason to hide one.
 pub fn volumes(blocks: &[RawBlock], drives: &HashMap<String, RawDrive>) -> Vec<Volume> {
     let mut out: Vec<Volume> = blocks
         .iter()
@@ -53,7 +76,9 @@ pub fn volumes(blocks: &[RawBlock], drives: &HashMap<String, RawDrive>) -> Vec<V
         .filter_map(|b| {
             let d = drives.get(&b.drive);
             let removable = d.is_some_and(|d| d.removable || d.ejectable);
-            if b.hint_system && !removable {
+            let os_mount = !b.mount_points.is_empty() && !b.mount_points.iter().any(|m| user_visible_mount(m));
+            let boot_part = HIDDEN_PART_TYPES.contains(&b.part_type.to_ascii_lowercase().as_str());
+            if os_mount || (boot_part && !removable) {
                 return None;
             }
             let label = [&b.hint_name, &b.label]
@@ -129,11 +154,14 @@ pub fn list() -> Result<Vec<Volume>, String> {
             usage: get(b, "IdUsage").unwrap_or_default(),
             size: get(b, "Size").unwrap_or(0),
             hint_ignore: get(b, "HintIgnore").unwrap_or(false),
-            hint_system: get(b, "HintSystem").unwrap_or(false),
             hint_name: get(b, "HintName").unwrap_or_default(),
             drive: get::<OwnedObjectPath>(b, "Drive").map(|o| o.to_string()).unwrap_or_default(),
             has_fs: fs.is_some(),
             mount_points,
+            part_type: ifaces
+                .get("org.freedesktop.UDisks2.Partition")
+                .and_then(|p| get::<String>(p, "Type"))
+                .unwrap_or_default(),
         });
     }
     Ok(volumes(&blocks, &drives))
@@ -212,31 +240,37 @@ mod tests {
 
     #[test]
     fn filters_like_a_file_manager() {
-        let blk = |object: &str, label: &str, system: bool, drive: &str| RawBlock {
+        // (`_system` mirrors UDisks' HintSystem, which is set on every internal partition.)
+        let blk = |object: &str, label: &str, _system: bool, drive: &str| RawBlock {
             object: object.into(),
             label: label.into(),
             usage: "filesystem".into(),
             size: 32_000_000_000,
-            hint_system: system,
             drive: drive.into(),
             has_fs: true,
             ..Default::default()
         };
+        let mounted = |b: RawBlock, at: &str| RawBlock { mount_points: vec![PathBuf::from(at)], ..b };
         let blocks = vec![
-            blk("/b/nvme0n1p2", "", true, "/d/nvme"),       // system root: hidden
-            blk("/b/sda1", "USB STICK", true, "/d/usb"),    // system hint, but removable: shown
-            blk("/b/nvme0n1p3", "Games", false, "/d/nvme"), // extra internal partition: shown
+            mounted(blk("/b/nvme0n1p3", "fedora", true, "/d/nvme"), "/sysroot"), // the OS: hidden
+            mounted(blk("/b/nvme0n1p2", "boot", true, "/d/nvme"), "/boot"),      // hidden
+            RawBlock { part_type: "C12A7328-F81F-11D2-BA4B-00A0C93EC93B".into(), ..blk("/b/esp", "", true, "/d/nvme") }, // EFI: hidden
+            blk("/b/nvme1n1p1", "Fast SSD", true, "/d/nvme1"), // second internal drive, not mounted: shown
+            mounted(blk("/b/nvme2n1p1", "T500", true, "/d/nvme2"), "/run/media/me/T500"), // shown
+            blk("/b/sda1", "USB STICK", true, "/d/usb"),       // removable: shown
             RawBlock { usage: "other".into(), ..blk("/b/swap", "swap", false, "/d/nvme") }, // swap: hidden
-            RawBlock { hint_ignore: true, ..blk("/b/efi", "EFI", false, "/d/nvme") }, // ignored
-            blk("/b/sdb1", "", false, "/d/usb"),            // no label: size name
+            RawBlock { hint_ignore: true, ..blk("/b/rec", "Recovery", false, "/d/nvme") }, // ignored
+            blk("/b/sdb1", "", false, "/d/usb"),               // no label: size name
         ];
         let mut drives = HashMap::new();
         drives.insert("/d/usb".to_string(), RawDrive { removable: true, ejectable: true, ..Default::default() });
-        drives.insert("/d/nvme".to_string(), RawDrive::default());
+        for d in ["/d/nvme", "/d/nvme1", "/d/nvme2"] {
+            drives.insert(d.to_string(), RawDrive::default());
+        }
         let v = volumes(&blocks, &drives);
         let labels: Vec<&str> = v.iter().map(|v| v.label.as_str()).collect();
-        assert_eq!(labels, vec!["32 GB Volume", "Games", "USB STICK"]);
+        assert_eq!(labels, vec!["32 GB Volume", "Fast SSD", "T500", "USB STICK"]);
         assert!(v.iter().find(|v| v.label == "USB STICK").unwrap().can_eject);
-        assert!(!v.iter().find(|v| v.label == "Games").unwrap().removable);
+        assert!(!v.iter().find(|v| v.label == "Fast SSD").unwrap().removable);
     }
 }
