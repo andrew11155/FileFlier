@@ -82,6 +82,19 @@
   </categories>
 
   <releases>
+    <release version="0.7.1" date="2026-10-15">
+      <description>
+        <p>A better sidebar and much easier drag and drop:</p>
+        <ul>
+          <li>Places lists Home, the standard folders and the folders bookmarked in GNOME Files or Dolphin; every folder and drive expands into a tree</li>
+          <li>Internal drives and partitions show up under Storage, like in GNOME Files and Dolphin</li>
+          <li>While dragging, resting on a folder or tab opens it, and lists scroll with the mouse wheel or at their edges</li>
+          <li>The drag label says where the files will go and whether they move or copy</li>
+          <li>Open terminal here opens a new window in the right folder (Ptyxis, GNOME Console, Konsole and others)</li>
+          <li>The home folder is called Home, also on Bazzite and Fedora Atomic</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-09-30">
       <description>
         <p>File Flier now also runs on macOS, and the Linux version gets small fixes:</p>
