@@ -18,10 +18,36 @@ the same on every desktop environment.
 - **Tabs and split panes.** Each pane has its own tab strip. You can drag tabs
   to reorder them, middle-click to close them, and lock a tab so that opening
   a folder from it creates a new tab.
-- **Three views.** Details (Name / Type / Items / Size / Modified), multi-column
-  List, and Grid with image thumbnails.
+- **Tab tiling.** Drag a tab onto the left, right, top or bottom edge of any
+  pane to split that pane and show the tab beside it, as in Vivaldi. Build
+  any grid you like: drop a tab in the middle of a pane, or on its tab strip,
+  to move it there. Drag the dividers to resize. Closing a pane's last tab
+  closes the pane. `Ctrl+\` hides every pane but the current one and brings
+  them back, and `Tab` moves between panes. The layout is remembered.
+- **Eight views.** Details (Name / Type / Items / Size / Modified), multi-column
+  List, Grid with image thumbnails in four sizes (Grid, Medium, Large with
+  `Ctrl+Shift+B`, and Extra large with 1024 px thumbnails), and Tree (`Ctrl+Shift+E`): the details view
+  with folders that open in place. In the tree, `→` opens a folder (press it
+  again to step inside), `←` closes it or jumps to the folder it's in, and
+  clicking a folder's arrow does the same. The filter searches everything
+  that's open and keeps the folders leading to each match.
+- **Columns view** (`Ctrl+Shift+M`), also known as Miller columns. The current
+  folder is the middle column; the folders above it are to the left, with the
+  way down highlighted, and the folder under the cursor is shown to the right
+  (or the file's details). `↑ ↓` move, `→` steps into a folder and `←` back
+  out. Click anything in a side column to go there. As many parent columns
+  are shown as fit.
 - **Instant filter.** Start typing to fuzzy-filter the current folder. The
   filter also appears in the pane's bottom bar.
+- **Flat view** (`Ctrl+Shift+F`). Lists every file in the current folder and
+  all of its subfolders as one list, so you can sort a whole tree by size or
+  date, filter it, or pick files from many folders and copy or move them
+  together. A *Folder* column shows where each file is (sort by it with
+  `Ctrl+5`), and right-click → *Open containing folder* jumps there. The scan
+  runs in the background, skips hidden folders unless hidden files are shown,
+  doesn't follow symlinked folders, and stops at 200,000 files. Click the
+  *Flat* badge in the bottom bar, press the shortcut again, or open another
+  folder to leave it.
 - **Recursive search** (`Ctrl+F`). Fuzzy-matches names in every sub-folder on a
   background thread.
 - **Command palette** (`Ctrl+Shift+P` / `Ctrl+K`). Runs any command and jumps to
@@ -108,8 +134,9 @@ to zoom, drag to pan, and double-click to switch between fit and actual size.
 | Fonts | A type sample |
 | Code and text | Syntax-highlighted text |
 
-Grid view (`Ctrl+Shift+G`) shows thumbnails for these types too. Thumbnails are
-stored in the shared `~/.cache/thumbnails` folder, so File Flier reuses
+The grid views show thumbnails for these types too. Thumbnails are stored in
+the shared `~/.cache/thumbnails` folder, at the size each grid needs (`large`,
+`x-large` or `xx-large`), so File Flier reuses
 thumbnails made by GNOME Files and Dolphin, and they reuse File Flier's.
 
 LibreOffice page previews can be turned off in *Settings → Previews*. The
@@ -179,16 +206,19 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | *type anything* | Filter the current folder (`Esc` clears it) |
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
 | `Ctrl+Tab` | Next tab |
-| `Ctrl+\` / `Tab` | Toggle split view / switch pane |
+| `Ctrl+\` / `Tab` | Hide or show the other panes / next pane |
 | `Ctrl+Shift+P` or `Ctrl+K` | Command palette |
 | `Ctrl+F` | Recursive search |
+| `Ctrl+Shift+F` | Flat view: every file in this folder and its subfolders |
 | `Ctrl+L` | Go to a path |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
 | `F5` / `F6` | Copy / move to the other pane |
 | `F2` | Rename |
 | `Delete` / `Shift+Delete` | Move to trash / delete permanently |
 | `Ctrl+Shift+N` / `Ctrl+N` | New folder / new file |
-| `Ctrl+Shift+D` / `L` / `G` | Details / list / grid view |
+| `Ctrl+Shift+D` / `L` / `G` / `B` / `E` / `M` | Details / list / grid / large grid / tree / columns view (medium and extra large grids are in the command palette) |
+| `Alt+1` … `Alt+8` | Details, list, tree, columns, grid, medium grid, large grid, extra large grid |
+| `Ctrl` + mouse wheel | Step through the views in `Alt+1` … `Alt+8` order (wheel up = next) |
 | `Ctrl+H` | Show hidden files |
 | `Ctrl+B` | Toggle the sidebar |
 | `F3` or `Ctrl+I` | Toggle the preview panel |

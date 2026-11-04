@@ -24,6 +24,20 @@ pub struct Tab {
     /// Locked tabs never navigate away; folders open in a new tab instead.
     pub locked: bool,
     pub view: ViewMode,
+    /// Tree view: how deep each entry is (0 = directly in `path`), parallel to `entries`.
+    pub depth: Vec<usize>,
+    /// Tree view: folders that are open.
+    pub expanded: HashSet<PathBuf>,
+    /// Tree view: modification times of the open folders, to notice changes inside them.
+    tree_mtimes: Vec<(PathBuf, Option<SystemTime>)>,
+    /// Flat view: list every file in `path` and its subfolders.
+    pub flat: bool,
+    /// Flat view: the scan still running.
+    pub flat_scan: Option<crate::flat::Scan>,
+    /// Flat view: the scan stopped at its file limit.
+    pub flat_truncated: bool,
+    /// Flat view: where to put the cursor once that item turns up.
+    flat_keep: Option<PathBuf>,
     back: Vec<PathBuf>,
     forward: Vec<PathBuf>,
     dir_mtime: Option<SystemTime>,
@@ -44,6 +58,13 @@ impl Tab {
             scroll_to_cursor: true,
             locked: false,
             view,
+            depth: Vec::new(),
+            expanded: HashSet::new(),
+            tree_mtimes: Vec::new(),
+            flat: false,
+            flat_scan: None,
+            flat_truncated: false,
+            flat_keep: None,
             back: Vec::new(),
             forward: Vec::new(),
             dir_mtime: None,
@@ -68,14 +89,39 @@ impl Tab {
 
     pub fn reload(&mut self, show_hidden: bool, sort: Sort) {
         let keep = self.cursor_entry().map(|e| e.path.clone());
+        if self.flat {
+            // Rescan in the background; files show up as they're found (see `poll_flat`).
+            self.flat_keep = keep.or(self.flat_keep.take());
+            self.entries.clear();
+            self.depth.clear();
+            self.visible.clear();
+            self.tree_mtimes.clear();
+            self.error = None;
+            self.flat_truncated = false;
+            self.flat_scan = Some(crate::flat::Scan::start(self.path.clone(), show_hidden, None));
+            self.dir_mtime = std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
+            self.selected.retain(|p| p.exists());
+            self.refilter(show_hidden);
+            return;
+        }
         match fs_model::read_dir(&self.path) {
             Ok(mut entries) => {
                 fs_model::sort_entries(&mut entries, sort);
-                self.entries = entries;
                 self.error = None;
+                self.depth.clear();
+                self.tree_mtimes.clear();
+                if self.view == ViewMode::Tree {
+                    let mut flat = Vec::with_capacity(entries.len());
+                    self.flatten(entries, 0, sort, &mut flat);
+                    self.entries = flat;
+                } else {
+                    self.depth = vec![0; entries.len()];
+                    self.entries = entries;
+                }
             }
             Err(e) => {
                 self.entries.clear();
+                self.depth.clear();
                 self.error = Some(e.to_string());
             }
         }
@@ -89,14 +135,131 @@ impl Tab {
         }
     }
 
+    /// Turn the flat view on or off.
+    pub fn set_flat(&mut self, on: bool, show_hidden: bool, sort: Sort) {
+        if self.flat != on {
+            self.flat = on;
+            self.flat_scan = None;
+            self.flat_truncated = false;
+            self.reload(show_hidden, sort);
+        }
+    }
+
+    /// Flat view: take in files the scan has found. Returns true if anything changed.
+    pub fn poll_flat(&mut self, show_hidden: bool, sort: Sort) -> bool {
+        let Some(scan) = &mut self.flat_scan else { return false };
+        let mut found = scan.poll();
+        let done = scan.done;
+        if done {
+            self.flat_truncated = scan.truncated;
+            self.flat_scan = None;
+        }
+        if found.is_empty() {
+            return done;
+        }
+        let keep = self.cursor_entry().map(|e| e.path.clone()).or(self.flat_keep.take());
+        fs_model::sort_entries(&mut found, sort);
+        self.entries = fs_model::merge_sorted(std::mem::take(&mut self.entries), found, sort);
+        self.depth = vec![0; self.entries.len()];
+        self.settle(keep, show_hidden);
+        true
+    }
+
+    /// Sort again without re-reading the disk where that's slow (the flat view).
+    pub fn resort(&mut self, show_hidden: bool, sort: Sort) {
+        if !self.flat {
+            return self.reload(show_hidden, sort);
+        }
+        let keep = self.cursor_entry().map(|e| e.path.clone());
+        fs_model::sort_entries(&mut self.entries, sort);
+        self.settle(keep, show_hidden);
+    }
+
+    /// `entries` changed under `visible`: rebuild it, keeping the cursor on `keep`
+    /// without scrolling (the user may be scrolling while files arrive).
+    fn settle(&mut self, keep: Option<PathBuf>, show_hidden: bool) {
+        let scroll = self.scroll_to_cursor;
+        self.visible.clear();
+        self.refilter(show_hidden);
+        if let Some(p) = keep {
+            match self.visible.iter().position(|&i| self.entries[i].path == p) {
+                Some(pos) => {
+                    self.cursor = pos;
+                    self.anchor = pos;
+                }
+                None => self.flat_keep = Some(p), // not found yet
+            }
+        }
+        self.scroll_to_cursor = scroll;
+    }
+
+    /// Flat view: the folder an item is in, relative to the folder being viewed.
+    pub fn rel_folder(&self, e: &Entry) -> String {
+        let parent = e.path.parent().unwrap_or(&self.path);
+        match parent.strip_prefix(&self.path) {
+            Ok(r) if r.as_os_str().is_empty() => "—".into(),
+            Ok(r) => format!("{}/", r.display()),
+            Err(_) => parent.display().to_string(),
+        }
+    }
+
+    /// Add `entries` to `out`, each open folder followed by its contents.
+    fn flatten(&mut self, entries: Vec<Entry>, depth: usize, sort: Sort, out: &mut Vec<Entry>) {
+        for e in entries {
+            let open = e.is_dir && depth < 64 && self.expanded.contains(&e.path);
+            let path = e.path.clone();
+            out.push(e);
+            self.depth.push(depth);
+            if open {
+                let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                self.tree_mtimes.push((path.clone(), mtime));
+                // An unreadable folder just shows nothing inside.
+                if let Ok(mut children) = fs_model::read_dir(&path) {
+                    fs_model::sort_entries(&mut children, sort);
+                    self.flatten(children, depth + 1, sort, out);
+                }
+            }
+        }
+    }
+
+    /// Tree view: open or close a folder in place.
+    pub fn set_expanded(&mut self, path: &Path, open: bool, show_hidden: bool, sort: Sort) {
+        let changed = if open { self.expanded.insert(path.to_path_buf()) } else { self.expanded.remove(path) };
+        if changed {
+            let cursor = self.cursor_entry().map(|e| e.path.clone());
+            self.reload(show_hidden, sort);
+            // Closing a folder with the cursor inside it moves the cursor to the folder.
+            match cursor {
+                Some(c) if !open && c.starts_with(path) => self.select_path(path),
+                Some(c) => self.select_path(&c),
+                None => {}
+            }
+        }
+    }
+
+    pub fn depth_of(&self, entry: usize) -> usize {
+        self.depth.get(entry).copied().unwrap_or(0)
+    }
+
+    /// Tree view: the row (index into `visible`) of the folder that contains row `vi`.
+    pub fn parent_row(&self, vi: usize) -> Option<usize> {
+        let d = self.depth_of(*self.visible.get(vi)?);
+        (0..vi).rev().find(|&j| self.depth_of(self.visible[j]) < d)
+    }
+
     /// Cheap auto-refresh: re-read the folder if its mtime changed.
     pub fn check_changed(&mut self, show_hidden: bool, sort: Sort) -> bool {
+        // A flat view covers a whole tree; it's rescanned after file operations and Ctrl+R.
+        if self.flat {
+            return false;
+        }
         if self.last_check.elapsed().as_millis() < 1000 {
             return false;
         }
         self.last_check = Instant::now();
         let m = std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
-        if m != self.dir_mtime {
+        let inner = self.tree_mtimes.iter().any(|(p, t)| std::fs::metadata(p).and_then(|m| m.modified()).ok() != *t);
+        if m != self.dir_mtime || inner {
             self.reload(show_hidden, sort);
             return true;
         }
@@ -107,7 +270,9 @@ impl Tab {
         // Keep the cursor on the same item if it's still visible afterwards.
         let keep = self.cursor_entry().map(|e| e.path.clone());
         let filter = self.filter.trim();
-        if filter.is_empty() {
+        if self.view == ViewMode::Tree && self.depth.len() == self.entries.len() {
+            self.visible = self.tree_visible(filter, show_hidden);
+        } else if filter.is_empty() {
             self.visible = (0..self.entries.len()).filter(|&i| show_hidden || !self.entries[i].is_hidden()).collect();
         } else {
             // With a filter, show best matches first (hidden files included when typed for).
@@ -127,6 +292,39 @@ impl Tab {
         self.scroll_to_cursor = true;
     }
 
+    /// Tree view rows: in tree order, skipping hidden items and everything inside
+    /// them; with a filter, matches plus the folders leading to them.
+    fn tree_visible(&self, filter: &str, show_hidden: bool) -> Vec<usize> {
+        let mut keep = vec![false; self.entries.len()];
+        let mut skip_below: Option<usize> = None;
+        for (i, e) in self.entries.iter().enumerate() {
+            let d = self.depth[i];
+            if skip_below.is_some_and(|s| d > s) {
+                continue;
+            }
+            skip_below = None;
+            if !show_hidden && e.is_hidden() && !filter.starts_with('.') {
+                skip_below = Some(d);
+                continue;
+            }
+            if filter.is_empty() || fuzzy::score(filter, &e.name).is_some() {
+                keep[i] = true;
+                // Show the folders a match is in.
+                let mut want = d;
+                for j in (0..i).rev() {
+                    if want == 0 {
+                        break;
+                    }
+                    if self.depth[j] < want {
+                        keep[j] = true;
+                        want = self.depth[j];
+                    }
+                }
+            }
+        }
+        (0..self.entries.len()).filter(|&i| keep[i]).collect()
+    }
+
     pub fn navigate(&mut self, path: PathBuf, show_hidden: bool, sort: Sort) {
         let path = fs_model::canonical(&path);
         if path == self.path {
@@ -139,6 +337,10 @@ impl Tab {
     }
 
     fn enter(&mut self, show_hidden: bool, sort: Sort, came_from: Option<&Path>) {
+        // Opening another folder leaves the flat view.
+        self.flat = false;
+        self.flat_scan = None;
+        self.flat_keep = None;
         self.filter.clear();
         self.selected.clear();
         self.cursor = 0;
@@ -287,11 +489,82 @@ impl Pane {
         }
         true
     }
+
+    /// Remove a tab to move it elsewhere. Unlike `close_tab` this can leave the
+    /// pane empty, in which case the caller removes the pane.
+    pub fn take_tab(&mut self, idx: usize) -> Tab {
+        let t = self.tabs.remove(idx);
+        if self.active > idx || self.active >= self.tabs.len() {
+            self.active = self.active.saturating_sub(1);
+        }
+        t
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flat_lists_every_file() {
+        let root = std::env::temp_dir().join(format!("file-flier-flat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        for f in ["z.txt", "a/y.txt", "a/b/x.txt", ".git/config"] {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        let s = Sort::default();
+        let mut tab = Tab::new(root.clone(), false, s, ViewMode::Details);
+        tab.set_flat(true, false, s);
+        let start = Instant::now();
+        while tab.flat_scan.is_some() && start.elapsed().as_secs() < 10 {
+            tab.poll_flat(false, s);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let names = |t: &Tab| t.visible.iter().map(|&i| t.entries[i].name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&tab), ["x.txt", "y.txt", "z.txt"]);
+        assert_eq!(tab.rel_folder(&tab.entries[0]), "a/b/");
+        assert_eq!(tab.rel_folder(&tab.entries[2]), "—");
+        let folder = Sort { key: crate::fs_model::SortKey::Folder, ..s };
+        tab.resort(false, folder);
+        assert_eq!(names(&tab), ["z.txt", "y.txt", "x.txt"]);
+        tab.navigate(root.join("a"), false, s);
+        assert!(!tab.flat);
+        assert_eq!(names(&tab), ["b", "y.txt"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tree_expands_in_place() {
+        let root = std::env::temp_dir().join(format!("file-flier-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a/inner")).unwrap();
+        std::fs::create_dir_all(root.join(".hidden")).unwrap();
+        std::fs::write(root.join("a/inner/deep.txt"), "").unwrap();
+        std::fs::write(root.join(".hidden/x.txt"), "").unwrap();
+        std::fs::write(root.join("b.txt"), "").unwrap();
+        let s = Sort::default();
+        let mut tab = Tab::new(root.clone(), false, s, ViewMode::Tree);
+        let names = |t: &Tab| t.visible.iter().map(|&i| t.entries[i].name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&tab), ["a", "b.txt"]);
+        tab.set_expanded(&root.join("a"), true, false, s);
+        tab.set_expanded(&root.join("a/inner"), true, false, s);
+        tab.set_expanded(&root.join(".hidden"), true, false, s);
+        assert_eq!(names(&tab), ["a", "inner", "deep.txt", "b.txt"]);
+        assert_eq!(tab.parent_row(2), Some(1));
+        assert_eq!(tab.parent_row(0), None);
+        tab.filter = "deep".into();
+        tab.refilter(false);
+        assert_eq!(names(&tab), ["a", "inner", "deep.txt"]);
+        tab.filter.clear();
+        tab.refilter(false);
+        tab.select_path(&root.join("a/inner/deep.txt"));
+        tab.set_expanded(&root.join("a"), false, false, s);
+        assert_eq!(names(&tab), ["a", "b.txt"]);
+        assert_eq!(tab.cursor_entry().unwrap().name, "a");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn navigating_to_smaller_folder_keeps_indices_valid() {

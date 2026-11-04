@@ -364,10 +364,25 @@ impl FileFlier {
                     self.cfg.density = dens[i];
                     restyle = true;
                 }
-                let views = [ViewMode::Details, ViewMode::List, ViewMode::Grid];
+                let views = [
+                    ViewMode::Details,
+                    ViewMode::List,
+                    ViewMode::Grid,
+                    ViewMode::MediumGrid,
+                    ViewMode::LargeGrid,
+                    ViewMode::ExtraLargeGrid,
+                    ViewMode::Tree,
+                    ViewMode::Columns,
+                ];
                 let vi = views.iter().position(|v| *v == self.cfg.view).unwrap_or(0);
                 if let Some(i) = row(ui, pal, "Default view", "For new tabs", |ui| {
-                    segmented(ui, pal, Id::new("view"), &["Details", "List", "Grid"], vi)
+                    segmented(
+                        ui,
+                        pal,
+                        Id::new("view"),
+                        &["Details", "List", "Grid", "M", "L", "XL", "Tree", "Columns"],
+                        vi,
+                    )
                 }) {
                     self.cfg.view = views[i];
                     restyle = true;
