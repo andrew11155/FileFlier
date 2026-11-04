@@ -231,6 +231,8 @@ pub struct FileFlier {
     /// Whether the current toast offers an Undo button.
     pub toast_undo: bool,
     pub quicklook: bool,
+    /// The video playing in Quick Look.
+    pub ql_player: Option<crate::preview::player::Player>,
     pub renaming: Option<Renaming>,
     /// Where a drive mounted from the sidebar ended up (opened when the job finishes).
     mounted_at: Arc<Mutex<Option<PathBuf>>>,
@@ -330,6 +332,7 @@ impl FileFlier {
             last_undo: None,
             toast_undo: false,
             quicklook: false,
+            ql_player: None,
             renaming: None,
             mounted_at: Default::default(),
             native: None,
@@ -1218,6 +1221,22 @@ impl FileFlier {
                 self.quicklook = false;
                 self.open_entries();
                 return;
+            }
+            // Video: K play/pause, J/L back/ahead 5 s, M mute.
+            if let Some(p) = self.ql_player.as_mut() {
+                let pressed = |k| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k));
+                if pressed(Key::K) {
+                    p.toggle_pause();
+                }
+                if pressed(Key::J) {
+                    p.seek(p.position() - 5.0);
+                }
+                if pressed(Key::L) {
+                    p.seek(p.position() + 5.0);
+                }
+                if pressed(Key::M) {
+                    p.toggle_mute();
+                }
             }
             let page = self.preview_page.1;
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::PageDown)) {

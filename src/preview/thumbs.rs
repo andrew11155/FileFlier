@@ -251,6 +251,11 @@ fn mtime_secs(m: Option<SystemTime>) -> Option<u64> {
     m?.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
 }
 
+/// The biggest valid cached thumbnail there is.
+pub(crate) fn cached(path: &Path, modified: Option<SystemTime>) -> Option<Rgba> {
+    Tier::ALL.iter().rev().find_map(|t| cached_at(path, modified, *t))
+}
+
 /// A valid cached thumbnail of one size (its recorded MTime must match the file's).
 fn cached_at(path: &Path, modified: Option<SystemTime>, tier: Tier) -> Option<Rgba> {
     let (file, _) = cache_file(path, tier)?;
