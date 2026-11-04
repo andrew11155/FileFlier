@@ -83,6 +83,7 @@ pub struct Config {
     pub bookmarks: Vec<PathBuf>,
     pub show_hidden: bool,
     pub dark_mode: bool,
+    /// Old two-pane split (read only to migrate to `layout`).
     pub split: bool,
     pub show_preview: bool,
     pub sort: Sort,
@@ -90,7 +91,11 @@ pub struct Config {
     pub view: ViewMode,
     pub show_sidebar: bool,
     pub sidebar_width: f32,
+    /// Old split position (read only to migrate to `layout`).
     pub split_ratio: f32,
+    /// How panes are tiled. Pane 0 is where a new window starts; the others open at home
+    /// unless the session is restored.
+    pub layout: Option<crate::layout::Layout>,
     pub collapsed: Vec<String>,
     pub inspector_width: f32,
     /// Render office documents as pages with LibreOffice when it's installed.
@@ -131,6 +136,7 @@ impl Default for Config {
             show_sidebar: true,
             sidebar_width: 230.0,
             split_ratio: 0.5,
+            layout: None,
             collapsed: vec!["Recents".into()],
             inspector_width: 340.0,
             office_previews: true,

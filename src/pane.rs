@@ -287,6 +287,16 @@ impl Pane {
         }
         true
     }
+
+    /// Remove a tab to move it elsewhere. Unlike `close_tab` this can leave the
+    /// pane empty, in which case the caller removes the pane.
+    pub fn take_tab(&mut self, idx: usize) -> Tab {
+        let t = self.tabs.remove(idx);
+        if self.active > idx || self.active >= self.tabs.len() {
+            self.active = self.active.saturating_sub(1);
+        }
+        t
+    }
 }
 
 #[cfg(test)]

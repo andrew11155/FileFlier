@@ -11,6 +11,7 @@ mod dirtree;
 mod fs_model;
 mod fuzzy;
 mod icons;
+mod layout;
 mod mounts;
 mod native;
 mod net;

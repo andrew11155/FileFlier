@@ -1,7 +1,7 @@
 //! Custom-drawn UI. Everything is laid out in explicit rects so the look can
 //! match File Pilot closely rather than following egui's default widget style.
 
-mod chrome;
+pub(crate) mod chrome;
 mod cloud;
 mod dnd;
 pub mod glass;
