@@ -140,7 +140,7 @@ impl FileFlier {
             .enumerate()
             .filter(|(_, it)| match it {
                 MenuItem::Sep => q.is_empty(),
-                MenuItem::Cmd(c) => fuzzy::score(&q, c.label()).is_some(),
+                MenuItem::Cmd(c) | MenuItem::Choice(c, _) => fuzzy::score(&q, c.label()).is_some(),
                 MenuItem::Go(p) => fuzzy::score(&q, &p.to_string_lossy()).is_some(),
                 MenuItem::NewTabAt(_) => fuzzy::score(&q, "Open in new tab").is_some(),
                 MenuItem::Unbookmark(_) => fuzzy::score(&q, "Remove bookmark").is_some(),
@@ -184,6 +184,11 @@ impl FileFlier {
                     let (label, badges, icon) = match item {
                         MenuItem::Cmd(c) if danger => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::Trash),
                         MenuItem::Cmd(c) => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::None),
+                        MenuItem::Choice(c, on) => {
+                            let label = c.label();
+                            let label = label.strip_prefix("View: ").map_or(label.to_string(), super::capitalize);
+                            (label, c.shortcut_texts(ctx), RowIcon::Check(*on))
+                        }
                         MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
                         MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
                         MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
@@ -227,7 +232,7 @@ impl FileFlier {
             self.menu = None;
         }
         match chosen {
-            Some(MenuItem::Cmd(c)) => self.actions.push(Action::Run(c)),
+            Some(MenuItem::Cmd(c) | MenuItem::Choice(c, _)) => self.actions.push(Action::Run(c)),
             Some(MenuItem::Go(p)) => self.actions.push(Action::Navigate(p)),
             Some(MenuItem::NewTabAt(p)) => self.actions.push(Action::OpenInNewTab(p)),
             Some(MenuItem::Unbookmark(p)) => self.toggle_bookmark(p),
