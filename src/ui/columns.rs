@@ -150,7 +150,9 @@ impl FileFlier {
                     }
                     if resp.double_clicked() {
                         actions.push(Action::Activate(idx));
-                        if e.is_dir {
+                        if e.is_dir && ui.input(|i| i.modifiers.command) {
+                            actions.push(Action::OpenInNewTab(e.path.clone()));
+                        } else if e.is_dir {
                             actions.push(Action::Navigate(e.path.clone()));
                         } else {
                             actions.push(Action::Reveal(e.path.clone()));

@@ -17,6 +17,7 @@ const BASICS: &[(&str, &str)] = &[
     ("Parent folder", "Backspace  ←"),
     ("Filter this folder", "Type anything"),
     ("Multi-select", "Ctrl+Click  Shift+Click"),
+    ("Open folder in a new tab", "Ctrl+Double-click  Middle-click"),
     ("Drag files (hold Ctrl to copy)", "Drag"),
     ("Switch views", "Ctrl+Wheel"),
     ("Quick Look video: play, back, ahead, mute", "K  J  L  M"),

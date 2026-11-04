@@ -954,7 +954,13 @@ impl FileFlier {
                                     item_actions.push(ItemAction::Context(vi, pos));
                                 }
                                 if resp.double_clicked() {
-                                    item_actions.push(ItemAction::Open(vi));
+                                    // Ctrl+double-click opens a folder in a new tab, like a middle-click.
+                                    // (The two Ctrl+clicks toggle its selection twice, leaving it as it was.)
+                                    if mods.command && e.is_dir {
+                                        item_actions.push(ItemAction::NewTab(e.path.clone()));
+                                    } else {
+                                        item_actions.push(ItemAction::Open(vi));
+                                    }
                                 }
                                 if resp.middle_clicked() && e.is_dir {
                                     item_actions.push(ItemAction::NewTab(e.path.clone()));

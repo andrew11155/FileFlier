@@ -224,6 +224,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Alt+←` / `Alt+→` | Back / Forward |
 | *type anything* | Filter the current folder (`Esc` clears it) |
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
+| `Ctrl`+double-click or middle-click a folder | Open it in a new tab |
 | `Ctrl+Tab` | Next tab |
 | `Ctrl+\` / `Tab` | Hide or show the other panes / next pane |
 | `Ctrl+Shift+P` or `Ctrl+K` | Command palette |
