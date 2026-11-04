@@ -11,6 +11,14 @@ pub enum ViewMode {
     Details,
     List,
     Grid,
+    /// Grids with bigger tiles and thumbnails.
+    MediumGrid,
+    LargeGrid,
+    ExtraLargeGrid,
+    /// Details with folders that expand in place (arrow keys open and close them).
+    Tree,
+    /// Miller columns: parent folders to the left, the folder under the cursor to the right.
+    Columns,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -108,6 +116,16 @@ pub struct Config {
     pub last_update_check: u64,
     /// A release the user chose not to be reminded about.
     pub skipped_version: Option<String>,
+}
+
+impl ViewMode {
+    /// The grids, smallest first.
+    pub const GRIDS: [ViewMode; 4] =
+        [ViewMode::Grid, ViewMode::MediumGrid, ViewMode::LargeGrid, ViewMode::ExtraLargeGrid];
+
+    pub fn is_grid(self) -> bool {
+        Self::GRIDS.contains(&self)
+    }
 }
 
 impl Default for Config {

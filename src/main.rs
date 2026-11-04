@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod counts;
 mod dirtree;
+mod flat;
 mod fs_model;
 mod fuzzy;
 mod icons;

@@ -126,6 +126,8 @@ pub enum MenuItem {
     /// Cloud account (by name): unmount it, or sign out of it.
     CloudDisconnect(String),
     CloudSignOut(String),
+    /// A command shown as one of a set of choices, ticked when it's the current one.
+    Choice(Command, bool),
     Sep,
 }
 
@@ -155,6 +157,10 @@ pub enum Action {
         force_copy: bool,
     },
     OpenMenu(Pos2, Vec<MenuItem>),
+    /// Go to the folder `path` is in and put the cursor on it (columns view).
+    Reveal(PathBuf),
+    /// Show a short notification.
+    Toast(String),
     TrashPaths(Vec<PathBuf>),
     MountVolume(String),
     EjectVolume(crate::udisks::Volume),
@@ -210,6 +216,8 @@ pub struct FileFlier {
     /// The folder the sidebar tree last expanded itself to show.
     pub sidebar_revealed: Option<PathBuf>,
     pub dir_tree: crate::dirtree::DirTree,
+    /// Folder listings for the side columns of the columns view, with when they were read.
+    pub column_cache: std::collections::HashMap<PathBuf, (Instant, Arc<Vec<crate::fs_model::Entry>>)>,
     /// Cached child counts for folders shown in the Items column.
     pub item_counts: ItemCounter,
     /// A terminal just launched, watched briefly for failure.
@@ -314,6 +322,7 @@ impl FileFlier {
             sidebar_open: Default::default(),
             sidebar_revealed: None,
             dir_tree: Default::default(),
+            column_cache: Default::default(),
             item_counts: ItemCounter::start(cc.egui_ctx.clone()),
             terminal_launch: None,
             blur_applied: None,
@@ -911,9 +920,14 @@ impl FileFlier {
                 self.cfg.show_hidden = !self.cfg.show_hidden;
                 self.cfg.save();
                 let h = self.cfg.show_hidden;
+                let s = self.cfg.sort;
                 for pane in &mut self.panes {
                     for tab in &mut pane.tabs {
-                        tab.refilter(h);
+                        if tab.flat {
+                            tab.reload(h, s); // the scan skipped hidden folders
+                        } else {
+                            tab.refilter(h);
+                        }
                     }
                 }
                 self.info(if h { "Showing hidden files" } else { "Hiding hidden files" });
@@ -933,13 +947,23 @@ impl FileFlier {
                 self.apply_settings(ctx);
             }
             Settings => self.dialog = Some(Dialog::Settings),
-            ViewDetails | ViewList | ViewGrid => {
+            ViewDetails | ViewList | ViewGrid | ViewMediumGrid | ViewLargeGrid | ViewExtraLargeGrid | ViewTree
+            | ViewColumns => {
                 let view = match cmd {
                     ViewDetails => ViewMode::Details,
                     ViewList => ViewMode::List,
-                    _ => ViewMode::Grid,
+                    ViewGrid => ViewMode::Grid,
+                    ViewMediumGrid => ViewMode::MediumGrid,
+                    ViewLargeGrid => ViewMode::LargeGrid,
+                    ViewExtraLargeGrid => ViewMode::ExtraLargeGrid,
+                    ViewTree => ViewMode::Tree,
+                    _ => ViewMode::Columns,
                 };
+                let was_tree = self.tab().view == ViewMode::Tree;
                 self.tab_mut().view = view;
+                if was_tree != (view == ViewMode::Tree) {
+                    self.tab_mut().reload(h, s); // flatten or unflatten the open folders
+                }
                 self.tab_mut().scroll_to_cursor = true;
                 self.cfg.view = view;
                 self.cfg.save();
@@ -1000,7 +1024,7 @@ impl FileFlier {
             Rename => {
                 if let Some(e) = self.tab().cursor_entry() {
                     let (path, name) = (e.path.clone(), e.name.clone());
-                    if self.tab().view == ViewMode::Grid {
+                    if self.tab().view.is_grid() {
                         self.dialog = Some(Dialog::Rename { path, name, init: true, error: None });
                     } else {
                         // Rename in place, right in the row.
@@ -1074,19 +1098,37 @@ impl FileFlier {
                 let p = self.tab().path.clone();
                 self.toggle_bookmark(p);
             }
-            SortByName | SortBySize | SortByModified | SortByKind => {
+            SortByName | SortBySize | SortByModified | SortByKind | SortByFolder => {
                 let key = match cmd {
                     SortByName => SortKey::Name,
                     SortBySize => SortKey::Size,
                     SortByModified => SortKey::Modified,
-                    _ => SortKey::Kind,
+                    SortByKind => SortKey::Kind,
+                    _ => SortKey::Folder,
                 };
                 self.set_sort(key);
             }
             ReverseSort => {
                 self.cfg.sort.descending = !self.cfg.sort.descending;
                 self.cfg.save();
-                self.reload_all();
+                self.resort_all();
+            }
+            ToggleFlat => {
+                let on = !self.tab().flat;
+                self.tab_mut().set_flat(on, h, s);
+                self.tab_mut().scroll_to_cursor = true;
+            }
+            OpenContainingFolder => {
+                if let Some(p) = self.tab().cursor_entry().map(|e| e.path.clone())
+                    && let Some(dir) = p.parent().map(Path::to_path_buf)
+                {
+                    if dir == self.tab().path {
+                        self.tab_mut().set_flat(false, h, s);
+                    } else {
+                        self.navigate(dir);
+                    }
+                    self.tab_mut().select_path(&p);
+                }
             }
             Help => self.dialog = Some(Dialog::Help),
         }
@@ -1125,7 +1167,17 @@ impl FileFlier {
             self.cfg.sort.descending = matches!(key, SortKey::Size | SortKey::Modified);
         }
         self.cfg.save();
-        self.reload_all();
+        self.resort_all();
+    }
+
+    /// Apply a new sort order (flat views are sorted in place, not rescanned).
+    fn resort_all(&mut self) {
+        let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
+        for pane in &mut self.panes {
+            for tab in &mut pane.tabs {
+                tab.resort(h, s);
+            }
+        }
     }
 
     pub fn toggle_bookmark(&mut self, p: PathBuf) {
@@ -1282,6 +1334,37 @@ impl FileFlier {
             } else {
                 tab.filter.clear();
                 tab.refilter(self.cfg.show_hidden);
+            }
+        }
+        if tab.view == ViewMode::Tree {
+            // → opens a folder (or steps into it if open), ← closes it (or steps out to
+            // the folder it's in, or up to the parent folder at the top level).
+            let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowRight))
+                && let Some(e) = tab.cursor_entry().filter(|e| e.is_dir)
+            {
+                let p = e.path.clone();
+                if tab.expanded.contains(&p) {
+                    let child = tab.cursor + 1;
+                    if tab.parent_row(child) == Some(tab.cursor) {
+                        tab.move_cursor(child, false);
+                    }
+                } else {
+                    tab.set_expanded(&p, true, h, s);
+                }
+                return;
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowLeft)) {
+                let open =
+                    tab.cursor_entry().filter(|e| e.is_dir && tab.expanded.contains(&e.path)).map(|e| e.path.clone());
+                if let Some(p) = open {
+                    tab.set_expanded(&p, false, h, s);
+                } else if let Some(parent) = tab.parent_row(tab.cursor) {
+                    tab.move_cursor(parent, false);
+                } else {
+                    self.run(Command::Up, ctx);
+                }
+                return;
             }
         }
         if cols == 1 {
@@ -1456,7 +1539,12 @@ impl FileFlier {
                 self.item_counts.clear();
             }
         }
-        ctx.request_repaint_after(Duration::from_millis(1000));
+        let mut scanning = false;
+        for tab in self.panes.iter_mut().flat_map(|p| p.tabs.iter_mut()) {
+            tab.poll_flat(h, s);
+            scanning |= tab.flat_scan.is_some();
+        }
+        ctx.request_repaint_after(Duration::from_millis(if scanning { 60 } else { 1000 }));
     }
 
     fn apply_actions(&mut self, ctx: &egui::Context) {
@@ -1518,6 +1606,13 @@ impl FileFlier {
                         *slot.lock().unwrap() = Some(a.mount.clone());
                         Ok((format!("{name} connected"), None))
                     });
+                }
+                Action::Toast(msg) => self.info(msg),
+                Action::Reveal(p) => {
+                    if let Some(dir) = p.parent().map(Path::to_path_buf) {
+                        self.navigate(dir);
+                        self.tab_mut().select_path(&p);
+                    }
                 }
                 Action::OpenMenu(pos, items) => {
                     self.menu = Some(Menu { pos, query: String::new(), cursor: 0, items, opened: Instant::now() })

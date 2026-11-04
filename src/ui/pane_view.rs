@@ -19,12 +19,34 @@ const BOTTOM_H: f32 = 40.0;
 const TILE_W: f32 = 132.0;
 const TILE_H: f32 = 136.0;
 const LIST_COL_W: f32 = 280.0;
+/// Tile and picture sizes of the grid views.
+#[derive(Clone, Copy)]
+struct GridSize {
+    tile_w: f32,
+    tile_h: f32,
+    thumb_h: f32,
+    icon: f32,
+    tier: crate::preview::thumbs::Tier,
+}
+
+fn grid_size(view: ViewMode) -> GridSize {
+    use crate::preview::thumbs::Tier;
+    let g = |tile_w, tile_h, thumb_h, icon, tier| GridSize { tile_w, tile_h, thumb_h, icon, tier };
+    match view {
+        ViewMode::MediumGrid => g(196.0, 216.0, 150.0, 96.0, Tier::XLarge),
+        ViewMode::LargeGrid => g(268.0, 292.0, 226.0, 128.0, Tier::XLarge),
+        ViewMode::ExtraLargeGrid => g(420.0, 446.0, 380.0, 176.0, Tier::XXLarge),
+        _ => g(TILE_W, TILE_H, 78.0, 64.0, Tier::Large),
+    }
+}
 
 enum ItemAction {
     Click(usize, Modifiers),
     Context(usize, egui::Pos2),
     Open(usize),
     NewTab(PathBuf),
+    /// Tree view: open or close a folder in place.
+    ToggleOpen(PathBuf),
     BackgroundContext(egui::Pos2),
     ClearSelection,
 }
@@ -99,8 +121,80 @@ impl FileFlier {
         let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - BOTTOM_H), rect.max);
         let content = Rect::from_min_max(pos2(rect.left(), toolbar.bottom()), pos2(rect.right(), bottom.top()));
         self.toolbar_ui(ui, idx, toolbar);
-        self.view_ui(ui, idx, content);
+        self.ctrl_wheel_views(ui, idx, content);
+        if self.panes[idx].tab().view == ViewMode::Columns {
+            let middle = self.columns_ui(ui, idx, content);
+            self.view_ui(ui, idx, middle);
+        } else {
+            self.view_ui(ui, idx, content);
+        }
         self.bottom_ui(ui, idx, bottom);
+    }
+
+    /// Ctrl + mouse wheel over the files steps through the views in Alt+1…8 order.
+    fn ctrl_wheel_views(&mut self, ui: &mut Ui, idx: usize, content: Rect) {
+        const ORDER: [ViewMode; 8] = [
+            ViewMode::Details,
+            ViewMode::List,
+            ViewMode::Tree,
+            ViewMode::Columns,
+            ViewMode::Grid,
+            ViewMode::MediumGrid,
+            ViewMode::LargeGrid,
+            ViewMode::ExtraLargeGrid,
+        ];
+        if self.quicklook || self.dialog.is_some() || self.menu.is_some() {
+            return;
+        }
+        let (zoom, ctrl, over) = ui.input(|i| {
+            (i.zoom_delta(), i.modifiers.command, i.pointer.hover_pos().is_some_and(|p| content.contains(p)))
+        });
+        let key = Id::new(("ctrl_wheel", idx));
+        if !(ctrl && over) || zoom == 1.0 {
+            return;
+        }
+        // Wheel notches and touchpad scrolling arrive in different-sized pieces (a
+        // notch is smoothed over several frames): add them up, switch once enough
+        // has come in, then ignore the rest of that notch for a moment.
+        let now = ui.input(|i| i.time);
+        let (mut acc, until): (f32, f64) = ui.ctx().data(|d| d.get_temp(key)).unwrap_or((0.0, 0.0));
+        if now < until {
+            return;
+        }
+        acc += zoom.ln();
+        // Same order as Alt+1…8: wheel up goes to the next number (in the grids,
+        // bigger pictures), wheel down to the one before.
+        let step = if acc > 0.15 {
+            1
+        } else if acc < -0.15 {
+            -1
+        } else {
+            0
+        };
+        let mut until = 0.0;
+        if step != 0 {
+            acc = 0.0;
+            until = now + 0.22;
+            let view = self.panes[idx].tab().view;
+            let at = ORDER.iter().position(|v| *v == view).unwrap_or(0) as i32;
+            let to = (at + step).clamp(0, ORDER.len() as i32 - 1) as usize;
+            if to as i32 != at {
+                let cmd = match ORDER[to] {
+                    ViewMode::Grid => Command::ViewGrid,
+                    ViewMode::MediumGrid => Command::ViewMediumGrid,
+                    ViewMode::LargeGrid => Command::ViewLargeGrid,
+                    ViewMode::ExtraLargeGrid => Command::ViewExtraLargeGrid,
+                    ViewMode::List => Command::ViewList,
+                    ViewMode::Details => Command::ViewDetails,
+                    ViewMode::Tree => Command::ViewTree,
+                    ViewMode::Columns => Command::ViewColumns,
+                };
+                self.actions.push(Action::Activate(idx));
+                self.actions.push(Action::Run(cmd));
+                self.actions.push(Action::Toast(cmd.label().to_string()));
+            }
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(key, (acc, until)));
     }
 
     fn toolbar_ui(&mut self, ui: &mut Ui, idx: usize, rect: Rect) {
@@ -338,7 +432,19 @@ impl FileFlier {
         let tab = self.panes[idx].tab_mut();
         let counts = &mut self.item_counts;
         let thumbs = &mut self.pv.thumbs;
-        let view = tab.view;
+        // The tree view is the details view with folders that open in place.
+        let tree = tab.view == ViewMode::Tree;
+        // The columns view's middle column is a one-column list.
+        let columns = tab.view == ViewMode::Columns;
+        // The bigger grids are the grid with bigger tiles and thumbnails.
+        let gs = grid_size(tab.view);
+        let view = match tab.view {
+            ViewMode::Tree => ViewMode::Details,
+            v if v.is_grid() => ViewMode::Grid,
+            ViewMode::Columns => ViewMode::List,
+            v => v,
+        };
+        let flat = tab.flat;
         let n = tab.visible.len();
         let multi = tab.selected.len() > 1;
 
@@ -401,12 +507,18 @@ impl FileFlier {
                             SortKey::Size => Command::SortBySize,
                             SortKey::Modified => Command::SortByModified,
                             SortKey::Kind => Command::SortByKind,
+                            SortKey::Folder => Command::SortByFolder,
                         }));
                     }
                 };
             header(ui, Some(SortKey::Name), "Name", h.left() + 48.0, cols.name, false, false);
             if let Some((l, r)) = cols.ty {
-                header(ui, Some(SortKey::Kind), "Type", l, r, false, true);
+                // The flat view shows where each file is instead of its type.
+                if flat {
+                    header(ui, Some(SortKey::Folder), "Folder", l, r, false, true);
+                } else {
+                    header(ui, Some(SortKey::Kind), "Type", l, r, false, true);
+                }
             }
             if let Some((l, r)) = cols.items {
                 header(ui, None, "Items", l, r, false, true);
@@ -422,9 +534,12 @@ impl FileFlier {
         // ---- geometry
         let inner_w = list_rect.width() - 16.0;
         let (ncols, pitch) = match view {
-            ViewMode::Details => (1, row_h),
+            ViewMode::Details | ViewMode::Tree | ViewMode::Columns => (1, row_h),
+            ViewMode::List if columns => (1, row_h),
             ViewMode::List => (((inner_w / LIST_COL_W).floor() as usize).max(1), row_h),
-            ViewMode::Grid => (((inner_w / TILE_W).floor() as usize).max(1), TILE_H),
+            ViewMode::Grid | ViewMode::MediumGrid | ViewMode::LargeGrid | ViewMode::ExtraLargeGrid => {
+                (((inner_w / gs.tile_w).floor() as usize).max(1), gs.tile_h)
+            }
         };
         let rows = n.div_ceil(ncols);
 
@@ -509,8 +624,7 @@ impl FileFlier {
             item_actions.push(ItemAction::BackgroundContext(bg.interact_pointer_pos().unwrap_or(list_rect.center())));
         }
         // Inline rename state is taken out while drawing (avoids borrowing self twice).
-        let mut renaming =
-            self.renaming.take().filter(|r| r.pane != idx || r.path.parent() == Some(tab.path.as_path()));
+        let mut renaming = self.renaming.take().filter(|r| r.pane != idx || r.path.starts_with(&tab.path));
         let mut rename_done: Option<bool> = None; // Some(true) = commit, Some(false) = cancel
         let out = ui
             .scope_builder(
@@ -540,7 +654,9 @@ impl FileFlier {
                                 let Some(&ei) = tab.visible.get(vi) else { break };
                                 let e = &tab.entries[ei];
                                 let item = match view {
-                                    ViewMode::Details => row_rect.shrink2(vec2(8.0, 0.0)),
+                                    ViewMode::Details | ViewMode::Tree | ViewMode::Columns => {
+                                        row_rect.shrink2(vec2(8.0, 0.0))
+                                    }
                                     ViewMode::List => {
                                         let w = inner_w / ncols as f32;
                                         Rect::from_min_size(
@@ -548,7 +664,10 @@ impl FileFlier {
                                             vec2(w - 6.0, pitch),
                                         )
                                     }
-                                    ViewMode::Grid => {
+                                    ViewMode::Grid
+                                    | ViewMode::MediumGrid
+                                    | ViewMode::LargeGrid
+                                    | ViewMode::ExtraLargeGrid => {
                                         let w = inner_w / ncols as f32;
                                         Rect::from_min_size(
                                             pos2(row_rect.left() + 8.0 + c as f32 * w, row_rect.top()),
@@ -620,8 +739,27 @@ impl FileFlier {
                                     dim_color = dim_color.gamma_multiply(0.6);
                                 }
 
+                                // Tree view: indent by depth, with an arrow for folders.
+                                let ind = if tree { 4.0 + tab.depth_of(ei) as f32 * 18.0 + 14.0 } else { 0.0 };
+                                if tree && e.is_dir {
+                                    let chev = Rect::from_center_size(
+                                        pos2(item.left() + ind - 6.0, item.center().y),
+                                        vec2(18.0, 18.0),
+                                    );
+                                    let cresp = ui.interact(chev, Id::new(("tree_chev", idx, &e.path)), Sense::click());
+                                    let c = if cresp.hovered() { color } else { dim_color };
+                                    if tab.expanded.contains(&e.path) {
+                                        icons::chevron_down(p, chev.shrink(4.0), c);
+                                    } else {
+                                        icons::chevron_right(p, chev.shrink(4.0), c);
+                                    }
+                                    if cresp.clicked() {
+                                        item_actions.push(ItemAction::ToggleOpen(e.path.clone()));
+                                    }
+                                }
+                                let item = Rect::from_min_max(pos2(item.left() + ind, item.top()), item.max);
                                 match view {
-                                    ViewMode::Details | ViewMode::List => {
+                                    ViewMode::Details | ViewMode::List | ViewMode::Tree | ViewMode::Columns => {
                                         let icon = Rect::from_center_size(
                                             pos2(item.left() + 18.0, item.center().y),
                                             vec2(20.0, 20.0),
@@ -635,6 +773,14 @@ impl FileFlier {
                                         }
                                         let name_right = if view == ViewMode::Details {
                                             cols.name - 8.0
+                                        } else if columns && e.is_dir {
+                                            // Folders get a › on the right, like Finder.
+                                            let cr = Rect::from_center_size(
+                                                pos2(item.right() - 12.0, item.center().y),
+                                                vec2(12.0, 12.0),
+                                            );
+                                            icons::chevron_right(p, cr, dim_color);
+                                            item.right() - 24.0
                                         } else {
                                             item.right() - 6.0
                                         };
@@ -695,7 +841,8 @@ impl FileFlier {
                                         if view == ViewMode::Details {
                                             let cy = item.center().y;
                                             if let Some((l, r)) = cols.ty {
-                                                let g = elided(p, &type_label(e), 13.0, dim_color, r - l);
+                                                let label = if flat { tab.rel_folder(e) } else { type_label(e) };
+                                                let g = elided(p, &label, 13.0, dim_color, r - l);
                                                 p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
                                             }
                                             // Placeholders are drawn fainter than real values.
@@ -725,18 +872,25 @@ impl FileFlier {
                                             }
                                         }
                                     }
-                                    ViewMode::Grid => {
+                                    ViewMode::Grid
+                                    | ViewMode::MediumGrid
+                                    | ViewMode::LargeGrid
+                                    | ViewMode::ExtraLargeGrid => {
                                         let thumb = Rect::from_min_size(
                                             item.min + vec2(10.0, 8.0),
-                                            vec2(item.width() - 20.0, 78.0),
+                                            vec2(item.width() - 20.0, gs.thumb_h),
                                         );
                                         let mut drew = false;
                                         if e.is_file
                                             && crate::preview::classify(&e.path).has_thumbnail()
-                                            && let Some(tex) = thumbs.get(&e.path, e.modified)
+                                            && let Some(tex) = thumbs.get(&e.path, e.modified, gs.tier)
                                         {
                                             let sz = tex.size_vec2() / ui.ctx().pixels_per_point();
-                                            let scale = (thumb.width() / sz.x).min(thumb.height() / sz.y).min(1.0);
+                                            // Pictures aren't enlarged, except up to 2× in the bigger grids,
+                                            // where a smaller thumbnail stands in until the right one is ready.
+                                            let max_scale = if gs.icon > 64.0 { 2.0 } else { 1.0 };
+                                            let scale =
+                                                (thumb.width() / sz.x).min(thumb.height() / sz.y).min(max_scale);
                                             let fit = Rect::from_center_size(thumb.center(), sz * scale);
                                             let p = ui.painter();
                                             // 3D renders have a transparent background: no photo shadow.
@@ -761,7 +915,7 @@ impl FileFlier {
                                         }
                                         let p = ui.painter();
                                         if !drew {
-                                            let icon = Rect::from_center_size(thumb.center(), vec2(64.0, 64.0));
+                                            let icon = Rect::from_center_size(thumb.center(), vec2(gs.icon, gs.icon));
                                             if e.is_dir {
                                                 icons::folder(p, icon, pal);
                                             } else {
@@ -900,7 +1054,8 @@ impl FileFlier {
                     }
                     tab.scroll_to_cursor = false;
                     self.actions.push(Action::Activate(idx));
-                    self.actions.push(Action::OpenMenu(pos, entry_menu(is_dir, archive)));
+                    let flat = tab.flat;
+                    self.actions.push(Action::OpenMenu(pos, entry_menu(is_dir, archive, flat)));
                 }
                 ItemAction::Open(vi) => {
                     tab.move_cursor(vi, false);
@@ -918,6 +1073,11 @@ impl FileFlier {
                     self.actions.push(Action::OpenMenu(pos, background_menu()));
                 }
                 ItemAction::ClearSelection => tab.selected.clear(),
+                ItemAction::ToggleOpen(p) => {
+                    let open = !tab.expanded.contains(&p);
+                    tab.set_expanded(&p, open, self.cfg.show_hidden, self.cfg.sort);
+                    self.actions.push(Action::Activate(idx));
+                }
             }
         }
     }
@@ -953,6 +1113,7 @@ impl FileFlier {
                 MenuItem::Sep,
                 MenuItem::Cmd(Command::SortByName),
                 MenuItem::Cmd(Command::SortByKind),
+                MenuItem::Cmd(Command::SortByFolder),
                 MenuItem::Cmd(Command::SortBySize),
                 MenuItem::Cmd(Command::SortByModified),
                 MenuItem::Cmd(Command::ReverseSort),
@@ -982,6 +1143,8 @@ impl FileFlier {
         p.rect_filled(Rect::from_min_size(pct_r.min, vec2(fill_w, pct_r.height())), 4.0, pal.accent);
         p.rect_stroke(pct_r, 4.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
         text(p, pct_r.center(), Align2::CENTER_CENTER, format!("{}%", (pct * 100.0).round() as i32), 12.5, pal.text);
+        ui.interact(pct_r, Id::new(("scroll_pct_tip", idx)), Sense::hover())
+            .on_hover_text("How far down the list you've scrolled");
 
         let d = format!("{dirs_shown}/{dirs_total}");
         let f = format!("{files_shown}/{files_total}");
@@ -1004,26 +1167,94 @@ impl FileFlier {
             text(p, pos2(x, cy), Align2::LEFT_CENTER, &f, 13.5, pal.text);
             x += fw2 + 8.0;
             let lr = Rect::from_min_size(pos2(x, g.top() + 1.0), vec2(26.0, g.height() - 2.0));
-            let tip = match view {
-                ViewMode::Details => "View: details (click to switch)",
-                ViewMode::List => "View: list (click to switch)",
-                ViewMode::Grid => "View: grid (click to switch)",
+            let current = match view {
+                ViewMode::Details => Command::ViewDetails,
+                ViewMode::List => Command::ViewList,
+                ViewMode::Grid => Command::ViewGrid,
+                ViewMode::MediumGrid => Command::ViewMediumGrid,
+                ViewMode::LargeGrid => Command::ViewLargeGrid,
+                ViewMode::ExtraLargeGrid => Command::ViewExtraLargeGrid,
+                ViewMode::Tree => Command::ViewTree,
+                ViewMode::Columns => Command::ViewColumns,
             };
-            if icon_button(ui, lr, Id::new(("viewtoggle", idx)), true, pal, tip, icons::layout_list).clicked() {
+            let tip = format!("{} (click to choose · Alt+1…8)", current.label());
+            if icon_button(ui, lr, Id::new(("viewtoggle", idx)), true, pal, &tip, icons::layout_list).clicked() {
+                // A menu of every view, opening upward, with the current one ticked and highlighted.
+                let views = [
+                    Command::ViewDetails,
+                    Command::ViewList,
+                    Command::ViewTree,
+                    Command::ViewColumns,
+                    Command::ViewGrid,
+                    Command::ViewMediumGrid,
+                    Command::ViewLargeGrid,
+                    Command::ViewExtraLargeGrid,
+                ];
+                let items: Vec<MenuItem> = views.iter().map(|&c| MenuItem::Choice(c, c == current)).collect();
+                let height = 52.0 + 30.0 * items.len() as f32;
                 self.actions.push(Action::Activate(idx));
-                self.actions.push(Action::Run(match view {
-                    ViewMode::Details => Command::ViewList,
-                    ViewMode::List => Command::ViewGrid,
-                    ViewMode::Grid => Command::ViewDetails,
-                }));
+                self.menu = Some(crate::app::Menu {
+                    pos: pos2(lr.right() - 320.0, lr.top() - height - 10.0),
+                    query: String::new(),
+                    cursor: views.iter().position(|&c| c == current).unwrap_or(0),
+                    items,
+                    opened: std::time::Instant::now(),
+                });
+            }
+        }
+
+        // Flat view badge: shows scan progress; click to leave the flat view.
+        let tab = self.panes[idx].tab();
+        if tab.flat {
+            let n = tab.entries.len();
+            let label = if tab.flat_scan.is_some() {
+                format!("Flat · scanning {}…", group_digits(n))
+            } else if tab.flat_truncated {
+                format!("Flat · first {} files", group_digits(n))
+            } else {
+                "Flat view".to_string()
+            };
+            let right = if g.left() > fr.right() + 8.0 { g.left() - 6.0 } else { pct_r.left() - 6.0 };
+            let full_w = ui.painter().layout_no_wrap(label.clone(), super::font(13.0), pal.on_accent).size().x + 20.0;
+            let label = if fr.right() + 8.0 + full_w <= right { label } else { "Flat".to_string() };
+            let w = ui.painter().layout_no_wrap(label.clone(), super::font(13.0), pal.on_accent).size().x + 20.0;
+            let r = Rect::from_min_size(pos2(fr.right() + 8.0, pct_r.top()), vec2(w, pct_r.height()));
+            if r.right() <= right {
+                let resp = ui.interact(r, Id::new(("flat_badge", idx)), Sense::click());
+                let fill = if resp.hovered() { pal.accent.gamma_multiply(1.2) } else { pal.accent };
+                ui.painter().rect_filled(r, 4.0, fill);
+                text(ui.painter(), r.center(), Align2::CENTER_CENTER, label, 13.0, pal.on_accent);
+                if resp
+                    .on_hover_text("Every file in this folder and its subfolders. Click to turn off (Ctrl+Shift+F)")
+                    .clicked()
+                {
+                    self.actions.push(Action::Activate(idx));
+                    self.actions.push(Action::Run(Command::ToggleFlat));
+                }
             }
         }
     }
 }
 
-pub fn entry_menu(is_dir: bool, archive: bool) -> Vec<MenuItem> {
+/// 12400 -> "12,400".
+fn group_digits(n: usize) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+pub fn entry_menu(is_dir: bool, archive: bool, flat: bool) -> Vec<MenuItem> {
     use Command::*;
     let mut v = vec![MenuItem::Cmd(Open)];
+    if flat {
+        v.push(MenuItem::Cmd(OpenContainingFolder));
+    }
     if is_dir {
         v.push(MenuItem::Cmd(OpenInNewTab));
     } else {

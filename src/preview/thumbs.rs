@@ -13,16 +13,56 @@ use super::Rgba;
 
 /// Pixel size of the "large" freedesktop thumbnails.
 pub const SIZE: u32 = 256;
+
+/// The freedesktop cache sizes File Flier uses, smallest first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Tier {
+    /// 256 px ("large"): the regular grid.
+    Large,
+    /// 512 px ("x-large"): the medium and large grids.
+    XLarge,
+    /// 1024 px ("xx-large"): the extra-large grid.
+    XXLarge,
+}
+
+impl Tier {
+    const ALL: [Tier; 3] = [Tier::Large, Tier::XLarge, Tier::XXLarge];
+
+    pub fn px(self) -> u32 {
+        match self {
+            Tier::Large => SIZE,
+            Tier::XLarge => 512,
+            Tier::XXLarge => 1024,
+        }
+    }
+
+    fn dir(self) -> &'static str {
+        match self {
+            Tier::Large => "large",
+            Tier::XLarge => "x-large",
+            Tier::XXLarge => "xx-large",
+        }
+    }
+
+    /// Texture memory relative to a 256 px one.
+    fn weight(self) -> usize {
+        let r = (self.px() / SIZE) as usize;
+        r * r
+    }
+}
 const WORKERS: usize = 3;
 const MAX_TEXTURES: usize = 800;
 
 struct Job {
-    path: PathBuf,
+    key: ThumbKey,
     modified: Option<SystemTime>,
 }
 
+/// A file and the size it's wanted at.
+type ThumbKey = (PathBuf, Tier);
+
 /// A finished job; the result is None when it was skipped as no longer visible.
-type Done = (PathBuf, Option<SystemTime>, Option<Option<Rgba>>);
+type Done = (ThumbKey, Option<SystemTime>, Option<Option<Rgba>>);
 
 #[derive(Default)]
 struct Shared {
@@ -30,7 +70,7 @@ struct Shared {
     cv: Condvar,
     done: Mutex<Vec<Done>>,
     /// Frame in which each path was last asked for; stale requests are skipped.
-    wanted: Mutex<HashMap<PathBuf, u64>>,
+    wanted: Mutex<HashMap<ThumbKey, u64>>,
     frame: AtomicU64,
 }
 
@@ -41,7 +81,7 @@ enum State {
 
 pub struct Thumbs {
     shared: Arc<Shared>,
-    cache: HashMap<PathBuf, (Option<SystemTime>, State, u64)>,
+    cache: HashMap<ThumbKey, (Option<SystemTime>, State, u64)>,
     frame: u64,
 }
 
@@ -65,53 +105,72 @@ impl Thumbs {
         self.frame += 1;
         self.shared.frame.store(self.frame, Ordering::Relaxed);
         let done = std::mem::take(&mut *self.shared.done.lock().unwrap());
-        for (path, modified, result) in done {
+        for (key, modified, result) in done {
             match result {
                 // Skipped because it scrolled away: forget it so it's requested again later.
                 None => {
-                    self.cache.remove(&path);
+                    self.cache.remove(&key);
                 }
                 Some(img) => {
                     let tex = img.map(|i| {
                         ctx.load_texture(
-                            format!("thumb:{}", path.display()),
+                            format!("thumb:{:?}:{}", key.1, key.0.display()),
                             i.to_color_image(),
                             egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear)),
                         )
                     });
-                    self.cache.insert(path, (modified, State::Ready(tex), self.frame));
+                    self.cache.insert(key, (modified, State::Ready(tex), self.frame));
                 }
             }
         }
-        if self.cache.len() > MAX_TEXTURES {
-            let mut ages: Vec<(u64, PathBuf)> = self.cache.iter().map(|(p, (_, _, f))| (*f, p.clone())).collect();
+        // Bigger textures count for more (a 1024 px one is sixteen 256 px ones).
+        let weight = |k: &ThumbKey| k.1.weight();
+        let total: usize = self.cache.keys().map(weight).sum();
+        if total > MAX_TEXTURES {
+            let mut ages: Vec<(u64, ThumbKey)> = self.cache.iter().map(|(k, (_, _, f))| (*f, k.clone())).collect();
             ages.sort();
-            for (_, p) in ages.into_iter().take(self.cache.len() - MAX_TEXTURES * 3 / 4) {
-                self.cache.remove(&p);
+            let mut left = total;
+            for (_, k) in ages {
+                if left <= MAX_TEXTURES * 3 / 4 {
+                    break;
+                }
+                left -= weight(&k);
+                self.cache.remove(&k);
             }
         }
     }
 
-    /// The thumbnail for a file, requesting it if needed. None = not (yet) available.
-    pub fn get(&mut self, path: &Path, modified: Option<SystemTime>) -> Option<egui::TextureHandle> {
+    /// The thumbnail for a file at size `tier`, requesting it if needed.
+    /// None = not (yet) available. While a big one is on its way, a smaller
+    /// one is returned if it's already loaded.
+    pub fn get(&mut self, path: &Path, modified: Option<SystemTime>, tier: Tier) -> Option<egui::TextureHandle> {
         let frame = self.frame;
-        if let Some((m, state, last)) = self.cache.get_mut(path)
+        let key = (path.to_path_buf(), tier);
+        if let Some((m, state, last)) = self.cache.get_mut(&key)
             && *m == modified
         {
             *last = frame;
             return match state {
                 State::Ready(t) => t.clone(),
                 State::Pending => {
-                    self.shared.wanted.lock().unwrap().insert(path.to_path_buf(), frame);
-                    None
+                    self.shared.wanted.lock().unwrap().insert(key, frame);
+                    self.ready_small(path, modified, tier)
                 }
             };
         }
-        self.cache.insert(path.to_path_buf(), (modified, State::Pending, frame));
-        self.shared.wanted.lock().unwrap().insert(path.to_path_buf(), frame);
-        self.shared.queue.lock().unwrap().push(Job { path: path.to_path_buf(), modified });
+        self.cache.insert(key.clone(), (modified, State::Pending, frame));
+        self.shared.wanted.lock().unwrap().insert(key.clone(), frame);
+        self.shared.queue.lock().unwrap().push(Job { key, modified });
         self.shared.cv.notify_one();
-        None
+        self.ready_small(path, modified, tier)
+    }
+
+    /// The biggest loaded thumbnail smaller than `tier`.
+    fn ready_small(&self, path: &Path, modified: Option<SystemTime>, tier: Tier) -> Option<egui::TextureHandle> {
+        Tier::ALL.iter().rev().filter(|t| **t < tier).find_map(|t| match self.cache.get(&(path.to_path_buf(), *t)) {
+            Some((m, State::Ready(Some(tex)), _)) if *m == modified => Some(tex.clone()),
+            _ => None,
+        })
     }
 }
 
@@ -128,19 +187,20 @@ fn worker(shared: &Shared, ctx: &egui::Context) {
             }
         };
         let frame = shared.frame.load(Ordering::Relaxed);
-        let last_wanted = shared.wanted.lock().unwrap().get(&job.path).copied().unwrap_or(0);
+        let last_wanted = shared.wanted.lock().unwrap().get(&job.key).copied().unwrap_or(0);
+        let (path, tier) = (&job.key.0, job.key.1);
         let result = if last_wanted + 3 < frame {
             None
         } else {
-            let img = cached(&job.path, job.modified).or_else(|| {
-                let img = super::thumbnail(&job.path, SIZE)?;
-                store(&job.path, job.modified, &img);
+            let img = cached_at(path, job.modified, tier).or_else(|| {
+                let img = super::thumbnail(path, tier.px())?;
+                store(path, job.modified, &img, tier);
                 Some(img)
             });
             Some(img)
         };
-        shared.wanted.lock().unwrap().remove(&job.path);
-        shared.done.lock().unwrap().push((job.path, job.modified, result));
+        shared.wanted.lock().unwrap().remove(&job.key);
+        shared.done.lock().unwrap().push((job.key, job.modified, result));
         ctx.request_repaint();
     }
 }
@@ -180,20 +240,20 @@ fn uri_of(path: &Path) -> String {
     format!("file://{}", encode_bytes(path.as_os_str().as_bytes()))
 }
 
-fn cache_file(path: &Path) -> Option<(PathBuf, String)> {
+fn cache_file(path: &Path, tier: Tier) -> Option<(PathBuf, String)> {
     use md5::Digest;
     let uri = uri_of(path);
     let name = format!("{}.png", super::hex(&md5::Md5::digest(uri.as_bytes())));
-    Some((thumb_root()?.join("large").join(name), uri))
+    Some((thumb_root()?.join(tier.dir()).join(name), uri))
 }
 
 fn mtime_secs(m: Option<SystemTime>) -> Option<u64> {
     m?.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
 }
 
-/// A valid cached thumbnail (its recorded MTime must match the file's).
-fn cached(path: &Path, modified: Option<SystemTime>) -> Option<Rgba> {
-    let (file, _) = cache_file(path)?;
+/// A valid cached thumbnail of one size (its recorded MTime must match the file's).
+fn cached_at(path: &Path, modified: Option<SystemTime>, tier: Tier) -> Option<Rgba> {
+    let (file, _) = cache_file(path, tier)?;
     let want = mtime_secs(modified)?;
     let data = std::fs::read(&file).ok()?;
     let decoder = png::Decoder::new(std::io::Cursor::new(&data));
@@ -208,16 +268,16 @@ fn cached(path: &Path, modified: Option<SystemTime>) -> Option<Rgba> {
         return None;
     }
     let img = image::load_from_memory_with_format(&data, image::ImageFormat::Png).ok()?;
-    Some(Rgba::from_image(img, SIZE))
+    Some(Rgba::from_image(img, tier.px()))
 }
 
-fn store(path: &Path, modified: Option<SystemTime>, img: &Rgba) {
+fn store(path: &Path, modified: Option<SystemTime>, img: &Rgba, tier: Tier) {
     let Some(root) = thumb_root() else { return };
     // Never thumbnail the thumbnail cache itself.
     if path.starts_with(&root) {
         return;
     }
-    let (Some((file, uri)), Some(mtime)) = (cache_file(path), mtime_secs(modified)) else { return };
+    let (Some((file, uri)), Some(mtime)) = (cache_file(path, tier), mtime_secs(modified)) else { return };
     let dir = file.parent().unwrap();
     if std::fs::create_dir_all(dir).is_err() {
         return;
@@ -259,6 +319,18 @@ fn store(path: &Path, modified: Option<SystemTime>, img: &Rgba) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sizes_use_their_own_cache_folders() {
+        let p = Path::new("/tmp/photo.jpg");
+        let dirs: Vec<PathBuf> = Tier::ALL.iter().map(|t| cache_file(p, *t).unwrap().0).collect();
+        assert!(dirs[0].parent().unwrap().ends_with("thumbnails/large"));
+        assert!(dirs[1].parent().unwrap().ends_with("thumbnails/x-large"));
+        assert!(dirs[2].parent().unwrap().ends_with("thumbnails/xx-large"));
+        assert!(dirs.iter().all(|d| d.file_name() == dirs[0].file_name()));
+        assert_eq!(Tier::ALL.map(Tier::px), [256, 512, 1024]);
+        assert_eq!(Tier::XXLarge.weight(), 16);
+    }
 
     #[test]
     fn uris_match_glib() {
