@@ -1,8 +1,11 @@
 //! Every user-facing action, shared by keyboard shortcuts, menus and the command palette.
 
+use std::collections::{BTreeMap, HashMap};
+use std::sync::RwLock;
+
 use egui::{Key, KeyboardShortcut, Modifiers};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Command {
     CommandPalette,
     Search,
@@ -203,8 +206,28 @@ impl Command {
         }
     }
 
-    /// Shortcuts that trigger this command. The first one is shown in the UI.
+    /// The name the keymap is saved under (stable: the variant's name).
+    pub fn id(self) -> String {
+        format!("{self:?}")
+    }
+
+    pub fn from_id(id: &str) -> Option<Command> {
+        ALL.iter().copied().find(|c| c.id() == id)
+    }
+
+    /// Shortcuts that trigger this command: the user's own, if they changed them, else the
+    /// defaults. The first one is shown in menus.
     pub fn shortcuts(self) -> Vec<KeyboardShortcut> {
+        let custom = KEYMAP.read().ok().and_then(|m| m.get(&self).cloned());
+        custom.unwrap_or_else(|| self.default_shortcuts())
+    }
+
+    /// Whether the user changed this command's shortcuts.
+    pub fn is_customized(self) -> bool {
+        KEYMAP.read().is_ok_and(|m| m.contains_key(&self))
+    }
+
+    pub fn default_shortcuts(self) -> Vec<KeyboardShortcut> {
         match self {
             CommandPalette => vec![sc(CTRL_SHIFT, Key::P), sc(CTRL, Key::K)],
             Search => vec![sc(CTRL, Key::F)],
@@ -269,16 +292,108 @@ impl Command {
 
     /// All shortcuts, formatted for key badges.
     pub fn shortcut_texts(self, ctx: &egui::Context) -> Vec<String> {
-        self.shortcuts()
-            .iter()
-            .map(|s| ctx.format_shortcut(s).replace("Period", ".").replace("Backslash", "\\"))
-            .collect()
+        self.shortcuts().iter().map(|s| format_shortcut(ctx, s)).collect()
     }
+}
+
+/// A shortcut as shown on a key badge.
+pub fn format_shortcut(ctx: &egui::Context, s: &KeyboardShortcut) -> String {
+    ctx.format_shortcut(s).replace("Period", ".").replace("Backslash", "\\")
+}
+
+/// The user's shortcuts, for the commands they changed (an empty list = no shortcut).
+static KEYMAP: RwLock<Option<HashMap<Command, Vec<KeyboardShortcut>>>> = RwLock::new(None);
+
+trait KeymapExt {
+    fn get(&self, c: &Command) -> Option<&Vec<KeyboardShortcut>>;
+    fn contains_key(&self, c: &Command) -> bool;
+}
+
+impl KeymapExt for std::sync::RwLockReadGuard<'_, Option<HashMap<Command, Vec<KeyboardShortcut>>>> {
+    fn get(&self, c: &Command) -> Option<&Vec<KeyboardShortcut>> {
+        self.as_ref()?.get(c)
+    }
+    fn contains_key(&self, c: &Command) -> bool {
+        self.as_ref().is_some_and(|m| m.contains_key(c))
+    }
+}
+
+/// Load the saved keymap (command id -> shortcuts like "Ctrl+Shift+P").
+pub fn set_keymap(saved: &BTreeMap<String, Vec<String>>) {
+    let map = saved
+        .iter()
+        .filter_map(|(id, keys)| Some((Command::from_id(id)?, keys.iter().filter_map(|k| parse(k)).collect())))
+        .collect();
+    if let Ok(mut m) = KEYMAP.write() {
+        *m = Some(map);
+    }
+}
+
+/// A shortcut in the saved form, e.g. "Ctrl+Shift+P" (Ctrl is Cmd on macOS).
+pub fn to_string(s: &KeyboardShortcut) -> String {
+    let m = s.modifiers;
+    let mut out = String::new();
+    for (on, name) in [(m.command || m.ctrl, "Ctrl"), (m.alt, "Alt"), (m.shift, "Shift")] {
+        if on {
+            out.push_str(name);
+            out.push('+');
+        }
+    }
+    out + s.logical_key.name()
+}
+
+pub fn parse(s: &str) -> Option<KeyboardShortcut> {
+    let (mods, key) = s.rsplit_once('+').map_or(("", s), |(m, k)| (m, k));
+    // "Ctrl++" would split oddly; keys with '+' in their name are spelled "Plus".
+    let key = Key::from_name(key)?;
+    let mut m = Modifiers::NONE;
+    for part in mods.split('+').filter(|p| !p.is_empty()) {
+        match part {
+            "Ctrl" | "Cmd" => m |= Modifiers::COMMAND,
+            "Alt" => m |= Modifiers::ALT,
+            "Shift" => m |= Modifiers::SHIFT,
+            _ => return None,
+        }
+    }
+    Some(KeyboardShortcut::new(m, key))
+}
+
+/// The shortcut for a key press: Ctrl and Cmd both count as the command key.
+pub fn from_press(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
+    let mut m = Modifiers::NONE;
+    if modifiers.command || modifiers.ctrl {
+        m |= Modifiers::COMMAND;
+    }
+    if modifiers.alt {
+        m |= Modifiers::ALT;
+    }
+    if modifiers.shift {
+        m |= Modifiers::SHIFT;
+    }
+    KeyboardShortcut::new(m, key)
+}
+
+/// Two shortcuts that a key press would trigger alike.
+pub fn same(a: &KeyboardShortcut, b: &KeyboardShortcut) -> bool {
+    to_string(a) == to_string(b)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcuts_round_trip() {
+        for c in ALL {
+            for s in c.default_shortcuts() {
+                let text = to_string(&s);
+                assert!(same(&parse(&text).unwrap(), &s), "{text}");
+            }
+        }
+        assert_eq!(to_string(&parse("Ctrl+Shift+P").unwrap()), "Ctrl+Shift+P");
+        assert!(parse("Hyper+P").is_none());
+        assert!(parse("Ctrl+Nope").is_none());
+    }
 
     #[test]
     fn every_command_is_listed_once() {

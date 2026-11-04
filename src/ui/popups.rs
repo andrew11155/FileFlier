@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use egui::{Align, Align2, Color32, Id, Key, Modifiers, Order, RichText, Sense, Stroke, TextEdit, Ui, pos2, vec2};
 
-use super::{RowIcon, badge, font, menu_row, popup_frame, search_box, text};
+use super::{RowIcon, font, menu_row, popup_frame, search_box, text};
 use crate::app::{Action, Dialog, FileFlier, MenuItem, PaletteItem, Resolve, display_name, step};
-use crate::commands::{self, Command};
+use crate::commands::Command;
 use crate::icons::FileKind;
 use crate::search::{self, Search};
 use crate::trashview;
@@ -1002,45 +1002,19 @@ impl FileFlier {
                     keep = false;
                 }
             }
-            Dialog::Help => {
-                modal(ctx, "help", 620.0, pal, &fx, |ui| {
-                    label(ui, pal, "Keyboard shortcuts", 16.0, Some(pal.text_strong));
-                    egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
-                        let basics = [
-                            ("Move cursor (Shift selects)", vec!["↑ ↓ PgUp PgDn Home End".to_string()]),
-                            ("Open folder / file", vec!["Enter".into(), "→".into()]),
-                            ("Parent folder", vec!["Backspace".into(), "←".into()]),
-                            ("Filter this folder", vec!["Type anything".into()]),
-                            ("Multi-select", vec![super::keys("Ctrl+Click"), super::keys("Shift+Click")]),
-                            (
-                                "Copy / cut / paste",
-                                vec![super::keys("Ctrl+C"), super::keys("Ctrl+X"), super::keys("Ctrl+V")],
-                            ),
-                            ("Drag files (hold Ctrl to copy)", vec!["Drag".into()]),
-                        ];
-                        let rows = basics.into_iter().chain(
-                            commands::ALL
-                                .iter()
-                                .filter(|c| !matches!(c, Command::Copy | Command::Cut | Command::Paste))
-                                .map(|c| (c.label(), c.shortcut_texts(ctx)))
-                                .filter(|(_, s)| !s.is_empty()),
-                        );
-                        for (desc, keys) in rows {
-                            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-                            let p = ui.painter();
-                            text(p, pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, desc, 13.5, pal.text);
-                            let mut right = r.right() - 8.0;
-                            for k in keys.iter().rev() {
-                                right -= badge(p, right, r.center().y, k, pal, false) + 6.0;
-                            }
-                            p.hline(r.x_range(), r.bottom(), Stroke::new(1.0, pal.row_sep));
-                        }
-                    });
-                    ui.add_space(8.0);
-                    if button(ui, pal, "Close", false, false).clicked() {
-                        keep = false;
-                    }
-                });
+            Dialog::Shortcuts { query, cursor, record } => {
+                if !keep && record.is_some() {
+                    // Esc while recording cancels the recording, not the overlay.
+                    keep = true;
+                    *record = None;
+                }
+                let out = modal(ctx, "shortcuts", 720.0, pal, &fx, |ui| self.shortcuts_ui(ui, query, cursor, record));
+                if out.close {
+                    keep = false;
+                }
+                if out.run.is_some() {
+                    run_after = out.run;
+                }
             }
         }
 

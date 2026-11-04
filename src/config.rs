@@ -108,6 +108,8 @@ pub struct Config {
     pub folder_colors: std::collections::BTreeMap<String, u8>,
     /// Which scheme the folder color slots are drawn in (see `ui::tint::SCHEMES`).
     pub folder_scheme: u8,
+    /// Shortcuts the user changed: command id -> keys ("Ctrl+Shift+P"). Others use the defaults.
+    pub keymap: std::collections::BTreeMap<String, Vec<String>>,
     pub collapsed: Vec<String>,
     pub inspector_width: f32,
     /// Render office documents as pages with LibreOffice when it's installed.
@@ -161,6 +163,7 @@ impl Default for Config {
             layout: None,
             folder_colors: Default::default(),
             folder_scheme: 0,
+            keymap: Default::default(),
             collapsed: vec!["Recents".into()],
             inspector_width: 340.0,
             office_previews: true,

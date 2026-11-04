@@ -82,7 +82,13 @@ pub enum Dialog {
     Conflict(Conflict),
     Trash(crate::trashview::TrashView),
     OpenWith(crate::openwith::OpenWithView),
-    Help,
+    /// The shortcuts overlay: search, run, and change keys. `record` is the command whose
+    /// key is being recorded, and which of its keys (None = a new one).
+    Shortcuts {
+        query: String,
+        cursor: usize,
+        record: Option<(Command, Option<usize>)>,
+    },
     Settings,
     Update,
     Cloud(crate::ui::CloudDialog),
@@ -258,6 +264,7 @@ impl FileFlier {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::load_fonts(&cc.egui_ctx);
         let mut cfg = Config::load();
+        commands::set_keymap(&cfg.keymap);
         if !cfg.preview_panel_intro {
             // 0.4 made the preview panel much more useful: show it once to everyone.
             cfg.preview_panel_intro = true;
@@ -1141,7 +1148,7 @@ impl FileFlier {
                     self.tab_mut().select_path(&p);
                 }
             }
-            Help => self.dialog = Some(Dialog::Help),
+            Help => self.dialog = Some(Dialog::Shortcuts { query: String::new(), cursor: 0, record: None }),
         }
     }
 
@@ -1222,6 +1229,54 @@ impl FileFlier {
         }
         self.cfg.save();
         ctx.request_repaint();
+    }
+
+    /// Give `cmd` these shortcuts (back to its defaults if they're the same) and save.
+    pub fn set_shortcuts(&mut self, cmd: Command, keys: Vec<egui::KeyboardShortcut>) {
+        let defaults = cmd.default_shortcuts();
+        let same = keys.len() == defaults.len() && keys.iter().zip(&defaults).all(|(a, b)| commands::same(a, b));
+        if same {
+            self.cfg.keymap.remove(&cmd.id());
+        } else {
+            self.cfg.keymap.insert(cmd.id(), keys.iter().map(commands::to_string).collect());
+        }
+        commands::set_keymap(&self.cfg.keymap);
+        self.cfg.save();
+    }
+
+    /// Set key `slot` of `cmd` (None = add one). A command that had this key loses it.
+    pub fn assign_shortcut(
+        &mut self,
+        cmd: Command,
+        slot: Option<usize>,
+        key: egui::KeyboardShortcut,
+        ctx: &egui::Context,
+    ) {
+        let mut taken = Vec::new();
+        for &other in commands::ALL {
+            let keys = other.shortcuts();
+            if other != cmd && keys.iter().any(|k| commands::same(k, &key)) {
+                self.set_shortcuts(other, keys.into_iter().filter(|k| !commands::same(k, &key)).collect());
+                taken.push(other.label());
+            }
+        }
+        let mut keys = cmd.shortcuts();
+        match slot {
+            Some(i) if i < keys.len() => keys[i] = key,
+            _ => keys.push(key),
+        }
+        // A key listed twice (re-recorded onto another slot of the same command) counts once.
+        let mut seen: Vec<egui::KeyboardShortcut> = Vec::new();
+        keys.retain(|k| {
+            let new = !seen.iter().any(|s| commands::same(s, k));
+            seen.push(*k);
+            new
+        });
+        self.set_shortcuts(cmd, keys);
+        if !taken.is_empty() {
+            let k = commands::format_shortcut(ctx, &key);
+            self.info(format!("{k} moved here from “{}”", taken.join("”, “")));
+        }
     }
 
     /// Switch the folder color scheme; colored folders crossfade to their new colors.

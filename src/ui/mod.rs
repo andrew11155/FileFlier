@@ -12,6 +12,7 @@ mod popups;
 mod preview_view;
 mod quicklook;
 mod settings;
+mod shortcuts;
 mod sidebar;
 pub mod tint;
 mod update;

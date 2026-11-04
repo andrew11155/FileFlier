@@ -209,6 +209,13 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 
 ## Keyboard shortcuts
 
+These are the defaults. Press `F1` for an overlay listing every command with
+its keys: type to search (by name or by key, like "ctrl+shift"), press `Enter`
+or ▶ to run a command, click a key to record a new one, right-click it to
+remove it, and `+` to add another. A key that's already taken moves to the new
+command. ↺ puts one command back to its defaults, and *Reset all* resets
+everything. Changed keys are saved in File Flier's settings.
+
 | Keys | Action |
 | --- | --- |
 | `↑ ↓ PgUp PgDn Home End` | Move the cursor (hold `Shift` to select) |
@@ -241,7 +248,7 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | `Ctrl+Z` | Undo |
 | `Ctrl+,` | Settings |
 | `Ctrl +` / `Ctrl −` / `Ctrl 0` | Interface size |
-| `F1` | List all shortcuts |
+| `F1` | Shortcuts overlay: search, run and change shortcuts |
 
 ## Installing
 
