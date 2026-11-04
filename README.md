@@ -18,6 +18,12 @@ the same on every desktop environment.
 - **Tabs and split panes.** Each pane has its own tab strip. You can drag tabs
   to reorder them, middle-click to close them, and lock a tab so that opening
   a folder from it creates a new tab.
+- **Tab tiling.** Drag a tab onto the left, right, top or bottom edge of any
+  pane to split that pane and show the tab beside it, as in Vivaldi. Build
+  any grid you like: drop a tab in the middle of a pane, or on its tab strip,
+  to move it there. Drag the dividers to resize. Closing a pane's last tab
+  closes the pane. `Ctrl+\` hides every pane but the current one and brings
+  them back, and `Tab` moves between panes. The layout is remembered.
 - **Three views.** Details (Name / Type / Items / Size / Modified), multi-column
   List, and Grid with image thumbnails.
 - **Instant filter.** Start typing to fuzzy-filter the current folder. The
@@ -179,7 +185,7 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | *type anything* | Filter the current folder (`Esc` clears it) |
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
 | `Ctrl+Tab` | Next tab |
-| `Ctrl+\` / `Tab` | Toggle split view / switch pane |
+| `Ctrl+\` / `Tab` | Hide or show the other panes / next pane |
 | `Ctrl+Shift+P` or `Ctrl+K` | Command palette |
 | `Ctrl+F` | Recursive search |
 | `Ctrl+L` | Go to a path |
