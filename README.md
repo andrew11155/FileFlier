@@ -86,6 +86,14 @@ the same on every desktop environment.
   with an option to apply the choice to every conflict. *Replace* moves the
   existing item to the trash rather than deleting it, and `Ctrl+Z` puts
   everything back.
+- **Folder colors.** Right-click a folder and pick one of eight
+  colors (or none) from the *Color* row; every selected folder gets it, and
+  the icon fades to the new color with a little pop. Colors show in every
+  view, the columns view and tabs, follow a folder when you rename it in File
+  Flier, and are kept in File Flier's settings.
+  *Settings → Folder colors* picks the scheme they're drawn in: **Pastel**,
+  **Vivid** (a more saturated rainbow), **Dracula**, **Nord** or **Gruvbox**.
+  Folders keep their color (red stays red) and fade into the new scheme.
 - **Compress and extract.** Right-click → *Compress to ZIP* zips the selection.
   *Extract here* unpacks ZIP, tar, tar.gz and gzip files; 7z, RAR, tar.xz,
   tar.zst and more work when `bsdtar` is installed (it's included in the

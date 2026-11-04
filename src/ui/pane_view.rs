@@ -432,6 +432,12 @@ impl FileFlier {
         let tab = self.panes[idx].tab_mut();
         let counts = &mut self.item_counts;
         let thumbs = &mut self.pv.thumbs;
+        let tints = super::tint::Tints::new(
+            &self.cfg.folder_colors,
+            self.cfg.folder_scheme,
+            &self.tint_anims,
+            ctx.input(|i| i.time),
+        );
         // The tree view is the details view with folders that open in place.
         let tree = tab.view == ViewMode::Tree;
         // The columns view's middle column is a one-column list.
@@ -767,7 +773,7 @@ impl FileFlier {
                                         if multi && selected {
                                             checkbox(p, icon, true, pal, on_accent);
                                         } else if e.is_dir {
-                                            icons::folder(p, icon, pal);
+                                            tints.folder(p, icon, pal, &e.path);
                                         } else {
                                             icons::file(p, icon, file_kind(e), pal);
                                         }
@@ -917,7 +923,7 @@ impl FileFlier {
                                         if !drew {
                                             let icon = Rect::from_center_size(thumb.center(), vec2(gs.icon, gs.icon));
                                             if e.is_dir {
-                                                icons::folder(p, icon, pal);
+                                                tints.folder(p, icon, pal, &e.path);
                                             } else {
                                                 icons::file(p, icon, file_kind(e), pal);
                                             }
@@ -969,6 +975,9 @@ impl FileFlier {
             )
             .inner;
         ctx.data_mut(|d| d.insert_temp(key, (out.state.offset.y, out.inner_rect.height())));
+        if tints.animating.get() {
+            ctx.request_repaint();
+        }
         self.renaming = renaming;
         if let Some(commit) = rename_done {
             self.finish_rename(commit);
@@ -1055,7 +1064,31 @@ impl FileFlier {
                     tab.scroll_to_cursor = false;
                     self.actions.push(Action::Activate(idx));
                     let flat = tab.flat;
-                    self.actions.push(Action::OpenMenu(pos, entry_menu(is_dir, archive, flat)));
+                    let mut items = entry_menu(is_dir, archive, flat);
+                    if is_dir {
+                        // Color every selected folder (files in the selection are left alone).
+                        let folders: Vec<PathBuf> = tab
+                            .visible
+                            .iter()
+                            .map(|&i| &tab.entries[i])
+                            .filter(|e| e.is_dir && tab.selected.contains(&e.path))
+                            .map(|e| e.path.clone())
+                            .collect();
+                        let folders = if folders.is_empty() {
+                            tab.entry_at(vi).map(|e| vec![e.path.clone()]).unwrap_or_default()
+                        } else {
+                            folders
+                        };
+                        let current = folders
+                            .first()
+                            .and_then(|p| p.to_str())
+                            .and_then(|k| self.cfg.folder_colors.get(k).copied());
+                        // Between Compress and the preview toggle, in a section of its own.
+                        let at = items.len() - 2;
+                        items.insert(at, MenuItem::Colors(folders, current));
+                        items.insert(at, MenuItem::Sep);
+                    }
+                    self.actions.push(Action::OpenMenu(pos, items));
                 }
                 ItemAction::Open(vi) => {
                     tab.move_cursor(vi, false);

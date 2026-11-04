@@ -128,6 +128,8 @@ pub enum MenuItem {
     CloudSignOut(String),
     /// A command shown as one of a set of choices, ticked when it's the current one.
     Choice(Command, bool),
+    /// A row of folder-color swatches for these folders (with their current color).
+    Colors(Vec<PathBuf>, Option<u8>),
     Sep,
 }
 
@@ -161,6 +163,8 @@ pub enum Action {
     Reveal(PathBuf),
     /// Show a short notification.
     Toast(String),
+    /// Give folders a color (an index into the pale rainbow), or none.
+    ColorFolders(Vec<PathBuf>, Option<u8>),
     TrashPaths(Vec<PathBuf>),
     MountVolume(String),
     EjectVolume(crate::udisks::Volume),
@@ -231,6 +235,8 @@ pub struct FileFlier {
     /// Whether the current toast offers an Undo button.
     pub toast_undo: bool,
     pub quicklook: bool,
+    /// Folders whose color is changing (for the animation).
+    pub tint_anims: crate::ui::tint::TintAnims,
     /// The video playing in Quick Look.
     pub ql_player: Option<crate::preview::player::Player>,
     pub renaming: Option<Renaming>,
@@ -333,6 +339,7 @@ impl FileFlier {
             toast_undo: false,
             quicklook: false,
             ql_player: None,
+            tint_anims: Default::default(),
             renaming: None,
             mounted_at: Default::default(),
             native: None,
@@ -719,6 +726,7 @@ impl FileFlier {
         });
         match res {
             Ok(()) => {
+                self.carry_folder_color(&rn.path, &target);
                 self.info_undoable(
                     format!("Renamed to {name}"),
                     UndoOp::Rename { from: rn.path.clone(), to: target.clone() },
@@ -1171,6 +1179,63 @@ impl FileFlier {
         }
         self.cfg.save();
         self.resort_all();
+    }
+
+    /// A folder (or one inside it) was renamed: its color goes with it.
+    pub fn carry_folder_color(&mut self, from: &Path, to: &Path) {
+        let (Some(from_s), Some(_)) = (from.to_str(), to.to_str()) else { return };
+        let moved: Vec<(String, u8)> = self
+            .cfg
+            .folder_colors
+            .iter()
+            .filter(|(k, _)| Path::new(k.as_str()).starts_with(from_s))
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        for (k, v) in moved {
+            self.cfg.folder_colors.remove(&k);
+            if let Ok(rest) = Path::new(&k).strip_prefix(from)
+                && let Some(new) = to.join(rest).to_str()
+            {
+                self.cfg.folder_colors.insert(new.trim_end_matches('/').to_string(), v);
+            }
+        }
+        self.cfg.save();
+    }
+
+    /// Set (or clear) the color of folders, animating the change.
+    pub fn color_folders(&mut self, paths: Vec<PathBuf>, color: Option<u8>, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        self.tint_anims.retain(|_, (_, start)| now - *start < 1.0);
+        for p in &paths {
+            let Some(key) = p.to_str().map(str::to_string) else { continue };
+            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, p);
+            match color {
+                Some(c) => self.cfg.folder_colors.insert(key, c),
+                None => self.cfg.folder_colors.remove(&key),
+            };
+            if before != crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, p) {
+                self.tint_anims.insert(p.clone(), (before, now));
+            }
+        }
+        self.cfg.save();
+        ctx.request_repaint();
+    }
+
+    /// Switch the folder color scheme; colored folders crossfade to their new colors.
+    pub fn set_folder_scheme(&mut self, scheme: u8, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let old = self.cfg.folder_scheme;
+        for k in self.cfg.folder_colors.keys() {
+            let p = PathBuf::from(k);
+            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, old, &p);
+            self.tint_anims.insert(p, (before, now));
+        }
+        self.cfg.folder_scheme = scheme;
+        self.cfg.save();
+        ctx.request_repaint();
     }
 
     /// Apply a new sort order (flat views are sorted in place, not rescanned).
@@ -1627,6 +1692,7 @@ impl FileFlier {
                     });
                 }
                 Action::Toast(msg) => self.info(msg),
+                Action::ColorFolders(paths, color) => self.color_folders(paths, color, ctx),
                 Action::Reveal(p) => {
                     if let Some(dir) = p.parent().map(Path::to_path_buf) {
                         self.navigate(dir);

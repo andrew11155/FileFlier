@@ -104,6 +104,10 @@ pub struct Config {
     /// How panes are tiled. Pane 0 is where a new window starts; the others open at home
     /// unless the session is restored.
     pub layout: Option<crate::layout::Layout>,
+    /// Folder colors chosen by the user: folder path -> color slot (red, orange, …).
+    pub folder_colors: std::collections::BTreeMap<String, u8>,
+    /// Which scheme the folder color slots are drawn in (see `ui::tint::SCHEMES`).
+    pub folder_scheme: u8,
     pub collapsed: Vec<String>,
     pub inspector_width: f32,
     /// Render office documents as pages with LibreOffice when it's installed.
@@ -155,6 +159,8 @@ impl Default for Config {
             sidebar_width: 230.0,
             split_ratio: 0.5,
             layout: None,
+            folder_colors: Default::default(),
+            folder_scheme: 0,
             collapsed: vec!["Recents".into()],
             inspector_width: 340.0,
             office_previews: true,

@@ -34,6 +34,7 @@ impl FileFlier {
             p.update(ctx);
         }
         let mut player = self.ql_player.take();
+        let tint = super::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, &e.path);
         let loading = self.pv.is_loading();
         let mut view = std::mem::take(&mut self.ql_view);
         let mut nav = None;
@@ -82,7 +83,7 @@ impl FileFlier {
             let header = Rect::from_min_size(r.min, vec2(r.width(), 64.0));
             let icon = Rect::from_center_size(pos2(header.left() + 34.0, header.center().y), vec2(30.0, 30.0));
             if e.is_dir {
-                icons::folder(&p, icon, pal);
+                icons::folder_tinted(&p, icon, pal, tint);
             } else {
                 icons::file(&p, icon, file_kind(&e), pal);
             }

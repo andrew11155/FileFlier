@@ -13,6 +13,7 @@ mod preview_view;
 mod quicklook;
 mod settings;
 mod sidebar;
+pub mod tint;
 mod update;
 
 use std::sync::Arc;

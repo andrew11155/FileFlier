@@ -133,7 +133,13 @@ impl FileFlier {
             }
 
             let icon = Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), vec2(18.0, 18.0));
-            icons::folder(&painter, icon, pal);
+            super::tint::Tints::new(
+                &self.cfg.folder_colors,
+                self.cfg.folder_scheme,
+                &self.tint_anims,
+                ui.input(|i| i.time),
+            )
+            .folder(&painter, icon, pal, &tab.path);
             if tab.locked {
                 let lr = Rect::from_center_size(pos2(r.left() + 27.0, r.center().y + 5.0), vec2(10.0, 10.0));
                 painter.circle_filled(lr.center(), 6.0, if is_active { pal.bg } else { pal.titlebar });

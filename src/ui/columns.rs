@@ -87,6 +87,7 @@ impl FileFlier {
     ) {
         let pal = self.pal();
         let list = self.listing(dir);
+        let now = ui.input(|i| i.time);
         let row_h = self.cfg.density.row_height();
         let id = Id::new(("miller", idx, key));
         // Scroll the highlighted item into view when it changes.
@@ -134,7 +135,8 @@ impl FileFlier {
                     let color = if e.is_hidden() { pal.text.gamma_multiply(0.55) } else { pal.text };
                     let icon = Rect::from_center_size(pos2(item.left() + 16.0, item.center().y), vec2(18.0, 18.0));
                     if e.is_dir {
-                        icons::folder(p, icon, pal);
+                        super::tint::Tints::new(&self.cfg.folder_colors, self.cfg.folder_scheme, &self.tint_anims, now)
+                            .folder(p, icon, pal, &e.path);
                         let cr = Rect::from_center_size(pos2(item.right() - 10.0, item.center().y), vec2(12.0, 12.0));
                         icons::chevron_right(p, cr, pal.text_dim);
                     } else {
