@@ -62,7 +62,12 @@ pub fn text(p: &Painter, pos: egui::Pos2, align: Align2, s: impl ToString, size:
 
 /// Single-line text truncated with an ellipsis to `max_w`.
 pub fn elided(p: &Painter, s: &str, size: f32, color: Color32, max_w: f32) -> Arc<Galley> {
-    let mut job = LayoutJob::simple_singleline(s.to_string(), font(size), color);
+    elided_in(p, s, font(size), color, max_w)
+}
+
+/// Like [`elided`], in any font.
+pub fn elided_in(p: &Painter, s: &str, font: FontId, color: Color32, max_w: f32) -> Arc<Galley> {
+    let mut job = LayoutJob::simple_singleline(s.to_string(), font, color);
     job.wrap = TextWrapping::truncate_at_width(max_w.max(8.0));
     p.layout_job(job)
 }

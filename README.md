@@ -202,7 +202,9 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   and GNOME Light and GNOME Dark. The GNOME themes use libadwaita's colors
   and go further than colors, to sit in with GNOME Files and other GNOME
   apps: rounder corners on rows, tabs, buttons and menus, Adwaita-style
-  folders in your accent color (blue unless you pick another), and a sidebar that marks the current place with a highlight only.
+  folders in your accent color (blue unless you pick another), a sidebar that marks the current place with a highlight only, and sidebar
+  text in your desktop's interface font at its size (Adwaita Sans, or
+  whatever GNOME's font setting names, e.g. Ubuntu Sans).
 - **Icons:** File Flier's own, or **GNOME**: the icons of GNOME's Adwaita
   icon theme (by the GNOME Project), read from the copy installed on your
   system. Folders get Adwaita's folder icons, recolored to the theme's folder

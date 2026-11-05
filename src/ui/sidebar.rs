@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 
-use egui::{Align2, CursorIcon, Id, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::{Align2, CursorIcon, FontId, Id, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 
-use super::{elided, search_box, text};
+use super::{search_box, text};
 use crate::app::{Action, DragPaths, DropTarget, FileFlier, MenuItem, display_name};
 use crate::fuzzy;
 use crate::icons::{self, Place};
@@ -343,7 +343,12 @@ impl FileFlier {
                         other => icons::place(p, ir, other, pal),
                     }
                     let hc = if hresp.hovered() { pal.text_strong } else { pal.text_dim };
-                    super::text_bold(p, pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, title, 13.0, hc);
+                    let hf = if pal.gnome {
+                        FontId::new(13.0, egui::FontFamily::Name(crate::theme::GNOME_UI_BOLD.into()))
+                    } else {
+                        super::bold(13.0)
+                    };
+                    p.text(pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, title, hf, hc);
                     let cr = Rect::from_center_size(pos2(hr.right() - 14.0, hr.center().y), vec2(16.0, 16.0));
                     if collapsed {
                         icons::chevron_right(p, cr, pal.text_dim);
@@ -468,7 +473,14 @@ impl FileFlier {
                         }
                         let label_x = r.left() + 48.0 + indent;
                         let size = if item.depth > 0 { 13.5 } else { 14.0 };
-                        let g = elided(p, &item.label, size, color, r.right() - label_x - 6.0 - eject_w);
+                        // The GNOME themes use the desktop's font, at its size, as GNOME Files does.
+                        let font = if pal.gnome {
+                            let size = crate::theme::gnome_font_size() - if item.depth > 0 { 0.5 } else { 0.0 };
+                            FontId::new(size, egui::FontFamily::Name(crate::theme::GNOME_UI.into()))
+                        } else {
+                            super::font(size)
+                        };
+                        let g = super::elided_in(p, &item.label, font, color, r.right() - label_x - 6.0 - eject_w);
                         p.galley(pos2(label_x, text_y - g.size().y / 2.0), g, color);
                         if let Some(u) = item.space.map(|s| s.used()) {
                             let bar = Rect::from_min_size(
