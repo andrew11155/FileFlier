@@ -122,6 +122,16 @@ the same on every desktop environment.
     part of every name instead. Extensions are kept, a preview lists each old
     and new name, and names that would clash are caught before anything
     changes. One `Ctrl+Z` undoes the whole batch.
+  - **Dropbox.** With the Dropbox desktop app running, files in your Dropbox
+    get sync badges (green: up to date, blue: syncing, red: can't sync), and
+    the right-click menu shows Dropbox's own items for them: *Copy Dropbox
+    link* (copied straight to the clipboard), *Share…*, *Version history*,
+    *View on Dropbox.com* and whatever else Dropbox offers. Folders also get
+    *Keep online only*, which stops syncing them on this computer (Dropbox
+    for Linux has no online-only files, so the local copy goes; it stays in
+    your Dropbox). Right-click an empty spot in a Dropbox folder → *Dropbox
+    folders not synced here…* to sync them again. File Flier talks to the
+    Dropbox app over its local socket, as Dropbox's Nautilus extension does.
 
   Ratings and tags are stored on the files themselves, as the extended
   attributes KDE's Dolphin uses (`user.baloo.rating`, `user.xdg.tags`), so

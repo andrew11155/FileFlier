@@ -438,6 +438,7 @@ impl FileFlier {
         let date_style = self.cfg.date_style;
         let show_rating = self.cfg.ext_on(crate::ext::Ext::Ratings);
         let show_tags = self.cfg.ext_on(crate::ext::Ext::Tags);
+        let show_dropbox = self.cfg.ext_on(crate::ext::Ext::Dropbox);
         let ctx = ui.ctx().clone();
         let cut_paths: Vec<PathBuf> =
             self.clipboard.as_ref().filter(|c| c.cut).map(|c| c.paths.clone()).unwrap_or_default();
@@ -807,10 +808,15 @@ impl FileFlier {
                                         );
                                         if multi && selected {
                                             checkbox(p, icon, true, pal, on_accent);
-                                        } else if e.is_dir {
-                                            tints.folder(p, icon, pal, &e.path);
                                         } else {
-                                            icons::file(p, icon, file_kind(e), pal);
+                                            if e.is_dir {
+                                                tints.folder(p, icon, pal, &e.path);
+                                            } else {
+                                                icons::file(p, icon, file_kind(e), pal);
+                                            }
+                                            if show_dropbox && let Some(s) = crate::dropbox::status(&e.path, &ctx) {
+                                                crate::dropbox::badge(p, icon, s, pal.bg);
+                                            }
                                         }
                                         let name_right = if view == ViewMode::Details {
                                             cols.name - 8.0
@@ -981,13 +987,21 @@ impl FileFlier {
                                             drew = true;
                                         }
                                         let p = ui.painter();
+                                        let icon = Rect::from_center_size(thumb.center(), vec2(gs.icon, gs.icon));
                                         if !drew {
-                                            let icon = Rect::from_center_size(thumb.center(), vec2(gs.icon, gs.icon));
                                             if e.is_dir {
                                                 tints.folder(p, icon, pal, &e.path);
                                             } else {
                                                 icons::file(p, icon, file_kind(e), pal);
                                             }
+                                        }
+                                        if show_dropbox && let Some(s) = crate::dropbox::status(&e.path, &ctx) {
+                                            crate::dropbox::badge(
+                                                p,
+                                                if drew { thumb.shrink(4.0) } else { icon },
+                                                s,
+                                                pal.bg,
+                                            );
                                         }
                                         let g = wrapped(p, &e.name, 13.0, color, item.width() - 8.0, 2);
                                         let ty = thumb.bottom() + 6.0;
@@ -1163,10 +1177,29 @@ impl FileFlier {
                     }
                     if self.cfg.ext_on(crate::ext::Ext::Ratings) {
                         let current = targets.first().map_or(0, |p| self.meta.rating(p));
-                        items.insert(at, MenuItem::Rating(targets, current));
+                        items.insert(at, MenuItem::Rating(targets.clone(), current));
                     }
                     if items.len() - 2 != at {
                         items.insert(at, MenuItem::Sep);
+                    }
+                    // Dropbox: its own items for these files, in a section of their own.
+                    if self.cfg.ext_on(crate::ext::Ext::Dropbox)
+                        && !targets.is_empty()
+                        && targets.iter().all(|p| crate::dropbox::inside(p))
+                    {
+                        let mut dbx: Vec<MenuItem> = crate::dropbox::options(&targets)
+                            .into_iter()
+                            .map(|o| MenuItem::Dropbox(o.label, o.verb, targets.clone()))
+                            .collect();
+                        let folders = targets.iter().all(|p| p.is_dir() && !crate::dropbox::roots().contains(p));
+                        if folders && !dbx.is_empty() {
+                            dbx.push(MenuItem::DropboxUnsync(targets.clone()));
+                        }
+                        if !dbx.is_empty() {
+                            let at = items.len() - 2;
+                            dbx.insert(0, MenuItem::Sep);
+                            items.splice(at..at, dbx);
+                        }
                     }
                     self.actions.push(Action::OpenMenu(pos, items));
                 }
@@ -1183,7 +1216,12 @@ impl FileFlier {
                 ItemAction::BackgroundContext(pos) => {
                     tab.selected.clear();
                     self.actions.push(Action::Activate(idx));
-                    self.actions.push(Action::OpenMenu(pos, background_menu()));
+                    let mut items = background_menu();
+                    if self.cfg.ext_on(crate::ext::Ext::Dropbox) && crate::dropbox::inside(&tab.path) {
+                        items.push(MenuItem::Sep);
+                        items.push(MenuItem::DropboxExcluded);
+                    }
+                    self.actions.push(Action::OpenMenu(pos, items));
                 }
                 ItemAction::ClearSelection => tab.selected.clear(),
                 ItemAction::Rate(p, n) => self.actions.push(Action::Rate(vec![p], n)),

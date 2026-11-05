@@ -101,6 +101,10 @@ pub enum Dialog {
     /// Tags extension: add, rename, recolor and delete tags.
     ManageTags(crate::ui::tags::ManageTags),
     BatchRename(crate::ui::batch_rename::BatchRename),
+    /// Dropbox folders not synced on this computer (or why they couldn't be listed).
+    DropboxExcluded(Result<Vec<PathBuf>, String>),
+    /// Confirm keeping these Dropbox folders online only.
+    DropboxUnsync(Vec<PathBuf>),
 }
 
 /// What to do when a pasted item's name is already taken.
@@ -147,6 +151,12 @@ pub enum MenuItem {
     Colors(Vec<PathBuf>, Option<u8>),
     /// A row of stars rating these items (Ratings extension), with their current rating.
     Rating(Vec<PathBuf>, u8),
+    /// A Dropbox item (Dropbox extension): label, verb, the items it's for.
+    Dropbox(String, String, Vec<PathBuf>),
+    /// Stop syncing these Dropbox folders on this computer.
+    DropboxUnsync(Vec<PathBuf>),
+    /// The list of Dropbox folders not synced here.
+    DropboxExcluded,
     Sep,
 }
 
@@ -1961,6 +1971,16 @@ impl eframe::App for FileFlier {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         crate::system_icons::set_enabled(self.cfg.gnome_icons, &ctx);
+        for e in crate::dropbox::events() {
+            match e {
+                crate::dropbox::Event::Link(link) => {
+                    ctx.copy_text(link);
+                    self.info("Dropbox link copied");
+                }
+                crate::dropbox::Event::Info(m) => self.info(m),
+                crate::dropbox::Event::Error(m) => self.error(m),
+            }
+        }
         if self.native.is_none() {
             self.native = Some(crate::native::Native::new(frame, &ctx));
         }

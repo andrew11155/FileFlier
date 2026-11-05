@@ -147,6 +147,9 @@ impl FileFlier {
                 MenuItem::Unbookmark(_) => fuzzy::score(&q, "Remove bookmark").is_some(),
                 MenuItem::CloudDisconnect(_) => fuzzy::score(&q, "Disconnect").is_some(),
                 MenuItem::CloudSignOut(_) => fuzzy::score(&q, "Sign out").is_some(),
+                MenuItem::Dropbox(l, ..) => fuzzy::score(&q, l).is_some(),
+                MenuItem::DropboxUnsync(_) => fuzzy::score(&q, "Keep online only").is_some(),
+                MenuItem::DropboxExcluded => fuzzy::score(&q, "Dropbox folders not synced").is_some(),
             })
             .collect();
         let selectable: Vec<usize> = entries
@@ -218,6 +221,11 @@ impl FileFlier {
                         MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
                         MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
                         MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
+                        MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
+                        MenuItem::DropboxUnsync(_) => {
+                            ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
+                        }
+                        MenuItem::DropboxExcluded => ("Dropbox folders not synced here…".into(), vec![], RowIcon::None),
                         MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
                     };
                     let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
@@ -270,6 +278,11 @@ impl FileFlier {
             Some(MenuItem::Unbookmark(p)) => self.toggle_bookmark(p),
             Some(MenuItem::CloudDisconnect(n)) => self.cloud_disconnect(n, false),
             Some(MenuItem::CloudSignOut(n)) => self.cloud_disconnect(n, true),
+            Some(MenuItem::Dropbox(_, verb, paths)) => crate::dropbox::run(paths, verb, ctx),
+            Some(MenuItem::DropboxUnsync(paths)) => self.dialog = Some(Dialog::DropboxUnsync(paths)),
+            Some(MenuItem::DropboxExcluded) => {
+                self.dialog = Some(Dialog::DropboxExcluded(crate::dropbox::excluded()));
+            }
             _ => {}
         }
     }
@@ -1022,6 +1035,16 @@ impl FileFlier {
             }
             Dialog::TagFiles { paths, new_tag, error } => {
                 if modal(ctx, "tag_files", 460.0, pal, &fx, |ui| self.tag_files_ui(ui, paths, new_tag, error)) {
+                    keep = false;
+                }
+            }
+            Dialog::DropboxUnsync(paths) => {
+                if modal(ctx, "dropbox_unsync", 460.0, pal, &fx, |ui| self.dropbox_unsync_ui(ui, paths)) {
+                    keep = false;
+                }
+            }
+            Dialog::DropboxExcluded(list) => {
+                if modal(ctx, "dropbox_excluded", 560.0, pal, &fx, |ui| self.dropbox_excluded_ui(ui, list)) {
                     keep = false;
                 }
             }

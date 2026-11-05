@@ -7,6 +7,7 @@ mod cloud;
 mod columns;
 pub(crate) mod corners;
 mod dnd;
+mod dropbox;
 pub mod glass;
 mod inspector;
 mod pane_view;
