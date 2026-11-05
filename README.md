@@ -108,8 +108,8 @@ the same on every desktop environment.
     new one. Tags show as colored dots after the name and as chips in the
     preview panel. The sidebar's *Tags* list shows every tag with how many
     files have it: click one to list those files, wherever they are, or drop
-    files on it to tag them. *Manage tags…* renames, recolors (any color) and
-    deletes tags.
+    files on it to tag them. *Manage tags…* (right-click the *Tags* header or a
+    tag, or the command palette) renames, recolors (any color) and deletes tags.
 
   Ratings and tags are stored on the files themselves, as the extended
   attributes KDE's Dolphin uses (`user.baloo.rating`, `user.xdg.tags`), so

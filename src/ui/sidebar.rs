@@ -34,8 +34,6 @@ struct Item {
     add_cloud: bool,
     /// A tag (Tags extension): its name, color and how many files have it.
     tag: Option<(String, egui::Color32, usize)>,
-    /// The "Manage tags…" row.
-    manage_tags: bool,
     /// Nesting level in a folder tree (0 = the section's own rows).
     depth: usize,
     /// A folder that can be expanded to show its subfolders.
@@ -285,7 +283,7 @@ impl FileFlier {
         ];
         let current_tag = self.tab().tag.clone();
         if self.cfg.ext_on(crate::ext::Ext::Tags) {
-            let mut tags: Vec<Item> = self
+            let tags: Vec<Item> = self
                 .meta
                 .tags
                 .iter()
@@ -295,7 +293,6 @@ impl FileFlier {
                     ..Default::default()
                 })
                 .collect();
-            tags.push(Item { label: "Manage tags…".into(), manage_tags: true, ..Default::default() });
             sections.push(("Tags", Place::Bookmark, filt(tags)));
         }
         let order = &self.cfg.sidebar_order;
@@ -385,12 +382,23 @@ impl FileFlier {
                     if hresp.clicked() {
                         toggles.push(title.to_string());
                     }
+                    // Tags are managed from the Tags header's menu.
+                    if title == "Tags" && hresp.secondary_clicked() {
+                        let pos = hresp.interact_pointer_pos().unwrap_or(hr.center());
+                        actions.push(Action::OpenMenu(pos, vec![MenuItem::Cmd(crate::commands::Command::ManageTags)]));
+                    }
                     if collapsed {
                         continue;
                     }
-                    if items.is_empty() && title == "Bookmarks" {
+                    if items.is_empty() && (title == "Bookmarks" || title == "Tags") && q.is_empty() {
                         let (r, _) = ui.allocate_exact_size(vec2(w, ITEM_H - 4.0), Sense::hover());
-                        let hint = if dragging { "Drop folders here" } else { "Ctrl+D to bookmark" };
+                        let hint = if title == "Tags" {
+                            "Right-click Tags to add tags"
+                        } else if dragging {
+                            "Drop folders here"
+                        } else {
+                            "Ctrl+D to bookmark"
+                        };
                         text(
                             ui.painter(),
                             pos2(r.left() + 40.0, r.center().y),
@@ -414,12 +422,12 @@ impl FileFlier {
                         let r = r.shrink2(vec2(6.0, gap));
                         let is_current = match &item.tag {
                             Some((name, ..)) => current_tag.as_deref() == Some(name.as_str()),
-                            None => current_tag.is_none() && item.path == current && !item.more && !item.manage_tags,
+                            None => current_tag.is_none() && item.path == current && !item.more,
                         };
                         let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty())
                             || item.offline
                             || item.add_cloud;
-                        let droppable = !unmounted && !item.more && item.tag.is_none() && !item.manage_tags;
+                        let droppable = !unmounted && !item.more && item.tag.is_none();
                         let drop_hover = droppable && resp.dnd_hover_payload::<DragPaths>().is_some();
                         let indent = item.depth as f32 * INDENT;
                         let p = ui.painter();
@@ -476,7 +484,7 @@ impl FileFlier {
                         let ir = Rect::from_center_size(pos2(r.left() + 32.0 + indent, text_y), vec2(isz, isz));
                         if let Some((_, c, _)) = &item.tag {
                             p.circle_filled(ir.center(), 6.0, *c);
-                        } else if item.add_cloud || item.manage_tags {
+                        } else if item.add_cloud {
                             let c = if resp.hovered() { pal.text_strong } else { pal.text_dim };
                             if !crate::system_icons::symbolic(p, ir, "list-add-symbolic", c) {
                                 icons::plus(p, ir.shrink(2.0), c);
@@ -487,7 +495,7 @@ impl FileFlier {
                         let ejectable = item.volume.as_ref().is_some_and(|v| v.removable && !v.mount_points.is_empty());
                         let color = if is_current {
                             pal.text_strong
-                        } else if unmounted || item.more || item.manage_tags {
+                        } else if unmounted || item.more {
                             pal.text_dim
                         } else {
                             pal.text
@@ -581,12 +589,6 @@ impl FileFlier {
                                 let pos = resp.interact_pointer_pos().unwrap_or(r.center());
                                 let m = vec![MenuItem::Cmd(crate::commands::Command::ManageTags)];
                                 actions.push(Action::OpenMenu(pos, m));
-                            }
-                            continue;
-                        }
-                        if item.manage_tags {
-                            if resp.on_hover_text("Add, rename, recolor or delete tags").clicked() {
-                                actions.push(Action::Run(crate::commands::Command::ManageTags));
                             }
                             continue;
                         }
