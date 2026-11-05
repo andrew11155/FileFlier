@@ -8,9 +8,59 @@ use egui::{
 
 use super::{elided, icon_button};
 use crate::app::{Action, CONTROLS_W, DragPaths, DropTarget, FileFlier, TRAFFIC_LIGHTS_W, plural};
+use crate::config::TitleIcon;
 use crate::icons;
 
 pub(crate) const TAB_H: f32 = 32.0;
+
+/// A window button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum WinButton {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// File Flier's own buttons, on the right.
+const OWN_BUTTONS: [WinButton; 3] = [WinButton::Minimize, WinButton::Maximize, WinButton::Close];
+
+/// Room for one native button: a 24 point circle and the gap to the next.
+const NATIVE_SLOT: f32 = 34.0;
+
+fn native_w(n: usize) -> f32 {
+    if n == 0 { 0.0 } else { n as f32 * NATIVE_SLOT + 6.0 }
+}
+
+/// GNOME's window button layout (`button-layout`, e.g. "appmenu:minimize,close"):
+/// the buttons on the left and on the right.
+fn button_layout() -> &'static (Vec<WinButton>, Vec<WinButton>) {
+    static LAYOUT: std::sync::OnceLock<(Vec<WinButton>, Vec<WinButton>)> = std::sync::OnceLock::new();
+    LAYOUT.get_or_init(|| {
+        let s = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.wm.preferences", "button-layout"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok());
+        parse_layout(s.as_deref().unwrap_or(":minimize,maximize,close"))
+    })
+}
+
+fn parse_layout(s: &str) -> (Vec<WinButton>, Vec<WinButton>) {
+    let s = s.trim().trim_matches('\'');
+    let (left, right) = s.split_once(':').unwrap_or(("", s));
+    let side = |x: &str| {
+        x.split(',')
+            .filter_map(|b| match b.trim() {
+                "minimize" => Some(WinButton::Minimize),
+                "maximize" => Some(WinButton::Maximize),
+                "close" => Some(WinButton::Close),
+                _ => None,
+            })
+            .collect()
+    };
+    (side(left), side(right))
+}
 
 impl FileFlier {
     /// `strips` holds (pane index, left, right) for each visible pane column.
@@ -32,13 +82,38 @@ impl FileFlier {
             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
         }
 
+        // Window buttons: ours on the right, or GNOME's in the desktop's layout.
+        let native = self.cfg.native_buttons && !cfg!(target_os = "macos");
+        let (left_btns, right_btns): (&[WinButton], &[WinButton]) = if native {
+            let l = button_layout();
+            (&l.0, &l.1)
+        } else {
+            (&[], &OWN_BUTTONS)
+        };
+        let left_w = if native { native_w(left_btns.len()) } else { 0.0 };
+        let right_w = if native { native_w(right_btns.len()) } else { CONTROLS_W };
+
         // Logo + sidebar toggle. On macOS the native window buttons sit where the logo would.
         let logo_end = if cfg!(target_os = "macos") {
             rect.left() + TRAFFIC_LIGHTS_W
         } else {
-            let logo = Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(20.0, 20.0));
-            icons::logo(ui.painter(), logo, pal);
-            rect.left() + 44.0
+            let x = rect.left() + left_w;
+            let logo = Rect::from_center_size(pos2(x + 22.0, rect.center().y), vec2(20.0, 20.0));
+            let p = ui.painter();
+            match self.cfg.title_icon {
+                TitleIcon::Logo => icons::logo(p, logo, pal),
+                TitleIcon::Files => {
+                    let r = logo.expand(2.0);
+                    if !crate::system_icons::icon(p, r, "org.gnome.Nautilus")
+                        && !crate::system_icons::icon(p, r, "system-file-manager")
+                    {
+                        icons::logo(p, logo, pal);
+                    }
+                }
+                TitleIcon::Folder => icons::folder(p, logo, pal),
+                TitleIcon::None => {}
+            }
+            if self.cfg.title_icon == TitleIcon::None { x + 8.0 } else { x + 44.0 }
         };
         if sidebar_w > 90.0 {
             let r = Rect::from_center_size(pos2(rect.left() + sidebar_w - 22.0, rect.center().y), vec2(28.0, 28.0));
@@ -49,7 +124,7 @@ impl FileFlier {
             }
         }
 
-        let controls_left = rect.right() - CONTROLS_W;
+        let controls_left = rect.right() - right_w;
         let tabs_right = self.update_pill(ui, rect, controls_left).unwrap_or(controls_left);
         for &(idx, left, right) in strips {
             let left = left.max(logo_end) + 6.0;
@@ -58,8 +133,55 @@ impl FileFlier {
                 self.tab_strip(ui, idx, Rect::from_min_max(pos2(left, rect.top()), pos2(right, rect.bottom())));
             }
         }
-        if CONTROLS_W > 0.0 {
+        if native {
+            let left = Rect::from_min_max(rect.min, pos2(rect.left() + left_w, rect.bottom()));
+            self.native_controls(ui, left, left_btns, maximized);
+            let right = Rect::from_min_max(pos2(controls_left, rect.top()), rect.max);
+            self.native_controls(ui, right, right_btns, maximized);
+        } else if CONTROLS_W > 0.0 {
             self.window_controls(ui, Rect::from_min_max(pos2(controls_left, rect.top()), rect.max), maximized);
+        }
+    }
+
+    /// GNOME's (and Ubuntu's) window buttons: round, with the icon theme's symbols.
+    fn native_controls(&mut self, ui: &mut Ui, rect: Rect, buttons: &[WinButton], maximized: bool) {
+        let pal = self.pal();
+        let ctx = ui.ctx().clone();
+        for (i, &b) in buttons.iter().enumerate() {
+            let c = pos2(rect.left() + 3.0 + NATIVE_SLOT * (i as f32 + 0.5), rect.center().y);
+            let hit = Rect::from_center_size(c, vec2(NATIVE_SLOT, rect.height()));
+            let resp = ui.interact(hit, Id::new(("winctl_native", b)), Sense::click());
+            let alpha = if resp.is_pointer_button_down_on() {
+                0.3
+            } else if resp.hovered() {
+                0.15
+            } else {
+                0.1
+            };
+            let p = ui.painter();
+            p.circle_filled(c, 12.0, pal.text.gamma_multiply(alpha));
+            let name = match b {
+                WinButton::Minimize => "window-minimize-symbolic",
+                WinButton::Maximize if maximized => "window-restore-symbolic",
+                WinButton::Maximize => "window-maximize-symbolic",
+                WinButton::Close => "window-close-symbolic",
+            };
+            let ir = Rect::from_center_size(c, vec2(16.0, 16.0));
+            if !crate::system_icons::symbolic_always(p, ir, name, pal.text) {
+                let ir = ir.shrink(3.0);
+                match b {
+                    WinButton::Minimize => icons::minimize(p, ir, pal.text),
+                    WinButton::Maximize => icons::maximize(p, ir, pal.text, maximized),
+                    WinButton::Close => icons::close(p, ir, pal.text),
+                }
+            }
+            if resp.clicked() {
+                ctx.send_viewport_cmd(match b {
+                    WinButton::Minimize => ViewportCommand::Minimized(true),
+                    WinButton::Maximize => ViewportCommand::Maximized(!maximized),
+                    WinButton::Close => ViewportCommand::Close,
+                });
+            }
         }
     }
 
@@ -474,5 +596,18 @@ impl FileFlier {
         let at = pos + vec2(18.0, 14.0);
         painter.rect_filled(Rect::from_min_size(at, g.size()).expand2(vec2(8.0, 4.0)), 4.0, fill);
         painter.galley(at, g, fg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_button_layouts() {
+        use WinButton::*;
+        assert_eq!(parse_layout("':minimize,close'\n"), (vec![], vec![Minimize, Close]));
+        assert_eq!(parse_layout("'close,minimize,maximize:appmenu'"), (vec![Close, Minimize, Maximize], vec![]));
+        assert_eq!(parse_layout("'appmenu:close'"), (vec![], vec![Close]));
     }
 }

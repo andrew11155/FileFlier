@@ -4,7 +4,7 @@ use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, Str
 
 use super::{elided, text};
 use crate::app::FileFlier;
-use crate::config::{DateStyle, Density, Startup, ViewMode};
+use crate::config::{DateStyle, Density, Startup, TitleIcon, ViewMode};
 use crate::theme::{self, ACCENTS, Palette, ThemeId};
 
 const SCALES: [f32; 6] = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
@@ -14,6 +14,16 @@ fn section(ui: &mut Ui, pal: &Palette, title: &str) {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
     super::text_bold(ui.painter(), r.left_center(), Align2::LEFT_CENTER, title.to_uppercase(), 11.5, pal.text_dim);
     ui.add_space(2.0);
+}
+
+/// Whether GNOME is set to dark style (`color-scheme` is "prefer-dark").
+fn desktop_prefers_dark() -> bool {
+    std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .is_some_and(|s| s.contains("dark"))
 }
 
 /// A settings row: label (and optional hint) on the left, the control on the right.
@@ -335,6 +345,39 @@ impl FileFlier {
                     self.cfg.gnome_icons = i == 1;
                     crate::system_icons::set_enabled(self.cfg.gnome_icons, &ctx);
                     self.cfg.save();
+                }
+                const TITLE_ICONS: [TitleIcon; 4] =
+                    [TitleIcon::Logo, TitleIcon::Files, TitleIcon::Folder, TitleIcon::None];
+                let ti = TITLE_ICONS.iter().position(|t| *t == self.cfg.title_icon).unwrap_or(0);
+                if let Some(i) = row(ui, pal, "Title bar icon", "Top left; Files is the Files app's icon", |ui| {
+                    segmented(ui, pal, Id::new("title_icon"), &["File Flier", "Files", "Folder", "None"], ti)
+                }) {
+                    self.cfg.title_icon = TITLE_ICONS[i];
+                    self.cfg.save();
+                }
+                if !cfg!(target_os = "macos") {
+                    let hint = "Native: round, as in Ubuntu and GNOME, where your desktop puts them";
+                    let sel = usize::from(self.cfg.native_buttons);
+                    if let Some(i) = row(ui, pal, "Window buttons", hint, |ui| {
+                        segmented(ui, pal, Id::new("win_buttons"), &["File Flier", "Native"], sel)
+                    }) {
+                        self.cfg.native_buttons = i == 1;
+                        self.cfg.save();
+                    }
+                    let hint = "The GNOME theme, icons and window buttons, and the Files icon";
+                    if row(ui, pal, "Native Ubuntu look", hint, |ui| {
+                        super::popups::button(ui, pal, "Apply", false, false)
+                    })
+                    .clicked()
+                    {
+                        let dark = desktop_prefers_dark();
+                        self.cfg.theme = Some(if dark { ThemeId::AdwaitaDark } else { ThemeId::AdwaitaLight });
+                        self.cfg.gnome_icons = true;
+                        self.cfg.native_buttons = true;
+                        self.cfg.title_icon = TitleIcon::Files;
+                        crate::system_icons::set_enabled(true, &ctx);
+                        restyle = true;
+                    }
                 }
 
                 section(ui, pal, "Folder colors");

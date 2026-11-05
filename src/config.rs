@@ -39,6 +39,20 @@ impl Density {
     }
 }
 
+/// What the title bar shows in its top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum TitleIcon {
+    /// File Flier's paper plane.
+    #[default]
+    Logo,
+    /// The Files app's icon from the desktop's icon theme.
+    Files,
+    /// A folder.
+    Folder,
+    /// Nothing.
+    None,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum DateStyle {
     /// 2026-09-26 14:03
@@ -110,6 +124,10 @@ pub struct Config {
     pub folder_scheme: u8,
     /// Draw folders and the sidebar with GNOME's icons (the installed Adwaita theme).
     pub gnome_icons: bool,
+    /// The icon in the title bar's top-left corner.
+    pub title_icon: TitleIcon,
+    /// Window buttons as GNOME and Ubuntu draw them, in the desktop's button layout.
+    pub native_buttons: bool,
     /// Sidebar folders have an arrow that expands them into a tree of their subfolders.
     pub sidebar_trees: bool,
     /// The order of the sidebar's groups, by title (dragged into place). Groups not
@@ -179,6 +197,8 @@ impl Default for Config {
             folder_colors: Default::default(),
             folder_scheme: 0,
             gnome_icons: false,
+            title_icon: TitleIcon::Logo,
+            native_buttons: false,
             sidebar_trees: true,
             sidebar_order: Vec::new(),
             keymap: Default::default(),

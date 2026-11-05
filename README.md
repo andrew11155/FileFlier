@@ -214,6 +214,14 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   Public and Templates folders get their own icons, and the sidebar uses the
   theme's symbolic icons, down to its arrows, eject and add buttons. With no
   icon theme installed, File Flier's own icons are used.
+- **Title bar icon:** File Flier's logo, the Files app's icon from your icon
+  theme, a folder, or nothing.
+- **Window buttons:** File Flier's, or **Native**: round buttons as Ubuntu and
+  GNOME draw them, with your icon theme's symbols, on the side and in the
+  order your desktop's button layout says (`button-layout`, e.g. only
+  minimize and close on Ubuntu).
+- **Native Ubuntu look:** one click for the GNOME theme (dark or light, as
+  your desktop is set), the GNOME icons and window buttons, and the Files icon.
 - **Accent color:** the theme's own, or one of eight colors. Text on the accent
   switches between black and white so it stays readable.
 - **Interface size:** 80–150%. You can also press `Ctrl +`, `Ctrl −` and

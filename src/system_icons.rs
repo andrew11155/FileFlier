@@ -44,6 +44,12 @@ const NAMES: &[&str] = &[
     "pan-end-symbolic",
     "list-add-symbolic",
     "media-eject-symbolic",
+    "window-close-symbolic",
+    "window-minimize-symbolic",
+    "window-maximize-symbolic",
+    "window-restore-symbolic",
+    "org.gnome.Nautilus",
+    "system-file-manager",
 ];
 
 static ON: AtomicBool = AtomicBool::new(false);
@@ -52,21 +58,25 @@ static ON: AtomicBool = AtomicBool::new(false);
 /// indexed in the background the first time; `ctx` is repainted when it's ready.
 pub fn set_enabled(on: bool, ctx: &egui::Context) {
     ON.store(on, Ordering::Relaxed);
-    if on {
-        static START: Once = Once::new();
-        START.call_once(|| {
-            let ctx = ctx.clone();
-            std::thread::spawn(move || {
-                let _ = INDEX.set(Index::build(&theme_name()));
-                ctx.request_repaint();
-            });
+    // Indexed even when off: native window buttons and the title bar's Files icon use it too.
+    static START: Once = Once::new();
+    START.call_once(|| {
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = INDEX.set(Index::build(&theme_name()));
+            ctx.request_repaint();
         });
-    }
+    });
 }
 
 /// Whether the theme's icons are to be drawn: chosen, and found.
 pub fn enabled() -> bool {
-    ON.load(Ordering::Relaxed) && INDEX.get().is_some_and(|i| i.found)
+    ON.load(Ordering::Relaxed) && ready()
+}
+
+/// Whether the icon theme has been indexed and found.
+fn ready() -> bool {
+    INDEX.get().is_some_and(|i| i.found)
 }
 
 /// Whether an icon theme was found (true while it's still being looked up).
@@ -435,10 +445,21 @@ pub fn folder(p: &Painter, r: Rect, color: Option<Color32>, special: Option<&'st
 }
 
 /// Draws a symbolic icon (e.g. "user-home-symbolic") in `color`, at most 16 points big
-/// as GTK draws them.
+/// as GTK draws them, when the GNOME icon set is on.
 pub fn symbolic(p: &Painter, r: Rect, name: &'static str, color: Color32) -> bool {
+    enabled() && symbolic_always(p, r, name, color)
+}
+
+/// Like [`symbolic`], whichever icon set is chosen (for the native window buttons).
+pub fn symbolic_always(p: &Painter, r: Rect, name: &'static str, color: Color32) -> bool {
     let side = r.width().min(r.height()).min(16.0);
-    enabled() && draw(p, r, side, name, Kind::Symbolic, color)
+    ready() && draw(p, r, side, name, Kind::Symbolic, color)
+}
+
+/// Draws a full-color icon from the theme (e.g. an app's), whichever icon set is chosen.
+pub fn icon(p: &Painter, r: Rect, name: &'static str) -> bool {
+    let side = r.width().min(r.height());
+    ready() && draw(p, r, side, name, Kind::Folder(None), Color32::WHITE)
 }
 
 #[cfg(test)]
