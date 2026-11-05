@@ -306,6 +306,8 @@ impl FileFlier {
         let mut tree_toggles: Vec<(String, PathBuf, bool)> = Vec::new();
         let mut new_bookmarks: Vec<PathBuf> = Vec::new();
         let mut actions: Vec<Action> = Vec::new();
+        let mut nav: Vec<crate::app::SidebarStop> = Vec::new();
+        let mut nav_cur: Option<usize> = None;
         let mut drop_target: Option<DropTarget> = None;
         let force_copy = ui.input(|i| i.modifiers.command);
         let dragging = egui::DragAndDrop::has_payload_of_type::<DragPaths>(&ctx);
@@ -429,6 +431,18 @@ impl FileFlier {
                         let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty())
                             || item.offline
                             || item.add_cloud;
+                        // A stop for Ctrl+Up / Ctrl+Down.
+                        if !unmounted && !item.more {
+                            let trash = matches!(item.icon, Place::Trash) && item.depth == 0 && !item.tree;
+                            nav.push(match &item.tag {
+                                Some((name, ..)) => crate::app::SidebarStop::Tag(name.clone()),
+                                None if trash => crate::app::SidebarStop::Trash,
+                                None => crate::app::SidebarStop::Folder(item.path.clone()),
+                            });
+                            if is_current && nav_cur.is_none() {
+                                nav_cur = Some(nav.len() - 1);
+                            }
+                        }
                         let droppable = !unmounted && !item.more && item.tag.is_none();
                         let drop_hover = droppable && resp.dnd_hover_payload::<DragPaths>().is_some();
                         let indent = item.depth as f32 * INDENT;
@@ -718,5 +732,7 @@ impl FileFlier {
             self.drop_target = drop_target;
         }
         self.actions.extend(actions);
+        self.sidebar_nav = nav;
+        self.sidebar_nav_cur = nav_cur;
     }
 }

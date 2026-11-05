@@ -318,6 +318,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Ctrl+Alt+1` … `5` / `Ctrl+Alt+0` | Rate 1 to 5 stars / clear the rating (Ratings extension) |
 | `Ctrl+6` | Sort by rating (Ratings extension) |
 | `Ctrl+B` | Toggle the sidebar |
+| `Ctrl+↑` / `Ctrl+↓` | Previous / next place in the sidebar |
 | `Ctrl+J` | Toggle the bottom bar |
 | `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |

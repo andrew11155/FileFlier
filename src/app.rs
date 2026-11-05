@@ -128,6 +128,14 @@ pub struct Conflict {
 }
 
 /// A popup command menu (right-click menu, ⋮ menu, filter options).
+/// A sidebar row Ctrl+Up / Ctrl+Down can go to.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SidebarStop {
+    Folder(PathBuf),
+    Trash,
+    Tag(String),
+}
+
 pub struct Menu {
     pub pos: Pos2,
     pub query: String,
@@ -254,6 +262,10 @@ pub struct FileFlier {
     pub sidebar_open: std::collections::HashSet<(String, PathBuf)>,
     /// The folder the sidebar tree last expanded itself to show.
     pub sidebar_revealed: Option<PathBuf>,
+    /// The sidebar rows that open something, top to bottom, and which one is showing
+    /// (for Ctrl+Up / Ctrl+Down).
+    pub sidebar_nav: Vec<SidebarStop>,
+    pub sidebar_nav_cur: Option<usize>,
     pub dir_tree: crate::dirtree::DirTree,
     /// Folder listings for the side columns of the columns view, with when they were read.
     pub column_cache: std::collections::HashMap<PathBuf, (Instant, Arc<Vec<crate::fs_model::Entry>>)>,
@@ -367,6 +379,8 @@ impl FileFlier {
             sidebar_filter: String::new(),
             sidebar_open: Default::default(),
             sidebar_revealed: None,
+            sidebar_nav: Vec::new(),
+            sidebar_nav_cur: None,
             dir_tree: Default::default(),
             column_cache: Default::default(),
             item_counts: ItemCounter::start(cc.egui_ctx.clone()),
@@ -1534,6 +1548,33 @@ impl FileFlier {
                 self.run(cmd, ctx);
                 return;
             }
+        }
+
+        // Ctrl+Up / Ctrl+Down: the previous or next place in the sidebar.
+        let step: isize = ctx.input_mut(|i| {
+            if i.consume_key(Modifiers::COMMAND, Key::ArrowDown) {
+                1
+            } else if i.consume_key(Modifiers::COMMAND, Key::ArrowUp) {
+                -1
+            } else {
+                0
+            }
+        });
+        if step != 0 && !self.sidebar_nav.is_empty() {
+            let last = self.sidebar_nav.len() - 1;
+            let to = match self.sidebar_nav_cur {
+                Some(c) => (c as isize + step).clamp(0, last as isize) as usize,
+                None if step > 0 => 0,
+                None => last,
+            };
+            if Some(to) != self.sidebar_nav_cur {
+                match self.sidebar_nav[to].clone() {
+                    SidebarStop::Folder(p) => self.actions.push(Action::Navigate(p)),
+                    SidebarStop::Trash => self.run(Command::ShowTrash, ctx),
+                    SidebarStop::Tag(name) => self.actions.push(Action::ShowTag(name)),
+                }
+            }
+            return;
         }
 
         let PaneGeom { cols, page_rows } = self.geom[self.active];
