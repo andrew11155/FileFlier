@@ -1017,6 +1017,10 @@ impl FileFlier {
                 self.cfg.show_sidebar = !self.cfg.show_sidebar;
                 self.cfg.save();
             }
+            ToggleBottomBar => {
+                self.cfg.show_bottom_bar = !self.cfg.show_bottom_bar;
+                self.cfg.save();
+            }
             ToggleTheme => {
                 // Flip between the default dark and light themes.
                 let dark = self.pal().is_dark;

@@ -125,7 +125,8 @@ impl FileFlier {
             self.actions.push(Action::Activate(idx));
         }
         let toolbar = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + TOOLBAR_H));
-        let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - BOTTOM_H), rect.max);
+        let bottom_h = if self.cfg.show_bottom_bar { BOTTOM_H } else { 0.0 };
+        let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - bottom_h), rect.max);
         let content = Rect::from_min_max(pos2(rect.left(), toolbar.bottom()), pos2(rect.right(), bottom.top()));
         self.toolbar_ui(ui, idx, toolbar);
         self.ctrl_wheel_views(ui, idx, content);
@@ -135,7 +136,9 @@ impl FileFlier {
         } else {
             self.view_ui(ui, idx, content);
         }
-        self.bottom_ui(ui, idx, bottom);
+        if self.cfg.show_bottom_bar {
+            self.bottom_ui(ui, idx, bottom);
+        }
     }
 
     /// Ctrl + mouse wheel over the files steps through the views in Alt+1…8 order.
@@ -1248,23 +1251,50 @@ impl FileFlier {
 
         let p = ui.painter();
         let cy = rect.center().y;
-        let pct_r = Rect::from_min_max(
-            pos2(rect.right() - 54.0, rect.top() + 7.0),
-            pos2(rect.right() - 8.0, rect.bottom() - 7.0),
-        );
-        p.rect_filled(pct_r, pal.round(4.0), pal.input);
-        let fill_w = (pct_r.width() * pct).max(4.0);
-        p.rect_filled(Rect::from_min_size(pct_r.min, vec2(fill_w, pct_r.height())), 4.0, pal.accent);
-        p.rect_stroke(pct_r, pal.round(4.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
-        text(p, pct_r.center(), Align2::CENTER_CENTER, format!("{}%", (pct * 100.0).round() as i32), 12.5, pal.text);
-        ui.interact(pct_r, Id::new(("scroll_pct_tip", idx)), Sense::hover())
-            .on_hover_text("How far down the list you've scrolled");
+        let (show_dirs, show_files) = (self.cfg.show_folder_count, self.cfg.show_file_count);
+        let pct_r = if self.cfg.show_scroll_pct {
+            Rect::from_min_max(
+                pos2(rect.right() - 54.0, rect.top() + 7.0),
+                pos2(rect.right() - 8.0, rect.bottom() - 7.0),
+            )
+        } else {
+            Rect::from_min_max(
+                pos2(rect.right() - 2.0, rect.top() + 7.0),
+                pos2(rect.right() - 2.0, rect.bottom() - 7.0),
+            )
+        };
+        if self.cfg.show_scroll_pct {
+            let rad = pal.round(2.0);
+            p.rect_filled(pct_r, rad, pal.input);
+            let fill_w = (pct_r.width() * pct).max(2.0);
+            p.rect_filled(Rect::from_min_size(pct_r.min, vec2(fill_w, pct_r.height())), rad, pal.accent);
+            p.rect_stroke(pct_r, rad, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            text(
+                p,
+                pct_r.center(),
+                Align2::CENTER_CENTER,
+                format!("{}%", (pct * 100.0).round() as i32),
+                12.5,
+                pal.text,
+            );
+            ui.interact(pct_r, Id::new(("scroll_pct_tip", idx)), Sense::hover())
+                .on_hover_text("How far down the list you've scrolled");
+        }
 
         let d = format!("{dirs_shown}/{dirs_total}");
         let f = format!("{files_shown}/{files_total}");
         let dw = p.layout_no_wrap(d.clone(), super::font(13.5), pal.text).size().x;
         let fw2 = p.layout_no_wrap(f.clone(), super::font(13.5), pal.text).size().x;
-        let group_w = 12.0 + 20.0 + dw + 14.0 + 20.0 + fw2 + 12.0 + 26.0 + 6.0;
+        let mut group_w = 10.0 + 26.0 + 6.0;
+        if show_dirs {
+            group_w += 22.0 + dw + 12.0;
+        }
+        if show_files {
+            group_w += 22.0 + fw2 + 12.0;
+        }
+        if show_dirs || show_files {
+            group_w -= 4.0;
+        }
         let g = Rect::from_min_max(
             pos2(pct_r.left() - 6.0 - group_w, pct_r.top()),
             pos2(pct_r.left() - 6.0, pct_r.bottom()),
@@ -1272,14 +1302,23 @@ impl FileFlier {
         if g.left() > fr.right() + 8.0 {
             p.rect_stroke(g, pal.round(4.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
             let mut x = g.left() + 10.0;
-            icons::folder_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(17.0, 17.0)), pal.text);
-            x += 22.0;
-            text(p, pos2(x, cy), Align2::LEFT_CENTER, &d, 13.5, pal.text);
-            x += dw + 12.0;
-            icons::file_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0)), pal.text);
-            x += 22.0;
-            text(p, pos2(x, cy), Align2::LEFT_CENTER, &f, 13.5, pal.text);
-            x += fw2 + 8.0;
+            if show_dirs {
+                icons::folder_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(17.0, 17.0)), pal.text);
+                x += 22.0;
+                text(p, pos2(x, cy), Align2::LEFT_CENTER, &d, 13.5, pal.text);
+                x += dw + 12.0;
+            }
+            if show_files {
+                icons::file_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0)), pal.text);
+                x += 22.0;
+                text(p, pos2(x, cy), Align2::LEFT_CENTER, &f, 13.5, pal.text);
+                x += fw2 + 12.0;
+            }
+            if show_dirs || show_files {
+                x -= 4.0;
+            } else {
+                x -= 8.0;
+            }
             let lr = Rect::from_min_size(pos2(x, g.top() + 1.0), vec2(26.0, g.height() - 2.0));
             let current = match view {
                 ViewMode::Details => Command::ViewDetails,

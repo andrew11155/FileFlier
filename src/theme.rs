@@ -35,6 +35,8 @@ pub struct Palette {
     pub gnome_sidebar: bool,
     /// Text drawn as GTK draws it, without egui's thickening of light-on-dark text.
     pub gtk_text: bool,
+    /// The accent picked in Settings, if any (system folder icons take it on).
+    pub custom_accent: Option<Color32>,
 }
 
 /// Visual tweaks the user turned on or off; `None` follows the theme.
@@ -79,6 +81,7 @@ pub const DARK: Palette = Palette {
     rounded: false,
     gnome_sidebar: false,
     gtk_text: false,
+    custom_accent: None,
 };
 
 pub const LIGHT: Palette = Palette {
@@ -107,6 +110,7 @@ pub const LIGHT: Palette = Palette {
     rounded: false,
     gnome_sidebar: false,
     gtk_text: false,
+    custom_accent: None,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -228,6 +232,7 @@ fn from_spec(s: Spec) -> Palette {
         rounded: false,
         gnome_sidebar: false,
         gtk_text: false,
+        custom_accent: None,
     };
     set_accent(&mut p, accent);
     p
@@ -385,6 +390,7 @@ pub fn palette_with(theme: ThemeId, accent: Option<Color32>, look: Look) -> &'st
         if let Some(a) = accent {
             set_accent(&mut p, a);
         }
+        p.custom_accent = accent;
         p.rounded = look.rounded.unwrap_or(p.gnome);
         p.gnome_sidebar = look.gnome_sidebar.unwrap_or(p.gnome);
         p.gtk_text = look.gtk_text.unwrap_or(p.gnome);

@@ -37,7 +37,10 @@ pub fn folder_icon(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>, s
         Some(c) => (c, mix(c, Color32::BLACK, 0.18)),
         None => (pal.folder, pal.folder_back),
     };
-    if crate::system_icons::folder(p, r, tint, special) {
+    // System folder icons take on the accent picked in Settings (or, with a GNOME
+    // theme, the theme's accent), as GNOME's own folders follow its accent color.
+    let system_tint = tint.or(pal.custom_accent).or(pal.gnome.then_some(pal.accent));
+    if crate::system_icons::folder(p, r, system_tint, special) {
         return;
     }
     let r = snap(p, square(r));

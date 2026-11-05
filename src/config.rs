@@ -112,6 +112,11 @@ pub struct Config {
     pub recent: Vec<PathBuf>,
     pub view: ViewMode,
     pub show_sidebar: bool,
+    /// The bar at the bottom of each tab (Ctrl+J), and which counters it shows.
+    pub show_bottom_bar: bool,
+    pub show_folder_count: bool,
+    pub show_file_count: bool,
+    pub show_scroll_pct: bool,
     pub sidebar_width: f32,
     /// Old split position (read only to migrate to `layout`).
     pub split_ratio: f32,
@@ -199,6 +204,10 @@ impl Default for Config {
             recent: Vec::new(),
             view: ViewMode::Details,
             show_sidebar: true,
+            show_bottom_bar: true,
+            show_folder_count: true,
+            show_file_count: true,
+            show_scroll_pct: true,
             sidebar_width: 230.0,
             split_ratio: 0.5,
             layout: None,

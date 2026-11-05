@@ -11,10 +11,19 @@ const SCALES: [f32; 6] = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
 
 fn section(ui: &mut Ui, pal: &Palette, title: &str) {
     ui.add_space(14.0);
+    if title != "Theme" {
+        // A line between sections.
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+        ui.painter().hline(r.x_range(), r.center().y, egui::Stroke::new(1.0, pal.border));
+        ui.add_space(10.0);
+    }
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
     super::text_bold(ui.painter(), r.left_center(), Align2::LEFT_CENTER, title.to_uppercase(), 11.5, pal.text_dim);
     ui.add_space(2.0);
 }
+
+/// A bottom bar setting: label, hint, and the config flag it flips.
+type BarToggle = (&'static str, &'static str, fn(&mut crate::config::Config) -> &mut bool);
 
 /// A Theme / On / Off setting row: id, label, hint, option names and current value.
 type Tweak<'a> = (&'a str, &'a str, &'a str, [&'a str; 3], Option<bool>);
@@ -537,6 +546,24 @@ impl FileFlier {
                 }) {
                     self.cfg.view = views[i];
                     restyle = true;
+                }
+
+                section(ui, pal, "Bottom bar");
+                let bars: [BarToggle; 4] = [
+                    ("Bottom bar", "Ctrl+J shows or hides it", |c| &mut c.show_bottom_bar),
+                    ("Folder count", "", |c| &mut c.show_folder_count),
+                    ("File count", "", |c| &mut c.show_file_count),
+                    ("Scroll position", "How far down the list you are, in %", |c| &mut c.show_scroll_pct),
+                ];
+                for (i, (name, hint, get)) in bars.into_iter().enumerate() {
+                    if i > 0 && !self.cfg.show_bottom_bar {
+                        break;
+                    }
+                    let on = *get(&mut self.cfg);
+                    if row(ui, pal, name, hint, |ui| toggle(ui, pal, Id::new(("bottom_bar", name)), on)) {
+                        *get(&mut self.cfg) = !on;
+                        self.cfg.save();
+                    }
                 }
 
                 section(ui, pal, "Sidebar");

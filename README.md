@@ -48,6 +48,9 @@ the same on every desktop environment.
   doesn't follow symlinked folders, and stops at 200,000 files. Click the
   *Flat* badge in the bottom bar, press the shortcut again, or open another
   folder to leave it.
+- **Bottom bar.** Each tab's bottom bar shows how many folders and files are
+  listed (of how many) and how far down you've scrolled. *Settings → Bottom
+  bar* hides any of those, and `Ctrl+J` hides or shows the whole bar.
 - **Recursive search** (`Ctrl+F`). Fuzzy-matches names in every sub-folder on a
   background thread.
 - **Command palette** (`Ctrl+Shift+P` / `Ctrl+K`). Runs any command and jumps to
@@ -305,6 +308,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Ctrl+Alt+1` … `5` / `Ctrl+Alt+0` | Rate 1 to 5 stars / clear the rating (Ratings extension) |
 | `Ctrl+6` | Sort by rating (Ratings extension) |
 | `Ctrl+B` | Toggle the sidebar |
+| `Ctrl+J` | Toggle the bottom bar |
 | `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |
 | `Ctrl+Shift+T` | Open a terminal here |
