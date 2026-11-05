@@ -4,6 +4,7 @@
 pub(crate) mod chrome;
 mod cloud;
 mod columns;
+pub(crate) mod corners;
 mod dnd;
 pub mod glass;
 mod inspector;

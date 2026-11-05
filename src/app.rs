@@ -2005,6 +2005,12 @@ impl eframe::App for FileFlier {
         // ---- layout
         let full = ui.max_rect();
         let fx = self.fx();
+        // Round window corners, as GNOME's (not when maximized or full screen).
+        let (maximized, fullscreen) =
+            ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
+        if self.window_transparent && self.cfg.round_window() && !maximized && !fullscreen {
+            crate::ui::corners::round(&ctx, 12.0);
+        }
         // Ask the compositor to blur what's behind the window (KDE Plasma, macOS;
         // a no-op elsewhere). Only called when the setting changes.
         if self.blur_applied != Some(fx.see_through) {

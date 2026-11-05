@@ -389,7 +389,7 @@ impl FileFlier {
                     (
                         "rounded",
                         "Corners",
-                        "Rows, tabs, buttons and menus",
+                        "Rows, tabs, buttons, menus and the window (after a restart)",
                         ["Theme", "Round", "Square"],
                         self.cfg.rounded,
                     ),

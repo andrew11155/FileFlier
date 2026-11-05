@@ -244,6 +244,12 @@ impl Config {
     }
 
     /// Whether the desktop should show through in glass mode.
+    /// Whether the window's own corners are rounded (needs a transparent window, made at
+    /// startup). macOS rounds its windows itself.
+    pub fn round_window(&self) -> bool {
+        !cfg!(target_os = "macos") && self.palette().rounded
+    }
+
     pub fn see_through(&self) -> bool {
         self.glass
             && self.glass_see_through.unwrap_or_else(|| {
