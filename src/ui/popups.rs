@@ -147,7 +147,6 @@ impl FileFlier {
                 MenuItem::Unbookmark(_) => fuzzy::score(&q, "Remove bookmark").is_some(),
                 MenuItem::CloudDisconnect(_) => fuzzy::score(&q, "Disconnect").is_some(),
                 MenuItem::CloudSignOut(_) => fuzzy::score(&q, "Sign out").is_some(),
-                MenuItem::DropboxMenu(_) => fuzzy::score(&q, "Dropbox").is_some(),
                 MenuItem::Dropbox(l, ..) => fuzzy::score(&q, l).is_some(),
                 MenuItem::DropboxUnsync(_) => fuzzy::score(&q, "Keep online only").is_some(),
                 MenuItem::DropboxExcluded => fuzzy::score(&q, "Dropbox folders not synced").is_some(),
@@ -161,16 +160,21 @@ impl FileFlier {
         menu.cursor = step(menu.cursor, up, down, selectable.len());
 
         let width = 320.0;
-        let est_h = 52.0
-            + entries
-                .iter()
-                .map(|(_, it)| match it {
-                    MenuItem::Sep => 9.0,
-                    MenuItem::Colors(..) | MenuItem::Rating(..) => 34.0,
-                    _ => 30.0,
-                })
-                .sum::<f32>();
         let screen = ctx.content_rect();
+        // Every item stays in view: in a window too short for the menu, the rows get
+        // shorter (down to a minimum) instead of the menu scrolling.
+        let seps = entries.iter().filter(|(_, it)| matches!(it, MenuItem::Sep)).count() as f32;
+        let wide = entries.iter().filter(|(_, it)| matches!(it, MenuItem::Colors(..) | MenuItem::Rating(..))).count();
+        let rows = entries.len() as f32 - seps - wide as f32;
+        let fixed = 52.0 + 34.0 * wide as f32;
+        let fits = |row: f32, sep: f32| fixed + rows * row + seps * sep + 24.0 <= screen.height();
+        let sep_h = if fits(30.0, 9.0) { 9.0 } else { 5.0 };
+        let row_h = if fits(30.0, sep_h) {
+            30.0
+        } else {
+            ((screen.height() - 24.0 - fixed - seps * sep_h) / rows.max(1.0)).clamp(20.0, 30.0).floor()
+        };
+        let est_h = fixed + rows * row_h + seps * sep_h;
         // Each menu gets an area of its own, so it isn't shown at the size of the one
         // before it; egui lays a new area out unseen first, and after that its measured
         // height places it.
@@ -208,7 +212,7 @@ impl FileFlier {
                 egui::ScrollArea::vertical().max_height(list_max_h).auto_shrink([false, true]).show(ui, |ui| {
                     for (i, item) in &entries {
                         if let MenuItem::Sep = item {
-                            let (r, _) = ui.allocate_exact_size(vec2(width, 9.0), Sense::hover());
+                            let (r, _) = ui.allocate_exact_size(vec2(width, sep_h), Sense::hover());
                             ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal.border));
                             continue;
                         }
@@ -254,7 +258,6 @@ impl FileFlier {
                             MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
                             MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
                             MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
-                            MenuItem::DropboxMenu(_) => ("Dropbox ›".into(), vec![], RowIcon::None),
                             MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
                             MenuItem::DropboxUnsync(_) => {
                                 ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
@@ -264,7 +267,7 @@ impl FileFlier {
                             }
                             MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
                         };
-                        let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
+                        let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger, row_h);
                         if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
                             menu.cursor = sel_i;
                         }
@@ -315,23 +318,6 @@ impl FileFlier {
             Some(MenuItem::Unbookmark(p)) => self.toggle_bookmark(p),
             Some(MenuItem::CloudDisconnect(n)) => self.cloud_disconnect(n, false),
             Some(MenuItem::CloudSignOut(n)) => self.cloud_disconnect(n, true),
-            Some(MenuItem::DropboxMenu(paths)) => {
-                let mut items: Vec<MenuItem> = crate::dropbox::options(&paths)
-                    .into_iter()
-                    .map(|o| MenuItem::Dropbox(o.label, o.verb, paths.clone()))
-                    .collect();
-                let folders = paths.iter().all(|p| p.is_dir() && !crate::dropbox::roots().contains(p));
-                if items.is_empty() {
-                    self.error("Dropbox didn't answer. Is the Dropbox app running?");
-                } else {
-                    if folders {
-                        items.push(MenuItem::Sep);
-                        items.push(MenuItem::DropboxUnsync(paths));
-                    }
-                    // Where this menu was, as a submenu would.
-                    self.actions.push(Action::OpenMenu(pos, items));
-                }
-            }
             Some(MenuItem::Dropbox(_, verb, paths)) => crate::dropbox::run(paths, verb, ctx),
             Some(MenuItem::DropboxUnsync(paths)) => self.dialog = Some(Dialog::DropboxUnsync(paths)),
             Some(MenuItem::DropboxExcluded) => {
