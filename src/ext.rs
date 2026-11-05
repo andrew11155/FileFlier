@@ -39,7 +39,7 @@ impl Ext {
             Ext::Ratings => "Rate files with 1 to 5 stars: a Rating column, stars in the preview panel and menu",
             Ext::Tags => "Tag files with colored tags and find them again from the Tags list in the sidebar",
             Ext::Dropbox => {
-                "With the Dropbox app running: sync badges, and Dropbox's own right-click items (copy link, share, version history) plus choosing which folders sync on this computer"
+                "With the Dropbox app running: sync badges, and Ctrl+right-click for Dropbox's own menu (copy link, share, version history) and choosing which folders sync on this computer"
             }
             Ext::BatchRename => {
                 "Rename several selected files at once: from a template with numbers and dates, or by finding and replacing text"

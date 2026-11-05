@@ -1120,6 +1120,7 @@ impl FileFlier {
             text(ui.painter(), list_rect.center(), Align2::CENTER_CENTER, msg, 14.0, pal.text_dim);
         }
 
+        let ctrl_menu = ui.input(|i| i.modifiers.command);
         for a in item_actions {
             let tab = self.panes[idx].tab_mut();
             match a {
@@ -1144,6 +1145,13 @@ impl FileFlier {
                     }
                     tab.scroll_to_cursor = false;
                     self.actions.push(Action::Activate(idx));
+                    // Ctrl+right-click in a Dropbox folder: Dropbox's own menu instead.
+                    let targets = tab.targets();
+                    if ctrl_menu && self.cfg.ext_on(crate::ext::Ext::Dropbox) && dropbox_all_inside(&targets) {
+                        let folders = targets.iter().all(|p| p.is_dir() && !crate::dropbox::roots().contains(p));
+                        self.open_dropbox_menu(pos, &targets, folders, false);
+                        continue;
+                    }
                     let flat = tab.flat || tab.tag.is_some();
                     let mut items = entry_menu(is_dir, archive, flat);
                     if is_dir {
@@ -1172,24 +1180,6 @@ impl FileFlier {
                     // Extensions: rate and tag what the menu is for.
                     let targets = tab.targets();
                     let at = items.len() - 2;
-                    // Dropbox: its own items for these files (asked of the Dropbox app, locally).
-                    if self.cfg.ext_on(crate::ext::Ext::Dropbox)
-                        && !targets.is_empty()
-                        && targets.iter().all(|p| crate::dropbox::inside(p))
-                    {
-                        let mut dbx: Vec<MenuItem> = crate::dropbox::options(&targets)
-                            .into_iter()
-                            .map(|o| MenuItem::Dropbox(o.label, o.verb, targets.clone()))
-                            .collect();
-                        let folders = targets.iter().all(|p| p.is_dir() && !crate::dropbox::roots().contains(p));
-                        if folders && !dbx.is_empty() {
-                            dbx.push(MenuItem::DropboxUnsync(targets.clone()));
-                        }
-                        if !dbx.is_empty() {
-                            dbx.push(MenuItem::Sep);
-                            items.splice(at..at, dbx);
-                        }
-                    }
                     if self.cfg.ext_on(crate::ext::Ext::Tags) {
                         items.insert(at, MenuItem::Cmd(Command::EditTags));
                     }
@@ -1215,12 +1205,12 @@ impl FileFlier {
                 ItemAction::BackgroundContext(pos) => {
                     tab.selected.clear();
                     self.actions.push(Action::Activate(idx));
-                    let mut items = background_menu();
-                    if self.cfg.ext_on(crate::ext::Ext::Dropbox) && crate::dropbox::inside(&tab.path) {
-                        items.push(MenuItem::Sep);
-                        items.push(MenuItem::DropboxExcluded);
+                    let here = tab.path.clone();
+                    if ctrl_menu && self.cfg.ext_on(crate::ext::Ext::Dropbox) && crate::dropbox::inside(&here) {
+                        self.open_dropbox_menu(pos, &[here], false, true);
+                        continue;
                     }
-                    self.actions.push(Action::OpenMenu(pos, items));
+                    self.actions.push(Action::OpenMenu(pos, background_menu()));
                 }
                 ItemAction::ClearSelection => tab.selected.clear(),
                 ItemAction::Rate(p, n) => self.actions.push(Action::Rate(vec![p], n)),
@@ -1437,6 +1427,35 @@ fn group_digits(n: usize) -> String {
         out.push(c);
     }
     out
+}
+
+fn dropbox_all_inside(paths: &[PathBuf]) -> bool {
+    !paths.is_empty() && paths.iter().all(|p| crate::dropbox::inside(p))
+}
+
+impl FileFlier {
+    /// The Ctrl+right-click menu in a Dropbox folder: Dropbox's own items for `paths`,
+    /// "Keep online only" for `folders`, and on the folder's background the list of
+    /// folders not synced here.
+    fn open_dropbox_menu(&mut self, pos: egui::Pos2, paths: &[PathBuf], folders: bool, background: bool) {
+        let mut items: Vec<MenuItem> = crate::dropbox::options(paths)
+            .into_iter()
+            .map(|o| MenuItem::Dropbox(o.label, o.verb, paths.to_vec()))
+            .collect();
+        if items.is_empty() {
+            self.error("Dropbox didn't answer. Is the Dropbox app running?");
+            return;
+        }
+        if folders {
+            items.push(MenuItem::Sep);
+            items.push(MenuItem::DropboxUnsync(paths.to_vec()));
+        }
+        if background {
+            items.push(MenuItem::Sep);
+            items.push(MenuItem::DropboxExcluded);
+        }
+        self.actions.push(Action::OpenMenu(pos, items));
+    }
 }
 
 pub fn entry_menu(is_dir: bool, archive: bool, flat: bool) -> Vec<MenuItem> {

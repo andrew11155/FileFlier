@@ -21,7 +21,7 @@ impl FileFlier {
             ui,
             pal,
             "Dropbox removes the copy on this computer. Everything stays in your Dropbox and on your other devices. \
-             You can sync it here again from the folder's parent: right-click an empty spot → Dropbox folders not synced here.",
+             You can sync it here again from the folder's parent: Ctrl+right-click an empty spot → Dropbox folders not synced here.",
             13.5,
             None,
         );
