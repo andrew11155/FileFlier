@@ -344,7 +344,7 @@ impl FileFlier {
                     }
                     let hc = if hresp.hovered() { pal.text_strong } else { pal.text_dim };
                     let hf = if pal.gnome {
-                        FontId::new(13.0, egui::FontFamily::Name(crate::theme::GNOME_UI_BOLD.into()))
+                        FontId::new(13.0, egui::FontFamily::Name(crate::theme::GNOME_UI.into()))
                     } else {
                         super::bold(13.0)
                     };

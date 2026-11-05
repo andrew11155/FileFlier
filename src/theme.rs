@@ -422,8 +422,6 @@ pub const SEMIBOLD: &str = "semibold";
 /// The desktop's interface font (GNOME's `font-name`, e.g. Adwaita Sans or Ubuntu Sans),
 /// used by the GNOME themes' sidebar as in GNOME Files. Inter when it can't be found.
 pub const GNOME_UI: &str = "gnome-ui";
-/// [`GNOME_UI`] in bold, for the sidebar's section titles.
-pub const GNOME_UI_BOLD: &str = "gnome-ui-bold";
 
 static GNOME_FONT_PX: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
 
@@ -440,9 +438,9 @@ fn parse_font_name(s: &str) -> Option<(String, f32)> {
     Some((family.trim().to_string(), size)).filter(|(f, _)| !f.is_empty())
 }
 
-/// The desktop's interface font: regular and bold files, and size in points.
+/// The desktop's interface font: its file, and its size in points.
 #[cfg(target_os = "linux")]
-fn desktop_font() -> Option<(Vec<u8>, Option<Vec<u8>>, f32)> {
+fn desktop_font() -> Option<(Vec<u8>, f32)> {
     use std::process::Command;
     let out = |cmd: &mut Command| {
         cmd.output().ok().filter(|o| o.status.success()).and_then(|o| String::from_utf8(o.stdout).ok())
@@ -458,16 +456,13 @@ fn desktop_font() -> Option<(Vec<u8>, Option<Vec<u8>>, f32)> {
             continue;
         }
         let Ok(regular) = std::fs::read(file) else { continue };
-        let bold_file = out(Command::new("fc-match").args(["-f", "%{file}", &format!("{family}:bold")]));
-        // A variable font has both weights in one file; it's given its weight below.
-        let bold = bold_file.filter(|b| b != file).and_then(|b| std::fs::read(b).ok());
-        return Some((regular, bold, pt * 96.0 / 72.0));
+        return Some((regular, pt * 96.0 / 72.0));
     }
     None
 }
 
 #[cfg(not(target_os = "linux"))]
-fn desktop_font() -> Option<(Vec<u8>, Option<Vec<u8>>, f32)> {
+fn desktop_font() -> Option<(Vec<u8>, f32)> {
     None
 }
 
@@ -501,23 +496,16 @@ pub fn load_fonts(ctx: &egui::Context) {
     let defaults = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let regular: Vec<String> = std::iter::once("inter".to_string()).chain(fallback).chain(defaults).collect();
     let semibold: Vec<String> = std::iter::once("inter-semibold".to_string()).chain(regular.iter().cloned()).collect();
-    let (gnome, gnome_bold) = match desktop_font() {
-        Some((reg, bold, px)) => {
+    let gnome = match desktop_font() {
+        Some((reg, px)) => {
             let _ = GNOME_FONT_PX.set(px);
-            let bold = match bold {
-                Some(b) => FontData::from_owned(b),
-                None => FontData::from_owned(reg.clone()).tweak(tweak(700.0)),
-            };
+            // Variable fonts (like Ubuntu Sans) get the regular weight.
             fonts.font_data.insert(GNOME_UI.into(), FontData::from_owned(reg).tweak(tweak(400.0)).into());
-            fonts.font_data.insert(GNOME_UI_BOLD.into(), bold.into());
-            let with =
-                |name: &str, rest: &[String]| std::iter::once(name.to_string()).chain(rest.iter().cloned()).collect();
-            (with(GNOME_UI, &regular), with(GNOME_UI_BOLD, &semibold))
+            std::iter::once(GNOME_UI.to_string()).chain(regular.iter().cloned()).collect()
         }
-        None => (regular.clone(), semibold.clone()),
+        None => regular.clone(),
     };
     fonts.families.insert(FontFamily::Name(GNOME_UI.into()), gnome);
-    fonts.families.insert(FontFamily::Name(GNOME_UI_BOLD.into()), gnome_bold);
     fonts.families.insert(FontFamily::Proportional, regular);
     fonts.families.insert(FontFamily::Name(SEMIBOLD.into()), semibold);
     ctx.set_fonts(fonts);
