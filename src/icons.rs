@@ -37,13 +37,10 @@ pub fn folder_icon(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>, s
         Some(c) => (c, mix(c, Color32::BLACK, 0.18)),
         None => (pal.folder, pal.folder_back),
     };
-    // System folder icons take on the accent picked in Settings, as Ubuntu switches to
-    // the Yaru icons of its accent. Those folders are the accent a little lighter and
-    // softer. Without a picked accent the icon theme's own colors are kept: they match
-    // the desktop's accent, as in GNOME Files.
-    let pale = |c: Color32| mix(mix(c, Color32::WHITE, 0.16), Color32::from_gray(150), 0.14);
-    let system_tint = tint.or(pal.custom_accent.map(pale));
-    if crate::system_icons::folder(p, r, system_tint, special) {
+    // System folder icons follow the accent picked in Settings (see
+    // `system_icons::folder`); without one they keep the icon theme's colors, which
+    // match the desktop's accent, as in GNOME Files.
+    if crate::system_icons::folder(p, r, tint, pal.custom_accent, special) {
         return;
     }
     let r = snap(p, square(r));

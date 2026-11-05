@@ -298,16 +298,18 @@ fn distance(sizing: Sizing, scale: u32, px: u32) -> u32 {
 
 // ------------------------------------------------------------ drawing
 
-/// Rendered icons by (name, folder color, size in pixels).
-type Key = (&'static str, Option<[u8; 3]>, u32);
+/// Rendered icons by (name, kind, folder color, size in pixels).
+type Key = (&'static str, u8, Option<[u8; 3]>, u32);
 static TEXTURES: Mutex<Option<HashMap<Key, Option<TextureHandle>>>> = Mutex::new(None);
 
 fn texture(p: &Painter, name: &'static str, kind: Kind, px: u32) -> Option<TextureHandle> {
-    let tint = match kind {
-        Kind::Folder(Some(c)) => Some([c.r(), c.g(), c.b()]),
-        _ => None,
+    let (tag, tint) = match kind {
+        Kind::Folder(Some(c)) => (0, Some([c.r(), c.g(), c.b()])),
+        Kind::Folder(None) => (0, None),
+        Kind::Accent(c) => (1, Some([c.r(), c.g(), c.b()])),
+        Kind::Symbolic => (2, None),
     };
-    let key = (name, tint, px);
+    let key = (name, tag, tint, px);
     let mut g = TEXTURES.lock().ok()?;
     let map = g.get_or_insert_with(HashMap::new);
     if let Some(t) = map.get(&key) {
@@ -323,6 +325,7 @@ fn texture(p: &Painter, name: &'static str, kind: Kind, px: u32) -> Option<Textu
         Kind::Symbolic => mask(&mut rgba),
         Kind::Folder(Some(color)) => recolor(&mut rgba, color),
         Kind::Folder(None) => {}
+        Kind::Accent(accent) => recolor_to_accent(&mut rgba, accent),
     }
     let img = ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &rgba);
     let tex = Some(p.ctx().load_texture(name, img, TextureOptions::LINEAR));
@@ -333,6 +336,8 @@ fn texture(p: &Painter, name: &'static str, kind: Kind, px: u32) -> Option<Textu
 #[derive(Clone, Copy)]
 enum Kind {
     Folder(Option<Color32>),
+    /// A folder in the accent color, the way the icon theme does its accent variants.
+    Accent(Color32),
     Symbolic,
 }
 
@@ -385,19 +390,44 @@ fn saturation([r, g, b]: [u8; 3]) -> f32 {
 /// Recolors a folder to `color`: its main color becomes `color`, and its other colored
 /// parts (the darker back, the emblem) take `color`'s hue too, a shade lighter or darker
 /// as they were. White and grey parts stay as they are.
-fn recolor(rgba: &mut [u8], color: Color32) {
-    let px = rgba.as_chunks_mut::<4>().0;
-    // The folder's main color: its most common solid, colored one (the front sheet).
+/// The folder's main color: its most common solid, colored one (the front sheet).
+fn main_color(rgba: &[u8]) -> Option<[u8; 3]> {
     let mut counts: HashMap<[u8; 3], ([f32; 3], u32)> = HashMap::new();
-    for [r, g, b, a] in px.iter() {
+    for [r, g, b, a] in rgba.as_chunks::<4>().0 {
         if *a > 200 && saturation([*r, *g, *b]) > 0.2 {
             let e = counts.entry([*r >> 3, *g >> 3, *b >> 3]).or_default();
             e.0 = [e.0[0] + *r as f32, e.0[1] + *g as f32, e.0[2] + *b as f32];
             e.1 += 1;
         }
     }
-    let Some((sum, n)) = counts.into_values().max_by_key(|(_, n)| *n) else { return };
-    let main = sum.map(|s| (s / n as f32).round() as u8);
+    let (sum, n) = counts.into_values().max_by_key(|(_, n)| *n)?;
+    Some(sum.map(|s| (s / n as f32).round() as u8))
+}
+
+/// Colors a folder for an accent. When the icon theme's folder already has the
+/// accent's hue (Yaru-purple with a purple accent, say) it's kept exactly as it is,
+/// so it matches GNOME Files. Otherwise it becomes a lighter, softer shade of the
+/// accent, as the theme's own accent variants are.
+fn recolor_to_accent(rgba: &mut [u8], accent: Color32) {
+    let Some(main) = main_color(rgba) else { return };
+    if hue_distance(hsl([accent.r(), accent.g(), accent.b()]).0, hsl(main).0) < 25.0 {
+        return;
+    }
+    let soft = |c: u8, to: f32, k: f32| c as f32 + (to - c as f32) * k;
+    let pale =
+        [accent.r(), accent.g(), accent.b()].map(|c| soft(soft(c, 255.0, 0.16) as u8, 150.0, 0.14).round() as u8);
+    recolor(rgba, Color32::from_rgb(pale[0], pale[1], pale[2]));
+}
+
+/// How far apart two hues (in degrees, around the color wheel) are, 0..180.
+fn hue_distance(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(360.0);
+    d.min(360.0 - d)
+}
+
+fn recolor(rgba: &mut [u8], color: Color32) {
+    let Some(main) = main_color(rgba) else { return };
+    let px = rgba.as_chunks_mut::<4>().0;
     let target = [color.r(), color.g(), color.b()];
     for [r, g, b, _] in px.iter_mut() {
         let s = saturation([*r, *g, *b]);
@@ -472,14 +502,25 @@ fn draw(p: &Painter, r: Rect, side: f32, name: &'static str, kind: Kind, tint: C
 
 /// Draws the theme's folder (or a special folder, by icon name), in the theme's own
 /// colors or recolored to `color`. Returns false when it can't, so the caller draws its own.
-pub fn folder(p: &Painter, r: Rect, color: Option<Color32>, special: Option<&'static str>) -> bool {
+/// `color` is a folder color picked for it; otherwise `accent`, a custom accent color.
+pub fn folder(
+    p: &Painter,
+    r: Rect,
+    color: Option<Color32>,
+    accent: Option<Color32>,
+    special: Option<&'static str>,
+) -> bool {
     if !enabled() {
         return false;
     }
     let side = r.width().min(r.height());
     let name = special.filter(|n| NAMES.contains(n)).unwrap_or("folder");
-    draw(p, r, side, name, Kind::Folder(color), Color32::WHITE)
-        || (name != "folder" && draw(p, r, side, "folder", Kind::Folder(color), Color32::WHITE))
+    let kind = match (color, accent) {
+        (None, Some(a)) => Kind::Accent(a),
+        _ => Kind::Folder(color),
+    };
+    draw(p, r, side, name, kind, Color32::WHITE)
+        || (name != "folder" && draw(p, r, side, "folder", kind, Color32::WHITE))
 }
 
 /// Draws a symbolic icon (e.g. "user-home-symbolic") in `color`, at most 16 points big
@@ -524,6 +565,19 @@ mod tests {
         assert_eq!(distance(Sizing::Fixed(16), 2, 32), 0);
         assert!(distance(Sizing::Fixed(48), 1, 32) < distance(Sizing::Fixed(16), 1, 32));
         assert_eq!(distance(Sizing::Scalable(16, 256), 1, 100), 0);
+    }
+
+    #[test]
+    fn accent_folders_keep_a_matching_theme_color() {
+        let folder = |c: [u8; 3]| c.iter().copied().chain([255]).cycle().take(4 * 16).collect::<Vec<u8>>();
+        // Yaru-purple's folder with File Flier's purple accent: left exactly as it is.
+        let mut px = folder([166, 154, 254]);
+        recolor_to_accent(&mut px, Color32::from_rgb(137, 87, 229));
+        assert_eq!(&px[..3], &[166, 154, 254]);
+        // With a green accent it turns green.
+        recolor_to_accent(&mut px, Color32::from_rgb(46, 160, 67));
+        assert!(px[1] > px[0] && px[1] > px[2]);
+        assert!((hue_distance(350.0, 10.0) - 20.0).abs() < 1e-4);
     }
 
     #[test]
