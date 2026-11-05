@@ -196,7 +196,11 @@ LibreOffice runs outside the sandbox.
 Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 
 - **Themes:** File Pilot Dark (default), Light, Midnight (true black, good for
-  OLED screens), Nord, Dracula, Catppuccin Mocha, Gruvbox and Solarized Light.
+  OLED screens), Nord, Dracula, Catppuccin Mocha, Gruvbox, Solarized Light,
+  and GNOME Light and GNOME Dark. The GNOME themes use libadwaita's colors
+  and go further than colors, to sit in with GNOME Files and other GNOME
+  apps: rounder corners on rows, tabs, buttons and menus, Adwaita's blue
+  folders, and a sidebar that marks the current place with a highlight only.
 - **Accent color:** the theme's own, or one of eight colors. Text on the accent
   switches between black and white so it stays readable.
 - **Interface size:** 80–150%. You can also press `Ctrl +`, `Ctrl −` and

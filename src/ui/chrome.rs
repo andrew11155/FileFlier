@@ -124,7 +124,7 @@ impl FileFlier {
                     );
                 }
             } else if hovered && dragging.is_none() {
-                painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), 6.0, pal.tab_hover);
+                painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), pal.round(6.0), pal.tab_hover);
             } else if ti + 1 < n && ti + 1 != pane.active {
                 painter.line_segment(
                     [pos2(r.right(), r.top() + 9.0), pos2(r.right(), r.bottom() - 9.0)],
@@ -169,7 +169,7 @@ impl FileFlier {
                 self.drop_target = Some(DropTarget::Folder(tab.path.clone()));
                 if !(is_active && pane_active) {
                     let (t, fire) = super::dnd::spring(ui.ctx(), Id::new(("spring_tab", idx, ti)), 0.45);
-                    painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), 6.0, pal.accent.gamma_multiply(0.25 * t));
+                    painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), pal.round(6.0), pal.accent.gamma_multiply(0.25 * t));
                     if fire {
                         self.actions.push(Action::SelectTab(idx, ti));
                     }
@@ -363,7 +363,7 @@ impl FileFlier {
             let g = painter.layout_no_wrap(title, super::font(13.0), pal.text_strong);
             let at = pos + vec2(14.0, 10.0);
             let r = Rect::from_min_size(at, g.size()).expand2(vec2(10.0, 6.0));
-            painter.rect_filled(r, 6.0, pal.tab_hover);
+            painter.rect_filled(r, pal.round(6.0), pal.tab_hover);
             painter.rect_stroke(r, 6.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
             painter.galley(at, g, pal.text_strong);
             ctx.set_cursor_icon(CursorIcon::Grabbing);

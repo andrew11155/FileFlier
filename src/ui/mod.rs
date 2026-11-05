@@ -94,7 +94,7 @@ pub fn icon_button(
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let resp = ui.interact(rect, id, sense);
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 4.0, pal.tab_hover);
+        ui.painter().rect_filled(rect, pal.round(4.0), pal.tab_hover);
     }
     let color = if !enabled {
         pal.text_faint
@@ -329,7 +329,7 @@ pub fn popup_frame(pal: &Palette, fx: &Fx) -> egui::Frame {
     egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0, pal.border))
-        .corner_radius(8)
+        .corner_radius(pal.round(8.0) as u8)
         .inner_margin(6)
         .shadow(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(120) })
 }

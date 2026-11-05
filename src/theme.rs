@@ -26,6 +26,16 @@ pub struct Palette {
     pub folder_back: Color32,
     /// Text drawn on top of `accent` (white or near-black, whichever reads better).
     pub on_accent: Color32,
+    /// The GNOME look (the Adwaita themes): rounder corners, Adwaita-style folders,
+    /// and a sidebar like GNOME Files'.
+    pub gnome: bool,
+}
+
+impl Palette {
+    /// A corner radius: `r` normally, rounder in the GNOME look.
+    pub fn round(&self, r: f32) -> f32 {
+        if self.gnome { (r * 1.6).max(r + 3.0) } else { r }
+    }
 }
 
 pub const DARK: Palette = Palette {
@@ -51,6 +61,7 @@ pub const DARK: Palette = Palette {
     folder: Color32::from_rgb(255, 209, 92),
     folder_back: Color32::from_rgb(236, 168, 44),
     on_accent: Color32::WHITE,
+    gnome: false,
 };
 
 pub const LIGHT: Palette = Palette {
@@ -75,6 +86,7 @@ pub const LIGHT: Palette = Palette {
     folder: Color32::from_rgb(255, 202, 72),
     folder_back: Color32::from_rgb(230, 160, 30),
     on_accent: Color32::WHITE,
+    gnome: false,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -87,10 +99,13 @@ pub enum ThemeId {
     CatppuccinMocha,
     Gruvbox,
     SolarizedLight,
+    /// GNOME's Adwaita, light and dark, with the GNOME look.
+    AdwaitaLight,
+    AdwaitaDark,
 }
 
 impl ThemeId {
-    pub const ALL: [ThemeId; 8] = [
+    pub const ALL: [ThemeId; 10] = [
         ThemeId::Dark,
         ThemeId::Light,
         ThemeId::Midnight,
@@ -99,6 +114,8 @@ impl ThemeId {
         ThemeId::CatppuccinMocha,
         ThemeId::Gruvbox,
         ThemeId::SolarizedLight,
+        ThemeId::AdwaitaLight,
+        ThemeId::AdwaitaDark,
     ];
 
     pub fn name(self) -> &'static str {
@@ -111,6 +128,8 @@ impl ThemeId {
             ThemeId::CatppuccinMocha => "Catppuccin Mocha",
             ThemeId::Gruvbox => "Gruvbox",
             ThemeId::SolarizedLight => "Solarized Light",
+            ThemeId::AdwaitaLight => "GNOME Light",
+            ThemeId::AdwaitaDark => "GNOME Dark",
         }
     }
 }
@@ -185,6 +204,7 @@ fn from_spec(s: Spec) -> Palette {
         folder,
         folder_back: mix(folder, Color32::BLACK, 0.12),
         on_accent: Color32::WHITE,
+        gnome: false,
     };
     set_accent(&mut p, accent);
     p
@@ -206,6 +226,40 @@ fn set_accent(p: &mut Palette, accent: Color32) {
 
 fn build(theme: ThemeId) -> Palette {
     match theme {
+        // libadwaita's colors (as in GNOME Files), with its blue folders.
+        ThemeId::AdwaitaLight | ThemeId::AdwaitaDark => {
+            let dark = theme == ThemeId::AdwaitaDark;
+            let mut p = from_spec(if dark {
+                Spec {
+                    is_dark: true,
+                    bg: 0x1d1d20,
+                    titlebar: 0x2e2e32,
+                    sidebar: 0x2e2e32,
+                    input: 0x38383c,
+                    border: 0x3d3d41,
+                    text: 0xffffff,
+                    text_dim: 0x9a9a9e,
+                    accent: 0x3584e4,
+                    folder: 0x62a0ea,
+                }
+            } else {
+                Spec {
+                    is_dark: false,
+                    bg: 0xffffff,
+                    titlebar: 0xebebed,
+                    sidebar: 0xebebed,
+                    input: 0xe8e8ea,
+                    border: 0xdcdcdf,
+                    text: 0x2e2e33,
+                    text_dim: 0x77767b,
+                    accent: 0x3584e4,
+                    folder: 0x62a0ea,
+                }
+            });
+            p.folder_back = hex(0x3584e4);
+            p.gnome = true;
+            p
+        }
         ThemeId::Dark => DARK,
         ThemeId::Light => LIGHT,
         ThemeId::Midnight => from_spec(Spec {
@@ -308,8 +362,8 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
     v.panel_fill = p.bg;
     v.window_fill = p.popup;
     v.window_stroke = Stroke::new(1.0, p.border);
-    v.window_corner_radius = CornerRadius::same(8);
-    v.menu_corner_radius = CornerRadius::same(6);
+    v.window_corner_radius = CornerRadius::same(p.round(8.0) as u8);
+    v.menu_corner_radius = CornerRadius::same(p.round(6.0) as u8);
     v.extreme_bg_color = p.input;
     v.faint_bg_color = p.row_sep;
     v.override_text_color = Some(p.text);
@@ -324,7 +378,7 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
         (&mut v.widgets.active, p.accent),
         (&mut v.widgets.open, p.tab_hover),
     ] {
-        w.corner_radius = CornerRadius::same(4);
+        w.corner_radius = CornerRadius::same(p.round(4.0) as u8);
         w.bg_fill = fill;
         w.weak_bg_fill = fill;
     }

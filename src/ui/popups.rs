@@ -101,9 +101,9 @@ pub(super) fn button(
         (false, _, false) => pal.input,
         (false, _, true) => pal.tab_hover,
     };
-    ui.painter().rect_filled(r, 5.0, fill);
+    ui.painter().rect_filled(r, pal.round(5.0), fill);
     if !primary && !danger {
-        ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(r, pal.round(5.0), Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
     }
     let color = if danger {
         Color32::WHITE
@@ -762,9 +762,9 @@ impl FileFlier {
                                     ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
                                 let p = ui.painter();
                                 if sel {
-                                    p.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.35));
+                                    p.rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.35));
                                 } else if resp.hovered() {
-                                    p.rect_filled(r, 4.0, pal.tab_hover);
+                                    p.rect_filled(r, pal.round(4.0), pal.tab_hover);
                                 }
                                 let cb =
                                     egui::Rect::from_center_size(pos2(r.left() + 14.0, r.center().y), vec2(16.0, 16.0));
@@ -912,9 +912,9 @@ impl FileFlier {
                                     ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
                                 let p = ui.painter();
                                 if selected {
-                                    p.rect_filled(r, 5.0, pal.accent);
+                                    p.rect_filled(r, pal.round(5.0), pal.accent);
                                 } else if resp.hovered() {
-                                    p.rect_filled(r, 5.0, pal.tab_hover);
+                                    p.rect_filled(r, pal.round(5.0), pal.tab_hover);
                                 }
                                 let ir =
                                     egui::Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), vec2(24.0, 24.0));

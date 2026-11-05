@@ -305,7 +305,7 @@ impl FileFlier {
                     let hr = hr.shrink2(vec2(6.0, 1.0));
                     let p = ui.painter();
                     if hresp.hovered() {
-                        p.rect_filled(hr, 4.0, pal.tab_hover);
+                        p.rect_filled(hr, pal.round(4.0), pal.tab_hover);
                     }
                     // Folders dropped on the Bookmarks header get bookmarked.
                     if title == "Bookmarks"
@@ -388,15 +388,17 @@ impl FileFlier {
                         let indent = item.depth as f32 * INDENT;
                         let p = ui.painter();
                         if is_current {
-                            p.rect_filled(r, 4.0, pal.tab_hover);
+                            p.rect_filled(r, pal.round(4.0), pal.tab_hover);
                             // Accent marker for where you are.
                             let m = Rect::from_center_size(pos2(r.left() + 1.5, r.center().y), vec2(3.0, h * 0.5));
-                            p.rect_filled(m, 1.5, pal.accent);
+                            if !pal.gnome {
+                                p.rect_filled(m, 1.5, pal.accent);
+                            }
                             if reveal {
                                 ui.scroll_to_rect(r, None);
                             }
                         } else if resp.hovered() {
-                            p.rect_filled(r, 4.0, pal.hover);
+                            p.rect_filled(r, pal.round(4.0), pal.hover);
                         }
                         let is_trash = matches!(item.icon, Place::Trash) && item.depth == 0 && !item.tree;
                         if drop_hover {
@@ -410,7 +412,7 @@ impl FileFlier {
                                     Id::new(("spring_sb", title, &item.tree_key, &item.path)),
                                     super::dnd::SPRING_DELAY,
                                 );
-                                p.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.30 * t));
+                                p.rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.30 * t));
                                 if fire {
                                     if item.tree && !item.open {
                                         tree_toggles.push((item.tree_key.clone(), item.path.clone(), true));
@@ -509,7 +511,7 @@ impl FileFlier {
                             let eresp = ui.interact(er, Id::new(("eject", &v.object)), Sense::click());
                             let c = if eresp.hovered() { pal.text_strong } else { pal.text_dim };
                             if eresp.hovered() {
-                                ui.painter().rect_filled(er, 4.0, pal.tab_hover);
+                                ui.painter().rect_filled(er, pal.round(4.0), pal.tab_hover);
                             }
                             icons::eject(ui.painter(), er.shrink(4.0), c);
                             if eresp.on_hover_text("Eject — safe to unplug afterwards").clicked() {

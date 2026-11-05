@@ -394,12 +394,12 @@ impl FileFlier {
             let resp = ui.interact(r.intersect(rect), Id::new(("crumb", idx, i)), Sense::click());
             let drop_hover = resp.dnd_hover_payload::<DragPaths>().is_some();
             if resp.hovered() || drop_hover {
-                painter.rect_filled(r, 4.0, pal.tab_hover);
+                painter.rect_filled(r, pal.round(4.0), pal.tab_hover);
             }
             if drop_hover && !last {
                 // Resting on a parent crumb goes there.
                 let (t, fire) = super::dnd::spring(ui.ctx(), Id::new(("spring", target)), super::dnd::SPRING_DELAY);
-                painter.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.30 * t));
+                painter.rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.30 * t));
                 painter.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), StrokeKind::Inside);
                 self.drop_target = Some(crate::app::DropTarget::Folder(target.clone()));
                 if fire {
@@ -663,7 +663,7 @@ impl FileFlier {
                             let width = if view == ViewMode::List { cell_w - 6.0 } else { cell_w };
                             let r =
                                 Rect::from_min_size(pos2(x, origin + anim_row * pitch + 1.0), vec2(width, pitch - 2.0));
-                            ui.painter().rect_filled(r, 4.0, sel_fill);
+                            ui.painter().rect_filled(r, pal.round(4.0), sel_fill);
                         }
                         for row in range {
                             let (row_rect, _) =
@@ -712,14 +712,14 @@ impl FileFlier {
                                     if view == ViewMode::Details { item.shrink2(vec2(0.0, 1.0)) } else { item };
                                 if view == ViewMode::Grid {
                                     if selected {
-                                        p.rect_filled(bg_rect, 5.0, pal.grid_sel);
+                                        p.rect_filled(bg_rect, pal.round(5.0), pal.grid_sel);
                                         p.rect_stroke(bg_rect, 5.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
                                     } else if resp.hovered() {
-                                        p.rect_filled(bg_rect, 5.0, pal.hover);
+                                        p.rect_filled(bg_rect, pal.round(5.0), pal.hover);
                                     }
                                 } else if selected {
                                     if !single_sel {
-                                        p.rect_filled(bg_rect, 4.0, sel_fill); // single selection glides (drawn above)
+                                        p.rect_filled(bg_rect, pal.round(4.0), sel_fill); // single selection glides (drawn above)
                                     }
                                 } else {
                                     let h = ui.ctx().animate_bool_with_time(
@@ -728,7 +728,7 @@ impl FileFlier {
                                         fx.dur(0.1),
                                     );
                                     if h > 0.0 {
-                                        p.rect_filled(bg_rect, 4.0, pal.hover.gamma_multiply(h));
+                                        p.rect_filled(bg_rect, pal.round(4.0), pal.hover.gamma_multiply(h));
                                     }
                                 }
                                 if is_cursor && !(selected && view != ViewMode::Grid) {
@@ -741,7 +741,7 @@ impl FileFlier {
                                         Id::new(("spring", &e.path)),
                                         super::dnd::SPRING_DELAY,
                                     );
-                                    p.rect_filled(bg_rect, 4.0, pal.accent.gamma_multiply(0.10 + 0.30 * t));
+                                    p.rect_filled(bg_rect, pal.round(4.0), pal.accent.gamma_multiply(0.10 + 0.30 * t));
                                     p.rect_stroke(bg_rect, 4.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
                                     drop_folder = Some(e.path.clone());
                                     if fire {
@@ -1317,7 +1317,7 @@ impl FileFlier {
             if r.right() <= right {
                 let resp = ui.interact(r, Id::new(("flat_badge", idx)), Sense::click());
                 let fill = if resp.hovered() { pal.accent.gamma_multiply(1.2) } else { pal.accent };
-                ui.painter().rect_filled(r, 4.0, fill);
+                ui.painter().rect_filled(r, pal.round(4.0), fill);
                 text(ui.painter(), r.center(), Align2::CENTER_CENTER, label, 13.0, pal.on_accent);
                 if resp
                     .on_hover_text("Every file in this folder and its subfolders. Click to turn off (Ctrl+Shift+F)")

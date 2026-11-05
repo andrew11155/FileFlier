@@ -46,11 +46,13 @@ pub fn folder_tinted(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>)
         lighter(back_c, 0.08),
         back_c,
     );
+    // The GNOME look draws Adwaita's folder: rounder, and flatter in front.
+    let (rad, top, shine) = if pal.gnome { ((r.width() * 0.09).max(2.0), 0.36, 0.10) } else { (2.0, 0.32, 0.22) };
     let back = Rect::from_min_max(at(r, 0.06, 0.21), at(r, 0.94, 0.86));
-    p.rect_filled(back, 2.0, back_c);
+    p.rect_filled(back, rad, back_c);
     // Front sheet: a soft top-to-bottom gradient gives it some depth.
-    let front = Rect::from_min_max(at(r, 0.06, 0.32), at(r, 0.94, 0.86));
-    gradient(p, egui::Shape::rect_filled(front, 2.0, Color32::WHITE), lighter(front_c, 0.22), front_c);
+    let front = Rect::from_min_max(at(r, 0.06, top), at(r, 0.94, 0.86));
+    gradient(p, egui::Shape::rect_filled(front, rad, Color32::WHITE), lighter(front_c, shine), front_c);
     let hl = (r.width() / 20.0).max(1.0);
     p.line_segment(
         [pos2(front.left() + 1.5, front.top() + hl * 0.5), pos2(front.right() - 1.5, front.top() + hl * 0.5)],
