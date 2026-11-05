@@ -297,13 +297,104 @@ pub fn load_text_or_binary(path: &Path) -> Loaded {
     };
     let full_file = std::fs::metadata(path).map(|m| m.len() as usize <= buf.len()).unwrap_or(true);
     let total_lines = text.lines().count();
-    let truncated = !full_file || total_lines > TEXT_LINES;
-    let text: String =
-        if total_lines > TEXT_LINES { text.lines().take(TEXT_LINES).collect::<Vec<_>>().join("\n") } else { text };
     let lines = if full_file { total_lines.to_string() } else { format!("{}+", total_lines) };
+    // Minified JSON is one enormous line: lay it out readably instead.
+    let long_lines = text.lines().any(|l| l.len() > LINE_CHARS);
+    let text = if long_lines && super::ext_of(path) == "json" { pretty_json(&text) } else { text };
+    let (text, truncated) = clip_text(text);
+    let truncated = truncated || !full_file;
     let info = vec![row("Lines", lines), row("Encoding", encoding)];
     let syntax = syntax_for(path);
     Loaded::new(Content::Text { text, syntax, truncated }).with_info(info)
+}
+
+/// Longest line shown in a text preview (longer ones end in "…").
+const LINE_CHARS: usize = 2000;
+
+/// At most `TEXT_LINES` lines of at most `LINE_CHARS` characters. Returns
+/// whether anything was cut.
+fn clip_text(text: String) -> (String, bool) {
+    let mut lines = text.lines();
+    let fits = lines.by_ref().take(TEXT_LINES).all(|l| l.len() <= LINE_CHARS) && lines.next().is_none();
+    if fits {
+        return (text, false);
+    }
+    let mut out = String::with_capacity(text.len().min(TEXT_BYTES * 2));
+    for l in text.lines().take(TEXT_LINES) {
+        if l.len() > LINE_CHARS {
+            let end = (0..=LINE_CHARS).rev().find(|&i| l.is_char_boundary(i)).unwrap_or(0);
+            out.push_str(&l[..end]);
+            out.push_str(" …");
+        } else {
+            out.push_str(l);
+        }
+        out.push('\n');
+    }
+    out.pop();
+    (out, true)
+}
+
+/// Re-indent JSON (keeping key order and the exact text of every value). Works
+/// on a cut-off file too: it just stops where the text stops.
+fn pretty_json(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len() + b.len() / 2);
+    let (mut depth, mut i, mut in_str, mut esc) = (0usize, 0usize, false, false);
+    let newline = |out: &mut Vec<u8>, depth: usize| {
+        out.push(b'\n');
+        out.extend(std::iter::repeat_n(b' ', depth * 2));
+    };
+    while i < b.len() {
+        let c = b[i];
+        i += 1;
+        if in_str {
+            out.push(c);
+            if esc {
+                esc = false;
+            } else if c == b'\\' {
+                esc = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            b'"' => {
+                in_str = true;
+                out.push(c);
+            }
+            b'{' | b'[' => {
+                // Keep empty {} and [] on one line.
+                let mut j = i;
+                while j < b.len() && b[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                let close = if c == b'{' { b'}' } else { b']' };
+                if b.get(j) == Some(&close) {
+                    out.extend([c, close]);
+                    i = j + 1;
+                } else {
+                    out.push(c);
+                    depth += 1;
+                    newline(&mut out, depth);
+                }
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                newline(&mut out, depth);
+                out.push(c);
+            }
+            b',' => {
+                out.push(c);
+                newline(&mut out, depth);
+            }
+            b':' => out.extend(b": "),
+            c if c.is_ascii_whitespace() => {}
+            _ => out.push(c),
+        }
+    }
+    // Only ASCII whitespace was dropped, so this is still valid UTF-8.
+    String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// UTF-8 / UTF-16 text, or None for binary data.
@@ -357,6 +448,24 @@ pub fn syntax_for(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reindents_minified_json() {
+        let src = r#"{"b":[1,{"x":"a,{b}\"c"}],"a":{},"e":[ ]}"#;
+        let want =
+            "{\n  \"b\": [\n    1,\n    {\n      \"x\": \"a,{b}\\\"c\"\n    }\n  ],\n  \"a\": {},\n  \"e\": []\n}";
+        assert_eq!(pretty_json(src), want);
+        // Cut off mid-way: no panic, just partial output.
+        assert!(pretty_json(r#"{"a":[1,2"#).ends_with('2'));
+    }
+
+    #[test]
+    fn clips_long_lines() {
+        let (t, cut) = clip_text(format!("short\n{}", "é".repeat(3000)));
+        assert!(cut);
+        assert!(t.starts_with("short\n") && t.ends_with(" …"));
+        assert_eq!(clip_text("a\nb".into()), ("a\nb".into(), false));
+    }
 
     #[test]
     fn detects_text_and_binary() {
