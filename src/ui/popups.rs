@@ -159,82 +159,19 @@ impl FileFlier {
             .collect();
         menu.cursor = step(menu.cursor, up, down, selectable.len());
 
-        let col_w = 320.0;
+        let width = 320.0;
+        let est_h =
+            52.0 + entries.iter().map(|(_, it)| if matches!(it, MenuItem::Sep) { 9.0 } else { 30.0 }).sum::<f32>();
         let screen = ctx.content_rect();
-        // Every item stays in view. In a window too short for the menu its rows get
-        // shorter; if that isn't enough it's laid out in two columns side by side.
-        let avail = (screen.height() - 24.0 - 52.0).max(60.0);
-        let height_of = |list: &[(usize, &MenuItem)], row: f32, sep: f32| -> f32 {
-            list.iter()
-                .map(|(_, it)| match it {
-                    MenuItem::Sep => sep,
-                    MenuItem::Colors(..) | MenuItem::Rating(..) => 34.0,
-                    _ => row,
-                })
-                .sum()
-        };
-        // The row height that fits `list` in the window (at least 24 points), if any.
-        let fit = |list: &[(usize, &MenuItem)]| -> Option<(f32, f32)> {
-            if height_of(list, 30.0, 9.0) <= avail {
-                return Some((30.0, 9.0));
-            }
-            let rows = list
-                .iter()
-                .filter(|(_, it)| !matches!(it, MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..)))
-                .count()
-                .max(1) as f32;
-            let row = ((avail - height_of(list, 0.0, 5.0)) / rows).floor();
-            (row >= 24.0).then_some((row.min(30.0), 5.0))
-        };
-        let (columns, row_h, sep_h): (Vec<Vec<(usize, &MenuItem)>>, f32, f32) = match fit(&entries) {
-            Some((row, sep)) => (vec![entries.clone()], row, sep),
-            None => {
-                // Split at the separator nearest the middle, so groups stay together.
-                let total = height_of(&entries, 30.0, 9.0);
-                let mut best = (entries.len() / 2, f32::MAX, false);
-                let mut acc = 0.0;
-                for (k, (_, it)) in entries.iter().enumerate() {
-                    if matches!(it, MenuItem::Sep) && (acc - total / 2.0).abs() < best.1 {
-                        best = (k, (acc - total / 2.0).abs(), true);
-                    }
-                    acc += height_of(&entries[k..=k], 30.0, 9.0);
-                }
-                let (k, _, at_sep) = best;
-                let left = entries[..k].to_vec();
-                let right = entries[if at_sep { k + 1 } else { k }..].to_vec();
-                let (row, sep) = match (fit(&left), fit(&right)) {
-                    (Some(l), Some(r)) => (l.0.min(r.0), 5.0),
-                    _ => (24.0, 5.0),
-                };
-                (vec![left, right], row, sep)
-            }
-        };
-        let width = col_w * columns.len() as f32 + 8.0 * (columns.len() as f32 - 1.0);
-        let est_h = 52.0 + columns.iter().map(|c| height_of(c, row_h, sep_h)).fold(0.0, f32::max);
-        // Each menu gets an area of its own, so it isn't shown at the size of the one
-        // before it; egui lays a new area out unseen first, and after that its measured
-        // height places it.
-        let area_id = Id::new("cmd_menu").with(menu.opened);
-        let est_h = ctx.memory(|m| m.area_rect(area_id)).map_or(est_h, |r| r.height());
-        // Only if even two columns can't fit does the menu scroll.
-        let list_max_h = avail;
-        let est_h = est_h.min(list_max_h + 52.0);
-        // Below the click if it fits, else above it (as desktop menus open), else as
-        // low as fits.
-        let y = if menu.pos.y + est_h + 16.0 <= screen.bottom() {
-            menu.pos.y
-        } else if menu.pos.y - est_h - 4.0 >= screen.top() + 4.0 {
-            menu.pos.y - est_h - 4.0
-        } else {
-            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top() + 4.0))
-        };
-        let pos =
-            pos2(menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left() + 4.0)), y);
+        let pos = pos2(
+            menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left() + 4.0)),
+            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top() + 4.0)),
+        );
         let mut chosen: Option<MenuItem> = None;
         let mut picked_color: Option<(Vec<PathBuf>, ColorPick)> = None;
         let mut picked_rating: Option<(Vec<PathBuf>, u8)> = None;
         let mut query = std::mem::take(&mut menu.query);
-        let area = egui::Area::new(area_id).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
+        let area = egui::Area::new(Id::new("cmd_menu")).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
             super::animate_in(ui, Id::new("cmd_menu_appear"), &fx, -6.0);
             popup_frame(pal, &fx).show(ui, |ui| {
                 ui.set_width(width);
@@ -245,87 +182,61 @@ impl FileFlier {
                 resp.request_focus();
                 ui.add_space(6.0);
                 let mut sel_i = 0;
-                let mut draw = |ui: &mut Ui, list: &[(usize, &MenuItem)]| {
-                    let width = col_w;
-                    for (i, item) in list {
-                        if let MenuItem::Sep = item {
-                            let (r, _) = ui.allocate_exact_size(vec2(width, sep_h), Sense::hover());
-                            ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal.border));
-                            continue;
-                        }
-                        if let MenuItem::Colors(paths, current) = item {
-                            if let Some(c) = color_row(ui, pal, width, *current, scheme, paths.len() > 1) {
-                                picked_color = Some((paths.clone(), c));
-                            }
-                            continue;
-                        }
-                        if let MenuItem::Rating(paths, current) = item {
-                            let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
-                            let p = ui.painter().clone();
-                            text(
-                                &p,
-                                pos2(r.left() + 10.0, r.center().y),
-                                Align2::LEFT_CENTER,
-                                "Rating",
-                                14.0,
-                                pal.text,
-                            );
-                            let id = Id::new("menu_rating");
-                            if let Some(n) =
-                                super::tags::star_row(ui, id, r.left() + 74.0, r.center().y, 22.0, *current, pal)
-                            {
-                                picked_rating = Some((paths.clone(), n));
-                            }
-                            continue;
-                        }
-                        let selected = selectable.get(menu.cursor) == Some(i);
-                        let danger = matches!(item, MenuItem::Cmd(Command::Trash | Command::DeletePermanently));
-                        let (label, badges, icon) = match item {
-                            MenuItem::Cmd(c) if danger => {
-                                (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::Trash)
-                            }
-                            MenuItem::Cmd(c) => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::None),
-                            MenuItem::Choice(c, on) => {
-                                let label = c.label();
-                                let label = label.strip_prefix("View: ").map_or(label.to_string(), super::capitalize);
-                                (label, c.shortcut_texts(ctx), RowIcon::Check(*on))
-                            }
-                            MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
-                            MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
-                            MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
-                            MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
-                            MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
-                            MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
-                            MenuItem::DropboxUnsync(_) => {
-                                ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
-                            }
-                            MenuItem::DropboxExcluded => {
-                                ("Dropbox folders not synced here…".into(), vec![], RowIcon::None)
-                            }
-                            MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
-                        };
-                        let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger, row_h);
-                        if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
-                            menu.cursor = sel_i;
-                        }
-                        if resp.clicked() {
-                            chosen = Some((*item).clone());
-                        }
-                        sel_i += 1;
+                for (i, item) in &entries {
+                    if let MenuItem::Sep = item {
+                        let (r, _) = ui.allocate_exact_size(vec2(width, 9.0), Sense::hover());
+                        ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal.border));
+                        continue;
                     }
-                };
-                egui::ScrollArea::vertical().max_height(list_max_h).auto_shrink([false, true]).show(ui, |ui| {
-                    ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
-                        for col in &columns {
-                            ui.vertical(|ui| {
-                                ui.set_width(col_w);
-                                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                                draw(ui, col);
-                            });
+                    if let MenuItem::Colors(paths, current) = item {
+                        if let Some(c) = color_row(ui, pal, width, *current, scheme, paths.len() > 1) {
+                            picked_color = Some((paths.clone(), c));
                         }
-                    });
-                });
+                        continue;
+                    }
+                    if let MenuItem::Rating(paths, current) = item {
+                        let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
+                        let p = ui.painter().clone();
+                        text(&p, pos2(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Rating", 14.0, pal.text);
+                        let id = Id::new("menu_rating");
+                        if let Some(n) =
+                            super::tags::star_row(ui, id, r.left() + 74.0, r.center().y, 22.0, *current, pal)
+                        {
+                            picked_rating = Some((paths.clone(), n));
+                        }
+                        continue;
+                    }
+                    let selected = selectable.get(menu.cursor) == Some(i);
+                    let danger = matches!(item, MenuItem::Cmd(Command::Trash | Command::DeletePermanently));
+                    let (label, badges, icon) = match item {
+                        MenuItem::Cmd(c) if danger => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::Trash),
+                        MenuItem::Cmd(c) => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::None),
+                        MenuItem::Choice(c, on) => {
+                            let label = c.label();
+                            let label = label.strip_prefix("View: ").map_or(label.to_string(), super::capitalize);
+                            (label, c.shortcut_texts(ctx), RowIcon::Check(*on))
+                        }
+                        MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
+                        MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
+                        MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
+                        MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
+                        MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
+                        MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
+                        MenuItem::DropboxUnsync(_) => {
+                            ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
+                        }
+                        MenuItem::DropboxExcluded => ("Dropbox folders not synced here…".into(), vec![], RowIcon::None),
+                        MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
+                    };
+                    let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
+                    if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+                        menu.cursor = sel_i;
+                    }
+                    if resp.clicked() {
+                        chosen = Some((*item).clone());
+                    }
+                    sel_i += 1;
+                }
                 if entries.is_empty() {
                     text(
                         ui.painter(),

@@ -207,11 +207,10 @@ pub fn paint_row_icon(p: &Painter, r: Rect, icon: RowIcon, pal: &Palette) {
 
 /// A row in a popup list: icon, label, and right-aligned shortcut badges.
 pub fn menu_row(ui: &mut Ui, pal: &Palette, selected: bool, icon: RowIcon, label: &str, badges: &[String]) -> Response {
-    menu_row_ex(ui, pal, selected, icon, label, badges, false, 30.0)
+    menu_row_ex(ui, pal, selected, icon, label, badges, false)
 }
 
 /// `danger` rows (Move to Trash, Delete) are drawn in red so they're easy to find.
-#[allow(clippy::too_many_arguments)]
 pub fn menu_row_ex(
     ui: &mut Ui,
     pal: &Palette,
@@ -220,9 +219,8 @@ pub fn menu_row_ex(
     label: &str,
     badges: &[String],
     danger: bool,
-    height: f32,
 ) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
     let p = ui.painter();
     let red = danger_color(pal);
     if selected {
@@ -251,8 +249,7 @@ pub fn menu_row_ex(
         (false, true) => red,
         (false, false) => pal.text,
     };
-    let size = if height < 26.0 { 13.0 } else { 14.0 };
-    let g = elided(p, label, size, color, right - x - 8.0);
+    let g = elided(p, label, 14.0, color, right - x - 8.0);
     p.galley(pos2(x, rect.center().y - g.size().y / 2.0), g, color);
     resp
 }
