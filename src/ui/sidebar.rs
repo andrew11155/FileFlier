@@ -298,6 +298,9 @@ impl FileFlier {
             tags.push(Item { label: "Manage tags…".into(), manage_tags: true, ..Default::default() });
             sections.push(("Tags", Place::Bookmark, filt(tags)));
         }
+        let order = &self.cfg.sidebar_order;
+        sections.sort_by_key(|(t, ..)| order.iter().position(|o| o == t).unwrap_or(usize::MAX));
+        let mut reorder: Option<Vec<String>> = None;
 
         let list =
             Rect::from_min_max(pos2(rect.left(), filter_r.bottom() + 8.0), pos2(rect.right() - 1.0, rect.bottom()));
@@ -314,11 +317,23 @@ impl FileFlier {
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 super::dnd::drag_scroll(ui, list);
                 let w = ui.available_width();
+                // Headers can be dragged to reorder the groups.
+                let mut headers: Vec<(&str, Rect)> = Vec::new();
+                let (mut moving, mut dropped) = (None, None);
                 for (title, icon, items) in sections {
                     let collapsed = self.cfg.collapsed.iter().any(|c| c == title) && q.is_empty();
                     // Section header.
-                    let (hr, hresp) = ui.allocate_exact_size(vec2(w, ITEM_H + 2.0), Sense::click());
+                    let (hr, _) = ui.allocate_exact_size(vec2(w, ITEM_H + 2.0), Sense::hover());
+                    let hresp = ui.interact(hr, Id::new(("sb_section", title)), Sense::click_and_drag());
                     let hr = hr.shrink2(vec2(6.0, 1.0));
+                    headers.push((title, hr));
+                    if hresp.dragged() {
+                        moving = Some(title);
+                        ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                    }
+                    if hresp.drag_stopped() {
+                        dropped = Some(title);
+                    }
                     let p = ui.painter();
                     if hresp.hovered() {
                         p.rect_filled(hr, pal.round(4.0), pal.tab_hover);
@@ -642,8 +657,30 @@ impl FileFlier {
                     }
                     ui.add_space(6.0);
                 }
+                // Where a dragged group would go: after the groups whose header is above the pointer.
+                if let Some(t) = moving.or(dropped)
+                    && let Some(y) = ui.ctx().pointer_latest_pos().map(|p| p.y)
+                {
+                    let others: Vec<&(&str, Rect)> = headers.iter().filter(|(h, _)| *h != t).collect();
+                    let at = others.iter().filter(|(_, r)| r.center().y < y).count();
+                    if dropped.is_some() {
+                        let mut v: Vec<String> = others.iter().map(|(h, _)| h.to_string()).collect();
+                        v.insert(at, t.to_string());
+                        reorder = Some(v);
+                    } else {
+                        let line_y = others.get(at).map_or(ui.cursor().top() - 3.0, |(_, r)| r.top() - 3.0);
+                        let x = list.x_range().shrink(8.0);
+                        ui.painter().hline(x, line_y, Stroke::new(2.0, pal.accent));
+                    }
+                }
             });
         });
+        if let Some(order) = reorder
+            && order != self.cfg.sidebar_order
+        {
+            self.cfg.sidebar_order = order;
+            self.cfg.save();
+        }
         for t in toggles {
             if let Some(i) = self.cfg.collapsed.iter().position(|c| *c == t) {
                 self.cfg.collapsed.remove(i);

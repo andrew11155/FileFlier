@@ -59,7 +59,8 @@ the same on every desktop environment.
 - **Preview panel** (`F3`). A Finder-style panel with a large, zoomable
   preview of the selected item and its details. See [Previews](#previews).
 - **Sidebar.** Has its own filter box and collapsible sections for Bookmarks,
-  Places, Storage and Recents. *Places* lists Home and the standard folders
+  Places, Storage and Recents. Drag a section's header to put the sections in
+  the order you like. *Places* lists Home and the standard folders
   your system has (Desktop, Documents, Downloads and so on, under their real
   names), plus the folders bookmarked in GNOME Files or Dolphin. *Storage*
   lists every drive GNOME Files or Dolphin would show, internal ones included,
@@ -258,7 +259,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `↑ ↓ PgUp PgDn Home End` | Move the cursor (hold `Shift` to select) |
 | `Enter` / `→` | Open |
 | `Backspace` / `←` | Parent folder |
-| `Alt+←` / `Alt+→` | Back / Forward |
+| `Alt+←` / `Alt+→` | Back / Forward (or the mouse's back and forward buttons) |
 | *type anything* | Filter the current folder (`Esc` clears it) |
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
 | `Ctrl`+double-click or middle-click a folder | Open it in a new tab |

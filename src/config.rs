@@ -112,6 +112,9 @@ pub struct Config {
     pub gnome_icons: bool,
     /// Sidebar folders have an arrow that expands them into a tree of their subfolders.
     pub sidebar_trees: bool,
+    /// The order of the sidebar's groups, by title (dragged into place). Groups not
+    /// listed follow in their usual order.
+    pub sidebar_order: Vec<String>,
     /// Shortcuts the user changed: command id -> keys ("Ctrl+Shift+P"). Others use the defaults.
     pub keymap: std::collections::BTreeMap<String, Vec<String>>,
     /// Extensions switched on or off, by id (see `ext::Ext`). Missing ones are on.
@@ -177,6 +180,7 @@ impl Default for Config {
             folder_scheme: 0,
             gnome_icons: false,
             sidebar_trees: true,
+            sidebar_order: Vec::new(),
             keymap: Default::default(),
             extensions: Default::default(),
             collapsed: vec!["Recents".into()],

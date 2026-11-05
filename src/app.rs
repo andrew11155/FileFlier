@@ -1945,6 +1945,20 @@ impl eframe::App for FileFlier {
         }
         self.native_dnd(&ctx);
         self.drop_target = None;
+        // The mouse's back and forward buttons, as in a browser.
+        if self.dialog.is_none() && self.menu.is_none() {
+            let (back, fwd) = ctx.input(|i| {
+                (
+                    i.pointer.button_pressed(egui::PointerButton::Extra1),
+                    i.pointer.button_pressed(egui::PointerButton::Extra2),
+                )
+            });
+            if back {
+                self.run(Command::Back, &ctx);
+            } else if fwd {
+                self.run(Command::Forward, &ctx);
+            }
+        }
         let pal = self.pal();
         self.poll_background(&ctx);
         self.persist_ui_state(&ctx);
