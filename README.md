@@ -92,7 +92,7 @@ the same on every desktop environment.
   view, the columns view and tabs, follow a folder when you rename it in File
   Flier, and are kept in File Flier's settings.
   *Settings → Folder colors* picks the scheme they're drawn in: **Pastel**
-  (a soft rainbow), **Earth** (terracotta, ochre, olive, moss…), **Ocean**
+  (a soft rainbow), **Vibrant** (a strong one), **Earth** (terracotta, ochre, olive, moss…), **Ocean**
   (navy, sky, teal, seafoam…) or **Mono** (tints and shades of your accent
   color, so it follows the theme). Each folder keeps its slot, so the first
   color in one scheme becomes the first in the next, fading across.

@@ -26,7 +26,7 @@ pub struct Scheme {
     colors: Option<[Color32; SLOTS]>,
 }
 
-pub const SCHEMES: [Scheme; 4] = [
+pub const SCHEMES: [Scheme; 5] = [
     // Soft enough for dark and light themes alike.
     Scheme {
         name: "Pastel",
@@ -40,6 +40,21 @@ pub const SCHEMES: [Scheme; 4] = [
             rgb(0xA9C8F0),
             rgb(0xC9B5EC),
             rgb(0xF2B5D4),
+        ]),
+    },
+    // A strong, saturated rainbow.
+    Scheme {
+        name: "Vibrant",
+        names: ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"],
+        colors: Some([
+            rgb(0xE5484D),
+            rgb(0xF76B15),
+            rgb(0xFFC53D),
+            rgb(0x30A46C),
+            rgb(0x12A594),
+            rgb(0x0090FF),
+            rgb(0x8E4EC6),
+            rgb(0xD6409F),
         ]),
     },
     // Clay, ochre and greens: warm and natural.
@@ -173,9 +188,9 @@ mod tests {
 
     #[test]
     fn mono_follows_the_accent() {
-        let m = scheme(3, ACCENT);
+        let m = scheme(4, ACCENT);
         assert_eq!(m[4], ACCENT);
-        assert_ne!(scheme(3, Color32::from_rgb(200, 60, 60)), m);
+        assert_ne!(scheme(4, Color32::from_rgb(200, 60, 60)), m);
         // Light to dark.
         let lum = |c: Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
         assert!(m.windows(2).all(|w| lum(w[0]) > lum(w[1])));
@@ -187,7 +202,7 @@ mod tests {
         colors.insert("/home/me/Photos".to_string(), 5u8);
         let photos = Path::new("/home/me/Photos");
         assert_eq!(color_of(&colors, 0, ACCENT, photos), Some(scheme(0, ACCENT)[5]));
-        assert_eq!(color_of(&colors, 2, ACCENT, photos), Some(rgb(0x8FD3BF)));
+        assert_eq!(color_of(&colors, 3, ACCENT, photos), Some(rgb(0x8FD3BF)));
         assert_eq!(color_of(&colors, 0, ACCENT, Path::new("/home/me")), None);
         assert_eq!(scheme(99, ACCENT), scheme(0, ACCENT));
         let (a, b) = (Color32::from_rgb(0, 100, 200), Color32::from_rgb(200, 100, 0));
