@@ -212,6 +212,11 @@ fn from_spec(s: Spec) -> Palette {
 
 fn set_accent(p: &mut Palette, accent: Color32) {
     p.accent = accent;
+    if p.gnome {
+        // As in GNOME 47: folders are drawn in the accent color, a lighter front over it.
+        p.folder = mix(accent, Color32::WHITE, 0.22);
+        p.folder_back = accent;
+    }
     p.accent_dim = mix(p.bg, accent, if p.is_dark { 0.40 } else { 0.30 });
     p.grid_sel = mix(p.bg, accent, 0.16);
     // Pick whichever text color contrasts more with the accent (WCAG contrast ratio).
@@ -256,8 +261,9 @@ fn build(theme: ThemeId) -> Palette {
                     folder: 0x62a0ea,
                 }
             });
-            p.folder_back = hex(0x3584e4);
             p.gnome = true;
+            let accent = p.accent;
+            set_accent(&mut p, accent); // folders take the accent color
             p
         }
         ThemeId::Dark => DARK,
@@ -451,6 +457,19 @@ pub fn load_fonts(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gnome_folders_follow_the_accent() {
+        let green = Color32::from_rgb(46, 160, 67);
+        for t in [ThemeId::AdwaitaLight, ThemeId::AdwaitaDark] {
+            assert_eq!(palette(t, None).folder_back, hex(0x3584e4));
+            let p = palette(t, Some(green));
+            assert_eq!(p.folder_back, green);
+            assert_ne!(p.folder, palette(t, None).folder);
+        }
+        // Other themes keep their own folder color.
+        assert_eq!(palette(ThemeId::Nord, Some(green)).folder, palette(ThemeId::Nord, None).folder);
+    }
 
     #[test]
     fn every_theme_builds_and_accent_text_is_readable() {

@@ -201,8 +201,8 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   OLED screens), Nord, Dracula, Catppuccin Mocha, Gruvbox, Solarized Light,
   and GNOME Light and GNOME Dark. The GNOME themes use libadwaita's colors
   and go further than colors, to sit in with GNOME Files and other GNOME
-  apps: rounder corners on rows, tabs, buttons and menus, Adwaita's blue
-  folders, and a sidebar that marks the current place with a highlight only.
+  apps: rounder corners on rows, tabs, buttons and menus, Adwaita-style
+  folders in your accent color (blue unless you pick another), and a sidebar that marks the current place with a highlight only.
 - **Accent color:** the theme's own, or one of eight colors. Text on the accent
   switches between black and white so it stays readable.
 - **Interface size:** 80–150%. You can also press `Ctrl +`, `Ctrl −` and
