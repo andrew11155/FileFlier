@@ -22,8 +22,18 @@ fn square(r: Rect) -> Rect {
 // --------------------------------------------------------------- files
 
 pub fn folder(p: &Painter, r: Rect, pal: &Palette) {
+    folder_tinted(p, r, pal, None);
+}
+
+/// A folder in the theme's color, or in `tint` (a folder color the user chose).
+pub fn folder_tinted(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>) {
     let r = snap(p, square(r));
     let lighter = |c: Color32, t: f32| mix(c, Color32::WHITE, t);
+    // The back sheet is a shade darker than the front, as with the theme colors.
+    let (front_c, back_c) = match tint {
+        Some(c) => (c, mix(c, Color32::BLACK, 0.18)),
+        None => (pal.folder, pal.folder_back),
+    };
     // Back sheet with its tab.
     gradient(
         p,
@@ -33,14 +43,14 @@ pub fn folder(p: &Painter, r: Rect, pal: &Palette) {
             Stroke::NONE,
         )
         .into(),
-        lighter(pal.folder_back, 0.08),
-        pal.folder_back,
+        lighter(back_c, 0.08),
+        back_c,
     );
     let back = Rect::from_min_max(at(r, 0.06, 0.21), at(r, 0.94, 0.86));
-    p.rect_filled(back, 2.0, pal.folder_back);
+    p.rect_filled(back, 2.0, back_c);
     // Front sheet: a soft top-to-bottom gradient gives it some depth.
     let front = Rect::from_min_max(at(r, 0.06, 0.32), at(r, 0.94, 0.86));
-    gradient(p, egui::Shape::rect_filled(front, 2.0, Color32::WHITE), lighter(pal.folder, 0.22), pal.folder);
+    gradient(p, egui::Shape::rect_filled(front, 2.0, Color32::WHITE), lighter(front_c, 0.22), front_c);
     let hl = (r.width() / 20.0).max(1.0);
     p.line_segment(
         [pos2(front.left() + 1.5, front.top() + hl * 0.5), pos2(front.right() - 1.5, front.top() + hl * 0.5)],

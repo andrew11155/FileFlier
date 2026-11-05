@@ -13,6 +13,7 @@ mod images;
 mod media;
 mod misc;
 pub mod model3d;
+pub mod player;
 pub mod thumbs;
 
 use std::io::Read;
@@ -261,11 +262,19 @@ impl Cx<'_> {
 }
 
 /// Builds the preview for `path`, possibly calling `cx.emit` more than once.
-fn load(path: &Path, is_dir: bool, page: usize, opts: &Options, cx: &Cx) {
+fn load(path: &Path, is_dir: bool, page: usize, modified: Option<SystemTime>, opts: &Options, cx: &Cx) {
     if is_dir {
         return misc::load_dir(path, opts, cx);
     }
     let kind = classify(path);
+    // Big photos take a moment to decode: show the cached thumbnail (if the desktop
+    // or grid view already made one) right away, then the full picture.
+    if matches!(kind, Kind::Raster | Kind::Heif | Kind::Jxl | Kind::CameraRaw)
+        && std::fs::metadata(path).is_ok_and(|m| m.len() > 1_500_000)
+        && let Some(img) = thumbs::cached(path, modified)
+    {
+        (cx.emit)(Loaded::new(Content::Image(img)));
+    }
     if page > 0 {
         // Page flips: PDFs directly, office documents through their converted PDF.
         let pdf = if kind == Kind::Pdf { Some(path.to_path_buf()) } else { docs::converted_pdf(path) };
@@ -352,6 +361,34 @@ struct Req {
     generation: u64,
 }
 
+/// Previews decoding at the same time (older ones finish in the background).
+const MAX_LOADS: usize = 3;
+
+/// Load one request on the current thread, sending results unless it went stale.
+fn load_one(req: Req, generation: &AtomicU64, res_tx: &Sender<(Key, Loaded)>, ctx: &egui::Context) {
+    let cancel = || generation.load(Ordering::SeqCst) != req.generation;
+    let times = std::fs::symlink_metadata(&req.key.path)
+        .map(|m| {
+            use std::os::unix::fs::PermissionsExt;
+            Times { created: m.created().ok(), accessed: m.accessed().ok(), mode: Some(m.permissions().mode()) }
+        })
+        .unwrap_or_default();
+    let emit = |mut l: Loaded| {
+        l.times = times;
+        if !cancel() {
+            let _ = res_tx.send((req.key.clone(), l));
+            ctx.request_repaint();
+        }
+    };
+    let cx = Cx { cancel: &cancel, emit: &emit };
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        load(&req.key.path, req.is_dir, req.key.page, req.key.modified, &req.opts, &cx)
+    }));
+    if r.is_err() {
+        emit(Loaded::error("This file couldn't be previewed"));
+    }
+}
+
 /// What the preview panel currently shows.
 pub struct Shown {
     pub key: Key,
@@ -379,41 +416,41 @@ impl Previewer {
         let generation = Arc::new(AtomicU64::new(0));
         let gen2 = generation.clone();
         let ctx2 = ctx.clone();
+        // A dispatcher hands each request to a thread of its own, so a new preview
+        // starts at once instead of waiting for a slow one the user already moved
+        // past (its result is dropped). At most a few run at the same time.
         std::thread::Builder::new()
             .name("preview".into())
-            .stack_size(16 << 20)
             .spawn(move || {
+                let running = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 while let Ok(mut req) = req_rx.recv() {
-                    while let Ok(newer) = req_rx.try_recv() {
-                        req = newer;
+                    loop {
+                        while let Ok(newer) = req_rx.try_recv() {
+                            req = newer;
+                        }
+                        if running.load(Ordering::SeqCst) < MAX_LOADS {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
                     }
                     if req.generation != gen2.load(Ordering::SeqCst) {
                         continue;
                     }
-                    let cancel = || gen2.load(Ordering::SeqCst) != req.generation;
-                    let times = std::fs::symlink_metadata(&req.key.path)
-                        .map(|m| {
-                            use std::os::unix::fs::PermissionsExt;
-                            Times {
-                                created: m.created().ok(),
-                                accessed: m.accessed().ok(),
-                                mode: Some(m.permissions().mode()),
+                    running.fetch_add(1, Ordering::SeqCst);
+                    let (gen2, res_tx, ctx2, running) = (gen2.clone(), res_tx.clone(), ctx2.clone(), running.clone());
+                    let spawned =
+                        std::thread::Builder::new().name("preview-load".into()).stack_size(16 << 20).spawn(move || {
+                            struct Done(Arc<std::sync::atomic::AtomicUsize>);
+                            impl Drop for Done {
+                                fn drop(&mut self) {
+                                    self.0.fetch_sub(1, Ordering::SeqCst);
+                                }
                             }
-                        })
-                        .unwrap_or_default();
-                    let emit = |mut l: Loaded| {
-                        l.times = times;
-                        if !cancel() {
-                            let _ = res_tx.send((req.key.clone(), l));
-                            ctx2.request_repaint();
-                        }
-                    };
-                    let cx = Cx { cancel: &cancel, emit: &emit };
-                    let r = catch_unwind(AssertUnwindSafe(|| {
-                        load(&req.key.path, req.is_dir, req.key.page, &req.opts, &cx)
-                    }));
-                    if r.is_err() {
-                        emit(Loaded::error("This file couldn't be previewed"));
+                            let _done = Done(running);
+                            load_one(req, &gen2, &res_tx, &ctx2);
+                        });
+                    if spawned.is_err() {
+                        std::thread::sleep(Duration::from_millis(50)); // out of threads: try the next request
                     }
                 }
             })

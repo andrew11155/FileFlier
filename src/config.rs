@@ -11,6 +11,14 @@ pub enum ViewMode {
     Details,
     List,
     Grid,
+    /// Grids with bigger tiles and thumbnails.
+    MediumGrid,
+    LargeGrid,
+    ExtraLargeGrid,
+    /// Details with folders that expand in place (arrow keys open and close them).
+    Tree,
+    /// Miller columns: parent folders to the left, the folder under the cursor to the right.
+    Columns,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -83,6 +91,7 @@ pub struct Config {
     pub bookmarks: Vec<PathBuf>,
     pub show_hidden: bool,
     pub dark_mode: bool,
+    /// Old two-pane split (read only to migrate to `layout`).
     pub split: bool,
     pub show_preview: bool,
     pub sort: Sort,
@@ -90,7 +99,19 @@ pub struct Config {
     pub view: ViewMode,
     pub show_sidebar: bool,
     pub sidebar_width: f32,
+    /// Old split position (read only to migrate to `layout`).
     pub split_ratio: f32,
+    /// How panes are tiled. Pane 0 is where a new window starts; the others open at home
+    /// unless the session is restored.
+    pub layout: Option<crate::layout::Layout>,
+    /// Folder colors chosen by the user: folder path -> color slot (red, orange, …).
+    pub folder_colors: std::collections::BTreeMap<String, u8>,
+    /// Which scheme the folder color slots are drawn in (see `ui::tint::SCHEMES`).
+    pub folder_scheme: u8,
+    /// Shortcuts the user changed: command id -> keys ("Ctrl+Shift+P"). Others use the defaults.
+    pub keymap: std::collections::BTreeMap<String, Vec<String>>,
+    /// Extensions switched on or off, by id (see `ext::Ext`). Missing ones are on.
+    pub extensions: std::collections::BTreeMap<String, bool>,
     pub collapsed: Vec<String>,
     pub inspector_width: f32,
     /// Render office documents as pages with LibreOffice when it's installed.
@@ -103,6 +124,22 @@ pub struct Config {
     pub last_update_check: u64,
     /// A release the user chose not to be reminded about.
     pub skipped_version: Option<String>,
+}
+
+impl ViewMode {
+    /// The grids, smallest first.
+    pub const GRIDS: [ViewMode; 4] =
+        [ViewMode::Grid, ViewMode::MediumGrid, ViewMode::LargeGrid, ViewMode::ExtraLargeGrid];
+
+    pub fn is_grid(self) -> bool {
+        Self::GRIDS.contains(&self)
+    }
+}
+
+impl Config {
+    pub fn ext_on(&self, e: crate::ext::Ext) -> bool {
+        self.extensions.get(e.id()).copied().unwrap_or(true)
+    }
 }
 
 impl Default for Config {
@@ -131,6 +168,11 @@ impl Default for Config {
             show_sidebar: true,
             sidebar_width: 230.0,
             split_ratio: 0.5,
+            layout: None,
+            folder_colors: Default::default(),
+            folder_scheme: 0,
+            keymap: Default::default(),
+            extensions: Default::default(),
             collapsed: vec!["Recents".into()],
             inspector_width: 340.0,
             office_previews: true,

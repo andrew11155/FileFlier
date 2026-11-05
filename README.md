@@ -18,10 +18,36 @@ the same on every desktop environment.
 - **Tabs and split panes.** Each pane has its own tab strip. You can drag tabs
   to reorder them, middle-click to close them, and lock a tab so that opening
   a folder from it creates a new tab.
-- **Three views.** Details (Name / Type / Items / Size / Modified), multi-column
-  List, and Grid with image thumbnails.
+- **Tab tiling.** Drag a tab onto the left, right, top or bottom edge of any
+  pane to split that pane and show the tab beside it, as in Vivaldi. Build
+  any grid you like: drop a tab in the middle of a pane, or on its tab strip,
+  to move it there. Drag the dividers to resize. Closing a pane's last tab
+  closes the pane. `Ctrl+\` hides every pane but the current one and brings
+  them back, and `Tab` moves between panes. The layout is remembered.
+- **Eight views.** Details (Name / Type / Items / Size / Modified), multi-column
+  List, Grid with image thumbnails in four sizes (Grid, Medium, Large with
+  `Ctrl+Shift+B`, and Extra large with 1024 px thumbnails), and Tree (`Ctrl+Shift+E`): the details view
+  with folders that open in place. In the tree, `→` opens a folder (press it
+  again to step inside), `←` closes it or jumps to the folder it's in, and
+  clicking a folder's arrow does the same. The filter searches everything
+  that's open and keeps the folders leading to each match.
+- **Columns view** (`Ctrl+Shift+M`), also known as Miller columns. The current
+  folder is the middle column; the folders above it are to the left, with the
+  way down highlighted, and the folder under the cursor is shown to the right
+  (or the file's details). `↑ ↓` move, `→` steps into a folder and `←` back
+  out. Click anything in a side column to go there. As many parent columns
+  are shown as fit.
 - **Instant filter.** Start typing to fuzzy-filter the current folder. The
   filter also appears in the pane's bottom bar.
+- **Flat view** (`Ctrl+Shift+F`). Lists every file in the current folder and
+  all of its subfolders as one list, so you can sort a whole tree by size or
+  date, filter it, or pick files from many folders and copy or move them
+  together. A *Folder* column shows where each file is (sort by it with
+  `Ctrl+5`), and right-click → *Open containing folder* jumps there. The scan
+  runs in the background, skips hidden folders unless hidden files are shown,
+  doesn't follow symlinked folders, and stops at 200,000 files. Click the
+  *Flat* badge in the bottom bar, press the shortcut again, or open another
+  folder to leave it.
 - **Recursive search** (`Ctrl+F`). Fuzzy-matches names in every sub-folder on a
   background thread.
 - **Command palette** (`Ctrl+Shift+P` / `Ctrl+K`). Runs any command and jumps to
@@ -60,6 +86,36 @@ the same on every desktop environment.
   with an option to apply the choice to every conflict. *Replace* moves the
   existing item to the trash rather than deleting it, and `Ctrl+Z` puts
   everything back.
+- **Folder colors.** Right-click a folder and pick one of eight
+  colors (or none) from the *Color* row; every selected folder gets it, and
+  the icon fades to the new color with a little pop. Colors show in every
+  view, the columns view and tabs, follow a folder when you rename it in File
+  Flier, and are kept in File Flier's settings.
+  *Settings → Folder colors* picks the scheme they're drawn in: **Pastel**
+  (a soft rainbow), **Vibrant** (a strong one), **Earth** (terracotta, ochre, olive, moss…), **Ocean**
+  (navy, sky, teal, seafoam…) or **Mono** (tints and shades of your accent
+  color, so it follows the theme). Each folder keeps its slot, so the first
+  color in one scheme becomes the first in the next, fading across.
+- **Extensions.** Optional features you can switch off in *Settings →
+  Extensions* (both are on to start with):
+  - **Ratings.** Give files 1 to 5 stars with `Ctrl+Alt+1` … `Ctrl+Alt+5`
+    (`Ctrl+Alt+0` clears), from the right-click menu, in the preview panel,
+    or by clicking the stars in the details view's *Rating* column. Sort by
+    rating with `Ctrl+6`, from the sort menu, or by clicking the column's header
+    (best first).
+  - **Tags.** Right-click → *Tags…* to tick tags for the selection or make a
+    new one. Tags show as colored dots after the name and as chips in the
+    preview panel. The sidebar's *Tags* list shows every tag with how many
+    files have it: click one to list those files, wherever they are, or drop
+    files on it to tag them. *Manage tags…* renames, recolors (any color) and
+    deletes tags.
+
+  Ratings and tags are stored on the files themselves, as the extended
+  attributes KDE's Dolphin uses (`user.baloo.rating`, `user.xdg.tags`), so
+  they survive renames and moves in other apps and Dolphin shows them too.
+  File Flier also keeps an index in `~/.config/file-flier/meta.json`, which
+  the Tags list is built from and which keeps tags on drives that can't store
+  attributes (FAT/exFAT USB sticks, some network shares).
 - **Compress and extract.** Right-click → *Compress to ZIP* zips the selection.
   *Extract here* unpacks ZIP, tar, tar.gz and gzip files; 7z, RAR, tar.xz,
   tar.zst and more work when `bsdtar` is installed (it's included in the
@@ -108,8 +164,9 @@ to zoom, drag to pan, and double-click to switch between fit and actual size.
 | Fonts | A type sample |
 | Code and text | Syntax-highlighted text |
 
-Grid view (`Ctrl+Shift+G`) shows thumbnails for these types too. Thumbnails are
-stored in the shared `~/.cache/thumbnails` folder, so File Flier reuses
+The grid views show thumbnails for these types too. Thumbnails are stored in
+the shared `~/.cache/thumbnails` folder, at the size each grid needs (`large`,
+`x-large` or `xx-large`), so File Flier reuses
 thumbnails made by GNOME Files and Dolphin, and they reuse File Flier's.
 
 LibreOffice page previews can be turned off in *Settings → Previews*. The
@@ -124,6 +181,10 @@ LibreOffice runs outside the sandbox.
   It supports everything the preview panel does, including zoom. Use the arrow
   keys to move to the next item, `+` / `-` / `0` to zoom, `Enter` to open it,
   and `Space` or `Esc` to close the preview.
+  Videos play right in Quick Look, with sound: click the picture or press `K`
+  to pause, `J` / `L` to jump 5 seconds, `M` to mute, and drag the bar to seek
+  (needs ffmpeg, which the Flatpak includes; sound goes through PulseAudio or
+  PipeWire).
 - **Rename in place:** press `F2` to edit the name directly in the list. The
   name is selected without its extension, so typing replaces just the name.
   `Enter` or clicking elsewhere saves; `Esc` cancels.
@@ -170,6 +231,13 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 
 ## Keyboard shortcuts
 
+These are the defaults. Press `F1` for an overlay listing every command with
+its keys: type to search (by name or by key, like "ctrl+shift"), press `Enter`
+or ▶ to run a command, click a key to record a new one, right-click it to
+remove it, and `+` to add another. A key that's already taken moves to the new
+command. ↺ puts one command back to its defaults, and *Reset all* resets
+everything. Changed keys are saved in File Flier's settings.
+
 | Keys | Action |
 | --- | --- |
 | `↑ ↓ PgUp PgDn Home End` | Move the cursor (hold `Shift` to select) |
@@ -178,18 +246,24 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | `Alt+←` / `Alt+→` | Back / Forward |
 | *type anything* | Filter the current folder (`Esc` clears it) |
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
+| `Ctrl`+double-click or middle-click a folder | Open it in a new tab |
 | `Ctrl+Tab` | Next tab |
-| `Ctrl+\` / `Tab` | Toggle split view / switch pane |
+| `Ctrl+\` / `Tab` | Hide or show the other panes / next pane |
 | `Ctrl+Shift+P` or `Ctrl+K` | Command palette |
 | `Ctrl+F` | Recursive search |
+| `Ctrl+Shift+F` | Flat view: every file in this folder and its subfolders |
 | `Ctrl+L` | Go to a path |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
 | `F5` / `F6` | Copy / move to the other pane |
 | `F2` | Rename |
 | `Delete` / `Shift+Delete` | Move to trash / delete permanently |
 | `Ctrl+Shift+N` / `Ctrl+N` | New folder / new file |
-| `Ctrl+Shift+D` / `L` / `G` | Details / list / grid view |
+| `Ctrl+Shift+D` / `L` / `G` / `B` / `E` / `M` | Details / list / grid / large grid / tree / columns view (medium and extra large grids are in the command palette) |
+| `Alt+1` … `Alt+8` | Details, list, tree, columns, grid, medium grid, large grid, extra large grid |
+| `Ctrl` + mouse wheel | Step through the views in `Alt+1` … `Alt+8` order (wheel up = next) |
 | `Ctrl+H` | Show hidden files |
+| `Ctrl+Alt+1` … `5` / `Ctrl+Alt+0` | Rate 1 to 5 stars / clear the rating (Ratings extension) |
+| `Ctrl+6` | Sort by rating (Ratings extension) |
 | `Ctrl+B` | Toggle the sidebar |
 | `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |
@@ -199,7 +273,7 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 | `Ctrl+Z` | Undo |
 | `Ctrl+,` | Settings |
 | `Ctrl +` / `Ctrl −` / `Ctrl 0` | Interface size |
-| `F1` | List all shortcuts |
+| `F1` | Shortcuts overlay: search, run and change shortcuts |
 
 ## Installing
 

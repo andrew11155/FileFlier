@@ -32,6 +32,10 @@ struct Item {
     offline: bool,
     /// The "Add cloud storage…" row.
     add_cloud: bool,
+    /// A tag (Tags extension): its name, color and how many files have it.
+    tag: Option<(String, egui::Color32, usize)>,
+    /// The "Manage tags…" row.
+    manage_tags: bool,
     /// Nesting level in a folder tree (0 = the section's own rows).
     depth: usize,
     /// A folder that can be expanded to show its subfolders.
@@ -257,12 +261,27 @@ impl FileFlier {
         let filt = |items: Vec<Item>| -> Vec<Item> {
             items.into_iter().filter(|i| q.is_empty() || fuzzy::score(&q, &i.label).is_some()).collect()
         };
-        let sections = [
+        let mut sections = vec![
             ("Bookmarks", Place::Bookmark, filt(bookmarks)),
             ("Places", Place::Folder, filt(places)),
             ("Storage", Place::Drive, filt(storage)),
             ("Recents", Place::Recent, filt(recents)),
         ];
+        let current_tag = self.tab().tag.clone();
+        if self.cfg.ext_on(crate::ext::Ext::Tags) {
+            let mut tags: Vec<Item> = self
+                .meta
+                .tags
+                .iter()
+                .map(|t| Item {
+                    label: t.name.clone(),
+                    tag: Some((t.name.clone(), t.color32(), self.meta.count(&t.name))),
+                    ..Default::default()
+                })
+                .collect();
+            tags.push(Item { label: "Manage tags…".into(), manage_tags: true, ..Default::default() });
+            sections.push(("Tags", Place::Bookmark, filt(tags)));
+        }
 
         let list =
             Rect::from_min_max(pos2(rect.left(), filter_r.bottom() + 8.0), pos2(rect.right() - 1.0, rect.bottom()));
@@ -300,6 +319,20 @@ impl FileFlier {
                     }
                     let ir = Rect::from_center_size(pos2(hr.left() + 16.0, hr.center().y), vec2(17.0, 17.0));
                     match icon {
+                        _ if title == "Tags" => {
+                            // A luggage tag: a rounded tab with a hole.
+                            let r = ir.shrink(2.0);
+                            let s = Stroke::new(1.4, pal.text_dim);
+                            let pts = vec![
+                                pos2(r.left(), r.center().y),
+                                pos2(r.left() + 5.0, r.top()),
+                                pos2(r.right(), r.top()),
+                                pos2(r.right(), r.bottom()),
+                                pos2(r.left() + 5.0, r.bottom()),
+                            ];
+                            p.add(egui::Shape::closed_line(pts, s));
+                            p.circle_stroke(pos2(r.left() + 5.5, r.center().y), 1.6, s);
+                        }
                         Place::Folder => {
                             let r = ir.shrink(1.0);
                             p.rect_stroke(r, 2.0, Stroke::new(1.4, pal.text_dim), egui::StrokeKind::Middle);
@@ -343,11 +376,14 @@ impl FileFlier {
                         };
                         let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
                         let r = r.shrink2(vec2(6.0, 1.0));
-                        let is_current = item.path == current && !item.more;
+                        let is_current = match &item.tag {
+                            Some((name, ..)) => current_tag.as_deref() == Some(name.as_str()),
+                            None => current_tag.is_none() && item.path == current && !item.more && !item.manage_tags,
+                        };
                         let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty())
                             || item.offline
                             || item.add_cloud;
-                        let droppable = !unmounted && !item.more;
+                        let droppable = !unmounted && !item.more && item.tag.is_none() && !item.manage_tags;
                         let drop_hover = droppable && resp.dnd_hover_payload::<DragPaths>().is_some();
                         let indent = item.depth as f32 * INDENT;
                         let p = ui.painter();
@@ -405,7 +441,9 @@ impl FileFlier {
                         let p = ui.painter();
                         let isz = if item.depth > 0 { 16.0 } else { 18.0 };
                         let ir = Rect::from_center_size(pos2(r.left() + 32.0 + indent, text_y), vec2(isz, isz));
-                        if item.add_cloud {
+                        if let Some((_, c, _)) = &item.tag {
+                            p.circle_filled(ir.center(), 6.0, *c);
+                        } else if item.add_cloud || item.manage_tags {
                             let c = if resp.hovered() { pal.text_strong } else { pal.text_dim };
                             icons::plus(p, ir.shrink(2.0), c);
                         } else if !item.more {
@@ -414,12 +452,16 @@ impl FileFlier {
                         let ejectable = item.volume.as_ref().is_some_and(|v| v.removable && !v.mount_points.is_empty());
                         let color = if is_current {
                             pal.text_strong
-                        } else if unmounted || item.more {
+                        } else if unmounted || item.more || item.manage_tags {
                             pal.text_dim
                         } else {
                             pal.text
                         };
-                        let eject_w = if ejectable { 26.0 } else { 0.0 };
+                        let eject_w = if ejectable || item.tag.is_some() { 26.0 } else { 0.0 };
+                        if let Some((_, _, n)) = &item.tag {
+                            let c = pal.text_faint;
+                            text(p, pos2(r.right() - 10.0, text_y), Align2::RIGHT_CENTER, n.to_string(), 12.0, c);
+                        }
                         let label_x = r.left() + 48.0 + indent;
                         let size = if item.depth > 0 { 13.5 } else { 14.0 };
                         let g = elided(p, &item.label, size, color, r.right() - label_x - 6.0 - eject_w);
@@ -474,6 +516,34 @@ impl FileFlier {
                                 actions.push(Action::EjectVolume(v.clone()));
                                 eject_clicked = true;
                             }
+                        }
+                        if let Some((name, ..)) = &item.tag {
+                            // Tags: click to list the files, drop files to tag them.
+                            let hover = resp.dnd_hover_payload::<DragPaths>().is_some();
+                            if hover {
+                                let p = ui.painter();
+                                p.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                            }
+                            if let Some(pl) = resp.dnd_release_payload::<DragPaths>() {
+                                actions.push(Action::TagPaths(pl.0.clone(), name.clone()));
+                            }
+                            let resp =
+                                resp.on_hover_text(format!("Everything tagged “{name}” · drop files here to tag them"));
+                            if resp.clicked() {
+                                actions.push(Action::ShowTag(name.clone()));
+                            }
+                            if resp.secondary_clicked() {
+                                let pos = resp.interact_pointer_pos().unwrap_or(r.center());
+                                let m = vec![MenuItem::Cmd(crate::commands::Command::ManageTags)];
+                                actions.push(Action::OpenMenu(pos, m));
+                            }
+                            continue;
+                        }
+                        if item.manage_tags {
+                            if resp.on_hover_text("Add, rename, recolor or delete tags").clicked() {
+                                actions.push(Action::Run(crate::commands::Command::ManageTags));
+                            }
+                            continue;
                         }
                         let resp = resp.on_hover_text(tip);
                         if resp.clicked() && (eject_clicked || chev_clicked) {
