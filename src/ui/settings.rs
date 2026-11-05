@@ -328,9 +328,10 @@ impl FileFlier {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
                         for &i in chunk {
-                            let (name, colors) = &super::tint::SCHEMES[i];
+                            let name = super::tint::SCHEMES[i].name;
+                            let colors = super::tint::scheme(i as u8, pal.accent);
                             let selected = i == self.cfg.folder_scheme as usize;
-                            if scheme_card(ui, pal, name, colors, selected).clicked() && !selected {
+                            if scheme_card(ui, pal, name, &colors, selected).clicked() && !selected {
                                 self.set_folder_scheme(i as u8, &ctx);
                             }
                         }

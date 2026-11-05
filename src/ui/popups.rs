@@ -1045,13 +1045,13 @@ fn color_row(
     current: Option<u8>,
     scheme: u8,
 ) -> Option<Option<u8>> {
-    use crate::ui::tint::NAMES;
-    let colors = crate::ui::tint::scheme(scheme);
+    let names = crate::ui::tint::SCHEMES.get(scheme as usize).unwrap_or(&crate::ui::tint::SCHEMES[0]).names;
+    let colors = crate::ui::tint::scheme(scheme, pal.accent);
     let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
     let p = ui.painter().clone();
     text(&p, pos2(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Color", 14.0, pal.text);
     let mut picked = None;
-    let n = NAMES.len() + 1;
+    let n = names.len() + 1;
     let gap = ((r.width() - 78.0) / n as f32).min(27.0);
     for i in 0..n {
         let c = pos2(r.left() + 74.0 + gap * (i as f32 + 0.5), r.center().y);
@@ -1071,7 +1071,7 @@ fn color_row(
         if value == current {
             p.circle_stroke(c, rad + 3.0, Stroke::new(1.6, pal.accent));
         }
-        let name = if i == 0 { "No color" } else { NAMES[i - 1] };
+        let name = if i == 0 { "No color" } else { names[i - 1] };
         if resp.on_hover_text(name).clicked() {
             picked = Some(value);
         }

@@ -34,7 +34,7 @@ impl FileFlier {
             p.update(ctx);
         }
         let mut player = self.ql_player.take();
-        let tint = super::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, &e.path);
+        let tint = super::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, self.pal().accent, &e.path);
         let loading = self.pv.is_loading();
         let mut view = std::mem::take(&mut self.ql_view);
         let mut nav = None;
