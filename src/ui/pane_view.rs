@@ -1172,6 +1172,13 @@ impl FileFlier {
                     // Extensions: rate and tag what the menu is for.
                     let targets = tab.targets();
                     let at = items.len() - 2;
+                    // Dropbox's own items open in a menu of their own, so this one stays short.
+                    if self.cfg.ext_on(crate::ext::Ext::Dropbox)
+                        && !targets.is_empty()
+                        && targets.iter().all(|p| crate::dropbox::inside(p))
+                    {
+                        items.insert(at, MenuItem::DropboxMenu(targets.clone()));
+                    }
                     if self.cfg.ext_on(crate::ext::Ext::Tags) {
                         items.insert(at, MenuItem::Cmd(Command::EditTags));
                     }
@@ -1181,25 +1188,6 @@ impl FileFlier {
                     }
                     if items.len() - 2 != at {
                         items.insert(at, MenuItem::Sep);
-                    }
-                    // Dropbox: its own items for these files, in a section of their own.
-                    if self.cfg.ext_on(crate::ext::Ext::Dropbox)
-                        && !targets.is_empty()
-                        && targets.iter().all(|p| crate::dropbox::inside(p))
-                    {
-                        let mut dbx: Vec<MenuItem> = crate::dropbox::options(&targets)
-                            .into_iter()
-                            .map(|o| MenuItem::Dropbox(o.label, o.verb, targets.clone()))
-                            .collect();
-                        let folders = targets.iter().all(|p| p.is_dir() && !crate::dropbox::roots().contains(p));
-                        if folders && !dbx.is_empty() {
-                            dbx.push(MenuItem::DropboxUnsync(targets.clone()));
-                        }
-                        if !dbx.is_empty() {
-                            let at = items.len() - 2;
-                            dbx.insert(0, MenuItem::Sep);
-                            items.splice(at..at, dbx);
-                        }
                     }
                     self.actions.push(Action::OpenMenu(pos, items));
                 }

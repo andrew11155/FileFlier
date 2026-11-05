@@ -147,6 +147,7 @@ impl FileFlier {
                 MenuItem::Unbookmark(_) => fuzzy::score(&q, "Remove bookmark").is_some(),
                 MenuItem::CloudDisconnect(_) => fuzzy::score(&q, "Disconnect").is_some(),
                 MenuItem::CloudSignOut(_) => fuzzy::score(&q, "Sign out").is_some(),
+                MenuItem::DropboxMenu(_) => fuzzy::score(&q, "Dropbox").is_some(),
                 MenuItem::Dropbox(l, ..) => fuzzy::score(&q, l).is_some(),
                 MenuItem::DropboxUnsync(_) => fuzzy::score(&q, "Keep online only").is_some(),
                 MenuItem::DropboxExcluded => fuzzy::score(&q, "Dropbox folders not synced").is_some(),
@@ -160,16 +161,30 @@ impl FileFlier {
         menu.cursor = step(menu.cursor, up, down, selectable.len());
 
         let width = 320.0;
-        let est_h =
-            52.0 + entries.iter().map(|(_, it)| if matches!(it, MenuItem::Sep) { 9.0 } else { 30.0 }).sum::<f32>();
+        let est_h = 52.0
+            + entries
+                .iter()
+                .map(|(_, it)| match it {
+                    MenuItem::Sep => 9.0,
+                    MenuItem::Colors(..) | MenuItem::Rating(..) => 34.0,
+                    _ => 30.0,
+                })
+                .sum::<f32>();
         let screen = ctx.content_rect();
         // A menu taller than the window starts at the top and scrolls.
         let list_max_h = (screen.height() - 52.0 - 24.0).max(60.0);
         let est_h = est_h.min(list_max_h + 52.0);
-        let pos = pos2(
-            menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left() + 4.0)),
-            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top() + 4.0)),
-        );
+        // Below the click if it fits, else above it (as desktop menus open), else as
+        // low as fits.
+        let y = if menu.pos.y + est_h + 16.0 <= screen.bottom() {
+            menu.pos.y
+        } else if menu.pos.y - est_h - 4.0 >= screen.top() + 4.0 {
+            menu.pos.y - est_h - 4.0
+        } else {
+            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top() + 4.0))
+        };
+        let pos =
+            pos2(menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left() + 4.0)), y);
         let mut chosen: Option<MenuItem> = None;
         let mut picked_color: Option<(Vec<PathBuf>, ColorPick)> = None;
         let mut picked_rating: Option<(Vec<PathBuf>, u8)> = None;
@@ -234,6 +249,7 @@ impl FileFlier {
                             MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
                             MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
                             MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
+                            MenuItem::DropboxMenu(_) => ("Dropbox ›".into(), vec![], RowIcon::None),
                             MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
                             MenuItem::DropboxUnsync(_) => {
                                 ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
@@ -294,6 +310,23 @@ impl FileFlier {
             Some(MenuItem::Unbookmark(p)) => self.toggle_bookmark(p),
             Some(MenuItem::CloudDisconnect(n)) => self.cloud_disconnect(n, false),
             Some(MenuItem::CloudSignOut(n)) => self.cloud_disconnect(n, true),
+            Some(MenuItem::DropboxMenu(paths)) => {
+                let mut items: Vec<MenuItem> = crate::dropbox::options(&paths)
+                    .into_iter()
+                    .map(|o| MenuItem::Dropbox(o.label, o.verb, paths.clone()))
+                    .collect();
+                let folders = paths.iter().all(|p| p.is_dir() && !crate::dropbox::roots().contains(p));
+                if items.is_empty() {
+                    self.error("Dropbox didn't answer. Is the Dropbox app running?");
+                } else {
+                    if folders {
+                        items.push(MenuItem::Sep);
+                        items.push(MenuItem::DropboxUnsync(paths));
+                    }
+                    // Where this menu was, as a submenu would.
+                    self.actions.push(Action::OpenMenu(pos, items));
+                }
+            }
             Some(MenuItem::Dropbox(_, verb, paths)) => crate::dropbox::run(paths, verb, ctx),
             Some(MenuItem::DropboxUnsync(paths)) => self.dialog = Some(Dialog::DropboxUnsync(paths)),
             Some(MenuItem::DropboxExcluded) => {

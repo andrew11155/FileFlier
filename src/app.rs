@@ -151,6 +151,8 @@ pub enum MenuItem {
     Colors(Vec<PathBuf>, Option<u8>),
     /// A row of stars rating these items (Ratings extension), with their current rating.
     Rating(Vec<PathBuf>, u8),
+    /// "Dropbox ›": opens a menu of Dropbox's items for these files.
+    DropboxMenu(Vec<PathBuf>),
     /// A Dropbox item (Dropbox extension): label, verb, the items it's for.
     Dropbox(String, String, Vec<PathBuf>),
     /// Stop syncing these Dropbox folders on this computer.
