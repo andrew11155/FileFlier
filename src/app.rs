@@ -1208,15 +1208,16 @@ impl FileFlier {
     /// Set (or clear) the color of folders, animating the change.
     pub fn color_folders(&mut self, paths: Vec<PathBuf>, color: Option<u8>, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
+        let accent = self.pal().accent;
         self.tint_anims.retain(|_, (_, start)| now - *start < 1.0);
         for p in &paths {
             let Some(key) = p.to_str().map(str::to_string) else { continue };
-            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, p);
+            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, accent, p);
             match color {
                 Some(c) => self.cfg.folder_colors.insert(key, c),
                 None => self.cfg.folder_colors.remove(&key),
             };
-            if before != crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, p) {
+            if before != crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, accent, p) {
                 self.tint_anims.insert(p.clone(), (before, now));
             }
         }
@@ -1227,10 +1228,11 @@ impl FileFlier {
     /// Switch the folder color scheme; colored folders crossfade to their new colors.
     pub fn set_folder_scheme(&mut self, scheme: u8, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
+        let accent = self.pal().accent;
         let old = self.cfg.folder_scheme;
         for k in self.cfg.folder_colors.keys() {
             let p = PathBuf::from(k);
-            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, old, &p);
+            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, old, accent, &p);
             self.tint_anims.insert(p, (before, now));
         }
         self.cfg.folder_scheme = scheme;

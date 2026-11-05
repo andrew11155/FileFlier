@@ -91,9 +91,11 @@ the same on every desktop environment.
   the icon fades to the new color with a little pop. Colors show in every
   view, the columns view and tabs, follow a folder when you rename it in File
   Flier, and are kept in File Flier's settings.
-  *Settings → Folder colors* picks the scheme they're drawn in: **Pastel**,
-  **Vivid** (a more saturated rainbow), **Dracula**, **Nord** or **Gruvbox**.
-  Folders keep their color (red stays red) and fade into the new scheme.
+  *Settings → Folder colors* picks the scheme they're drawn in: **Pastel**
+  (a soft rainbow), **Earth** (terracotta, ochre, olive, moss…), **Ocean**
+  (navy, sky, teal, seafoam…) or **Mono** (tints and shades of your accent
+  color, so it follows the theme). Each folder keeps its slot, so the first
+  color in one scheme becomes the first in the next, fading across.
 - **Compress and extract.** Right-click → *Compress to ZIP* zips the selection.
   *Extract here* unpacks ZIP, tar, tar.gz and gzip files; 7z, RAR, tar.xz,
   tar.zst and more work when `bsdtar` is installed (it's included in the
