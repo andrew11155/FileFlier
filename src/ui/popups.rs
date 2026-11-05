@@ -159,29 +159,65 @@ impl FileFlier {
             .collect();
         menu.cursor = step(menu.cursor, up, down, selectable.len());
 
-        let width = 320.0;
+        let col_w = 320.0;
         let screen = ctx.content_rect();
-        // Every item stays in view: in a window too short for the menu, the rows get
-        // shorter (down to a minimum) instead of the menu scrolling.
-        let seps = entries.iter().filter(|(_, it)| matches!(it, MenuItem::Sep)).count() as f32;
-        let wide = entries.iter().filter(|(_, it)| matches!(it, MenuItem::Colors(..) | MenuItem::Rating(..))).count();
-        let rows = entries.len() as f32 - seps - wide as f32;
-        let fixed = 52.0 + 34.0 * wide as f32;
-        let fits = |row: f32, sep: f32| fixed + rows * row + seps * sep + 24.0 <= screen.height();
-        let sep_h = if fits(30.0, 9.0) { 9.0 } else { 5.0 };
-        let row_h = if fits(30.0, sep_h) {
-            30.0
-        } else {
-            ((screen.height() - 24.0 - fixed - seps * sep_h) / rows.max(1.0)).clamp(20.0, 30.0).floor()
+        // Every item stays in view. In a window too short for the menu its rows get
+        // shorter; if that isn't enough it's laid out in two columns side by side.
+        let avail = (screen.height() - 24.0 - 52.0).max(60.0);
+        let height_of = |list: &[(usize, &MenuItem)], row: f32, sep: f32| -> f32 {
+            list.iter()
+                .map(|(_, it)| match it {
+                    MenuItem::Sep => sep,
+                    MenuItem::Colors(..) | MenuItem::Rating(..) => 34.0,
+                    _ => row,
+                })
+                .sum()
         };
-        let est_h = fixed + rows * row_h + seps * sep_h;
+        // The row height that fits `list` in the window (at least 24 points), if any.
+        let fit = |list: &[(usize, &MenuItem)]| -> Option<(f32, f32)> {
+            if height_of(list, 30.0, 9.0) <= avail {
+                return Some((30.0, 9.0));
+            }
+            let rows = list
+                .iter()
+                .filter(|(_, it)| !matches!(it, MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..)))
+                .count()
+                .max(1) as f32;
+            let row = ((avail - height_of(list, 0.0, 5.0)) / rows).floor();
+            (row >= 24.0).then_some((row.min(30.0), 5.0))
+        };
+        let (columns, row_h, sep_h): (Vec<Vec<(usize, &MenuItem)>>, f32, f32) = match fit(&entries) {
+            Some((row, sep)) => (vec![entries.clone()], row, sep),
+            None => {
+                // Split at the separator nearest the middle, so groups stay together.
+                let total = height_of(&entries, 30.0, 9.0);
+                let mut best = (entries.len() / 2, f32::MAX, false);
+                let mut acc = 0.0;
+                for (k, (_, it)) in entries.iter().enumerate() {
+                    if matches!(it, MenuItem::Sep) && (acc - total / 2.0).abs() < best.1 {
+                        best = (k, (acc - total / 2.0).abs(), true);
+                    }
+                    acc += height_of(&entries[k..=k], 30.0, 9.0);
+                }
+                let (k, _, at_sep) = best;
+                let left = entries[..k].to_vec();
+                let right = entries[if at_sep { k + 1 } else { k }..].to_vec();
+                let (row, sep) = match (fit(&left), fit(&right)) {
+                    (Some(l), Some(r)) => (l.0.min(r.0), 5.0),
+                    _ => (24.0, 5.0),
+                };
+                (vec![left, right], row, sep)
+            }
+        };
+        let width = col_w * columns.len() as f32 + 8.0 * (columns.len() as f32 - 1.0);
+        let est_h = 52.0 + columns.iter().map(|c| height_of(c, row_h, sep_h)).fold(0.0, f32::max);
         // Each menu gets an area of its own, so it isn't shown at the size of the one
         // before it; egui lays a new area out unseen first, and after that its measured
         // height places it.
         let area_id = Id::new("cmd_menu").with(menu.opened);
         let est_h = ctx.memory(|m| m.area_rect(area_id)).map_or(est_h, |r| r.height());
-        // A menu taller than the window starts at the top and scrolls.
-        let list_max_h = (screen.height() - 52.0 - 24.0).max(60.0);
+        // Only if even two columns can't fit does the menu scroll.
+        let list_max_h = avail;
         let est_h = est_h.min(list_max_h + 52.0);
         // Below the click if it fits, else above it (as desktop menus open), else as
         // low as fits.
@@ -209,8 +245,9 @@ impl FileFlier {
                 resp.request_focus();
                 ui.add_space(6.0);
                 let mut sel_i = 0;
-                egui::ScrollArea::vertical().max_height(list_max_h).auto_shrink([false, true]).show(ui, |ui| {
-                    for (i, item) in &entries {
+                let mut draw = |ui: &mut Ui, list: &[(usize, &MenuItem)]| {
+                    let width = col_w;
+                    for (i, item) in list {
                         if let MenuItem::Sep = item {
                             let (r, _) = ui.allocate_exact_size(vec2(width, sep_h), Sense::hover());
                             ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal.border));
@@ -276,6 +313,18 @@ impl FileFlier {
                         }
                         sel_i += 1;
                     }
+                };
+                egui::ScrollArea::vertical().max_height(list_max_h).auto_shrink([false, true]).show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                        for col in &columns {
+                            ui.vertical(|ui| {
+                                ui.set_width(col_w);
+                                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                                draw(ui, col);
+                            });
+                        }
+                    });
                 });
                 if entries.is_empty() {
                     text(
