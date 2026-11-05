@@ -383,7 +383,8 @@ fn saturation([r, g, b]: [u8; 3]) -> f32 {
 }
 
 /// Recolors a folder to `color`: its main color becomes `color`, and its other colored
-/// shades keep their distance to white. White and grey parts stay as they are.
+/// parts (the darker back, the emblem) take `color`'s hue too, a shade lighter or darker
+/// as they were. White and grey parts stay as they are.
 fn recolor(rgba: &mut [u8], color: Color32) {
     let px = rgba.as_chunks_mut::<4>().0;
     // The folder's main color: its most common solid, colored one (the front sheet).
@@ -396,7 +397,7 @@ fn recolor(rgba: &mut [u8], color: Color32) {
         }
     }
     let Some((sum, n)) = counts.into_values().max_by_key(|(_, n)| *n) else { return };
-    let main = sum.map(|s| s / n as f32);
+    let main = sum.map(|s| (s / n as f32).round() as u8);
     let target = [color.r(), color.g(), color.b()];
     for [r, g, b, _] in px.iter_mut() {
         let s = saturation([*r, *g, *b]);
@@ -411,13 +412,50 @@ fn recolor(rgba: &mut [u8], color: Color32) {
     }
 }
 
-/// Moves `orig` from a folder whose main color is `main` to one in `target`, keeping
-/// each channel's distance to white in proportion.
-fn shade(target: [u8; 3], main: [f32; 3], orig: [u8; 3]) -> [u8; 3] {
-    std::array::from_fn(|i| {
-        let t = (255.0 - orig[i] as f32) / (255.0 - main[i]).max(8.0);
-        (255.0 - (255.0 - target[i] as f32) * t).clamp(0.0, 255.0).round() as u8
-    })
+/// Moves `orig` from a folder whose main color is `main` to one in `target`: `target`'s
+/// hue, with saturation and lightness changed from `target`'s as `orig`'s differ from
+/// `main`'s. So `main` itself becomes exactly `target`.
+fn shade(target: [u8; 3], main: [u8; 3], orig: [u8; 3]) -> [u8; 3] {
+    let (ht, st, lt) = hsl(target);
+    let (_, sm, lm) = hsl(main);
+    let (_, so, lo) = hsl(orig);
+    let s = (st * so / sm.max(0.01)).clamp(0.0, 1.0);
+    let l = if lo >= lm { lt + (lo - lm) * (1.0 - lt) / (1.0 - lm).max(0.01) } else { lt * lo / lm.max(0.01) };
+    rgb(ht, s, l.clamp(0.0, 1.0))
+}
+
+fn hsl([r, g, b]: [u8; 3]) -> (f32, f32, f32) {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d == 0.0 {
+        return (0.0, 0.0, l);
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if max == r {
+        ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (h * 60.0, s, l)
+}
+
+fn rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match (h / 60.0) as u32 % 6 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    [r, g, b].map(|v| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8)
 }
 
 /// Draws an icon of side `side`, centered in `r` and on the pixel grid.
