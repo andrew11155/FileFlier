@@ -53,6 +53,62 @@ enum ItemAction {
     ClearSelection,
 }
 
+/// Empty space at the end of each details row: right-click it for the folder's menu,
+/// or drag from it to select with a rectangle.
+const ROW_END_GAP: f32 = 40.0;
+
+/// The details view's columns after Name, which can be dragged into any order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetaCol {
+    Type,
+    Items,
+    Size,
+    Rating,
+    Modified,
+}
+
+impl MetaCol {
+    pub const ALL: [MetaCol; 5] = [MetaCol::Type, MetaCol::Items, MetaCol::Size, MetaCol::Rating, MetaCol::Modified];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            MetaCol::Type => "type",
+            MetaCol::Items => "items",
+            MetaCol::Size => "size",
+            MetaCol::Rating => "rating",
+            MetaCol::Modified => "modified",
+        }
+    }
+
+    /// The column's slot width, and where its contents sit inside the slot.
+    fn slot(self) -> (f32, f32, f32) {
+        match self {
+            MetaCol::Type => (150.0, 0.0, 140.0),
+            MetaCol::Items => (70.0, 0.0, 60.0),
+            MetaCol::Size => (110.0, 0.0, 86.0),
+            MetaCol::Rating => (88.0, 6.0, 76.0),
+            MetaCol::Modified => (132.0, 0.0, 132.0),
+        }
+    }
+
+    /// The saved order (by id), with unknown ids dropped and missing columns added in
+    /// their usual place.
+    pub fn order(saved: &[String]) -> Vec<MetaCol> {
+        let mut v: Vec<MetaCol> = Vec::new();
+        for c in saved.iter().filter_map(|s| MetaCol::ALL.into_iter().find(|c| c.id() == s.as_str())) {
+            if !v.contains(&c) {
+                v.push(c);
+            }
+        }
+        for c in MetaCol::ALL {
+            if !v.contains(&c) {
+                v.push(c);
+            }
+        }
+        v
+    }
+}
+
 /// Column layout for the details view.
 struct Cols {
     name: f32,
@@ -61,33 +117,47 @@ struct Cols {
     items: Option<(f32, f32)>,
     size: (f32, f32),
     modified: Option<(f32, f32)>,
+    /// The shown columns after Name, left to right, with their slots.
+    slots: Vec<(MetaCol, f32, f32)>,
 }
 
 impl Cols {
-    fn new(r: Rect, show_items: bool, show_rating: bool) -> Self {
+    fn new(r: Rect, show_items: bool, show_rating: bool, order: &[MetaCol]) -> Self {
         let w = r.width();
-        let mut right = r.right() - 12.0;
-        let modified = (w > 700.0).then(|| {
-            right -= 132.0;
-            (right, right + 132.0)
-        });
-        let rating = (show_rating && w > 620.0).then(|| {
-            right -= 88.0;
-            (right + 6.0, right + 76.0)
-        });
-        let size = {
-            right -= 110.0;
-            (right, right + 86.0)
+        let shown = |c: MetaCol| match c {
+            MetaCol::Modified => w > 700.0,
+            MetaCol::Rating => show_rating && w > 620.0,
+            MetaCol::Size => true,
+            MetaCol::Items => show_items && w > 560.0,
+            MetaCol::Type => w > 440.0,
         };
-        let items = (show_items && w > 560.0).then(|| {
-            right -= 70.0;
-            (right, right + 60.0)
-        });
-        let ty = (w > 440.0).then(|| {
-            right -= 150.0;
-            (right, right + 140.0)
-        });
-        Cols { name: right - 12.0, rating, ty, items, size, modified }
+        let cols: Vec<MetaCol> = order.iter().copied().filter(|&c| shown(c)).collect();
+        let total: f32 = cols.iter().map(|c| c.slot().0).sum();
+        let start = r.right() - 12.0 - total;
+        let mut out = Cols {
+            name: start - 12.0,
+            rating: None,
+            ty: None,
+            items: None,
+            size: (0.0, 0.0),
+            modified: None,
+            slots: vec![],
+        };
+        let mut x = start;
+        for c in cols {
+            let (width, l, rr) = c.slot();
+            let span = (x + l, x + rr);
+            match c {
+                MetaCol::Type => out.ty = Some(span),
+                MetaCol::Items => out.items = Some(span),
+                MetaCol::Size => out.size = span,
+                MetaCol::Rating => out.rating = Some(span),
+                MetaCol::Modified => out.modified = Some(span),
+            }
+            out.slots.push((c, x, x + width));
+            x += width;
+        }
+        out
     }
 }
 
@@ -469,7 +539,16 @@ impl FileFlier {
 
         // ---- column header (details only)
         let mut list_rect = rect;
-        let cols = Cols::new(rect, self.cfg.show_item_counts, show_rating);
+        // Details and tree rows end a little short, leaving empty space to click.
+        let row_gap = if matches!(view, ViewMode::Details | ViewMode::Tree) { ROW_END_GAP } else { 0.0 };
+        let col_order = MetaCol::order(&self.cfg.column_order);
+        let cols = Cols::new(
+            Rect::from_min_max(rect.min, pos2(rect.right() - row_gap, rect.bottom())),
+            self.cfg.show_item_counts,
+            show_rating,
+            &col_order,
+        );
+        let mut new_col_order: Option<Vec<MetaCol>> = None;
         let mut header_actions: Vec<Action> = Vec::new();
         if view == ViewMode::Details {
             let h = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER_H));
@@ -490,7 +569,8 @@ impl FileFlier {
             let mut header =
                 |ui: &mut Ui, key: Option<SortKey>, label: &str, l: f32, r: f32, right_align: bool, sep: bool| {
                     let hr = Rect::from_min_max(pos2(l, h.top()), pos2(r, h.bottom()));
-                    let resp = ui.interact(hr, Id::new(("hdr", idx, label)), Sense::click());
+                    let sense = if key == Some(SortKey::Name) { Sense::click() } else { Sense::click_and_drag() };
+                    let resp = ui.interact(hr, Id::new(("hdr", idx, label)), sense);
                     let p = ui.painter();
                     let active = key.is_some() && key == Some(sort.key);
                     let color = if resp.hovered() || active { pal.text_strong } else { pal.text_dim };
@@ -530,28 +610,75 @@ impl FileFlier {
                             SortKey::Rating => Command::SortByRating,
                         }));
                     }
+                    resp
                 };
             header(ui, Some(SortKey::Name), "Name", h.left() + 48.0, cols.name, false, false);
-            if let Some((l, r)) = cols.ty {
-                // The flat view shows where each file is instead of its type.
-                if flat {
-                    header(ui, Some(SortKey::Folder), "Folder", l, r, false, true);
-                } else {
-                    header(ui, Some(SortKey::Kind), "Type", l, r, false, true);
+            // The other columns, in their order; drag a header to move its column.
+            let mut dragged: Option<(MetaCol, egui::Response)> = None;
+            for &(c, ..) in &cols.slots {
+                let resp = match c {
+                    // The flat view shows where each file is instead of its type.
+                    MetaCol::Type => {
+                        let (l, r) = cols.ty.unwrap_or_default();
+                        if flat {
+                            header(ui, Some(SortKey::Folder), "Folder", l, r, false, true)
+                        } else {
+                            header(ui, Some(SortKey::Kind), "Type", l, r, false, true)
+                        }
+                    }
+                    MetaCol::Items => {
+                        let (l, r) = cols.items.unwrap_or_default();
+                        header(ui, None, "Items", l, r, false, true)
+                    }
+                    MetaCol::Size => header(ui, Some(SortKey::Size), "Size", cols.size.0, cols.size.1, true, true),
+                    MetaCol::Rating => {
+                        let (l, r) = cols.rating.unwrap_or_default();
+                        header(ui, Some(SortKey::Rating), "Rating", l, r, false, true)
+                    }
+                    MetaCol::Modified => {
+                        let (l, r) = cols.modified.unwrap_or_default();
+                        header(ui, Some(SortKey::Modified), "Modified", l, r, false, true)
+                    }
+                };
+                if resp.dragged() || resp.drag_stopped() {
+                    dragged = Some((c, resp));
                 }
             }
-            if let Some((l, r)) = cols.items {
-                header(ui, None, "Items", l, r, false, true);
-            }
-            header(ui, Some(SortKey::Size), "Size", cols.size.0, cols.size.1, true, true);
-            if let Some((l, r)) = cols.rating {
-                header(ui, Some(SortKey::Rating), "Rating", l, r, false, true);
-            }
-            if let Some((l, r)) = cols.modified {
-                header(ui, Some(SortKey::Modified), "Modified", l, r, false, true);
+            if let Some((c, resp)) = dragged
+                && let Some(px) = ui.ctx().pointer_latest_pos().map(|p| p.x)
+            {
+                // Where it would go: before the first column whose middle is right of the pointer.
+                let others: Vec<(MetaCol, f32, f32)> = cols.slots.iter().copied().filter(|s| s.0 != c).collect();
+                let at = others.iter().position(|&(_, l, r)| px < (l + r) / 2.0).unwrap_or(others.len());
+                let line_x = match others.get(at) {
+                    Some(&(_, l, _)) => l - 4.0,
+                    None => others.last().map_or(cols.name + 8.0, |&(_, _, r)| r),
+                };
+                let p = ui.painter();
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                p.vline(line_x, h.top() + 4.0..=h.bottom() - 4.0, Stroke::new(2.0, pal.accent));
+                if resp.drag_stopped() {
+                    // Put the column there, keeping the hidden ones where they were.
+                    let mut order: Vec<MetaCol> = col_order.iter().copied().filter(|&x| x != c).collect();
+                    let pos = match others.get(at) {
+                        Some(&(next, ..)) => order.iter().position(|&x| x == next).unwrap_or(order.len()),
+                        None => others
+                            .last()
+                            .and_then(|&(prev, ..)| order.iter().position(|&x| x == prev))
+                            .map_or(order.len(), |i| i + 1),
+                    };
+                    order.insert(pos, c);
+                    if order != col_order {
+                        new_col_order = Some(order);
+                    }
+                }
             }
         }
         self.actions.extend(header_actions);
+        if let Some(order) = new_col_order {
+            self.cfg.column_order = order.iter().map(|c| c.id().to_string()).collect();
+            self.cfg.save();
+        }
         let tab = self.panes[idx].tab_mut();
         let meta = &mut self.meta;
 
@@ -640,8 +767,12 @@ impl FileFlier {
         let sel_fill = if is_active { pal.accent } else { pal.accent_dim };
 
         // Background (empty space) interaction sits behind the items, which win where they overlap.
-        let bg = ui.interact(list_rect, Id::new(("list_bg", idx)), Sense::click());
-        if bg.clicked() {
+        // Dragging on it selects with a rectangle.
+        let bg = ui.interact(list_rect, Id::new(("list_bg", idx)), Sense::click_and_drag());
+        let band_key = Id::new(("band", idx));
+        let band_add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+        let mut band_hits: Option<(Vec<usize>, Vec<PathBuf>)> = None;
+        if bg.clicked() && !band_add {
             item_actions.push(ItemAction::ClearSelection);
         }
         if bg.secondary_clicked() {
@@ -659,11 +790,67 @@ impl FileFlier {
                     ui.multiply_opacity(nav_t);
                     area.show_rows(ui, pitch, rows, |ui, range| {
                         super::dnd::drag_scroll(ui, list_rect);
+                        // Rectangle selection, in content coordinates (it scrolls with the rows).
+                        let origin = pos2(ui.cursor().left(), ui.cursor().top() - range.start as f32 * pitch);
+                        if bg.drag_started()
+                            && let Some(press) = ui.input(|i| i.pointer.press_origin())
+                        {
+                            let base: Vec<PathBuf> =
+                                if band_add { tab.selected.iter().cloned().collect() } else { Vec::new() };
+                            ui.ctx().data_mut(|d| d.insert_temp(band_key, (press - origin.to_vec2(), base)));
+                        }
+                        let band: Option<(egui::Pos2, Vec<PathBuf>)> = ui.ctx().data(|d| d.get_temp(band_key));
+                        if bg.dragged()
+                            && let Some((start, base)) = band
+                            && let Some(now) = ui.ctx().pointer_latest_pos()
+                        {
+                            super::dnd::edge_scroll(ui, list_rect);
+                            let sel = Rect::from_two_pos(start + origin.to_vec2(), now);
+                            let shown = sel.intersect(list_rect);
+                            let lp = ui.ctx().layer_painter(egui::LayerId::new(
+                                egui::Order::Foreground,
+                                Id::new(("band_paint", idx)),
+                            ));
+                            let lp = lp.with_clip_rect(list_rect);
+                            lp.rect_filled(shown, pal.round(2.0), pal.accent.gamma_multiply(0.14));
+                            lp.rect_stroke(shown, pal.round(2.0), Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                            ui.ctx().data_mut(|d| d.insert_temp(band_key.with("last"), sel));
+                            // The items it touches, from the layout (not just the rows on screen).
+                            let w = ui.available_width();
+                            let mut hits = Vec::new();
+                            let first = (((sel.top() - origin.y) / pitch).floor().max(0.0)) as usize;
+                            let last = (((sel.bottom() - origin.y) / pitch).floor().max(0.0)) as usize;
+                            for row in first..=last.min(rows.saturating_sub(1)) {
+                                for c in 0..ncols {
+                                    let vi = row * ncols + c;
+                                    if vi >= tab.visible.len() {
+                                        break;
+                                    }
+                                    let top = origin.y + row as f32 * pitch;
+                                    let r = match view {
+                                        ViewMode::Details | ViewMode::Tree | ViewMode::Columns => Rect::from_min_max(
+                                            pos2(origin.x + 8.0, top),
+                                            pos2(origin.x + w - 8.0 - row_gap, top + pitch),
+                                        ),
+                                        _ => {
+                                            let cw = inner_w / ncols as f32;
+                                            let x = origin.x + 8.0 + c as f32 * cw;
+                                            Rect::from_min_size(pos2(x, top), vec2(cw, pitch)).shrink(4.0)
+                                        }
+                                    };
+                                    if r.intersects(sel) {
+                                        hits.push(vi);
+                                    }
+                                }
+                            }
+                            band_hits = Some((hits, base));
+                        }
                         if single_sel {
                             // Content-space origin of row 0, so the highlight scrolls with the rows.
                             let origin = ui.cursor().top() - range.start as f32 * pitch;
                             let w = ui.available_width();
-                            let cell_w = if view == ViewMode::List { inner_w / ncols as f32 } else { w - 16.0 };
+                            let cell_w =
+                                if view == ViewMode::List { inner_w / ncols as f32 } else { w - 16.0 - row_gap };
                             let x = ui.cursor().left() + 8.0 + anim_col * cell_w;
                             let width = if view == ViewMode::List { cell_w - 6.0 } else { cell_w };
                             let r =
@@ -682,7 +869,8 @@ impl FileFlier {
                                 }
                                 let item = match view {
                                     ViewMode::Details | ViewMode::Tree | ViewMode::Columns => {
-                                        row_rect.shrink2(vec2(8.0, 0.0))
+                                        let r = row_rect.shrink2(vec2(8.0, 0.0));
+                                        Rect::from_min_max(r.min, pos2(r.right() - row_gap, r.bottom()))
                                     }
                                     ViewMode::List => {
                                         let w = inner_w / ncols as f32;
@@ -1056,6 +1244,43 @@ impl FileFlier {
             )
             .inner;
         ctx.data_mut(|d| d.insert_temp(key, (out.state.offset.y, out.inner_rect.height())));
+        if let Some((hits, base)) = band_hits {
+            let tab = self.panes[idx].tab_mut();
+            let mut sel: std::collections::HashSet<PathBuf> = base.into_iter().collect();
+            for &vi in &hits {
+                if let Some(e) = tab.entry_at(vi) {
+                    sel.insert(e.path.clone());
+                }
+            }
+            tab.selected = sel;
+            if let Some(&vi) = hits.last() {
+                tab.cursor = vi;
+            }
+            self.actions.push(Action::Activate(idx));
+        }
+        // Let go: the rectangle fades out.
+        if bg.drag_stopped() {
+            ctx.data_mut(|d| d.insert_temp(band_key.with("fade"), ctx.input(|i| i.time)));
+        }
+        let faded: Option<(Rect, f64)> =
+            ctx.data(|d| Some((d.get_temp::<Rect>(band_key.with("last"))?, d.get_temp::<f64>(band_key.with("fade"))?)));
+        if let Some((r, at)) = faded {
+            let t = ((ctx.input(|i| i.time) - at) / fx.dur(0.18).max(0.001) as f64) as f32;
+            if t < 1.0 && !bg.dragged() {
+                let lp = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new(("band_paint", idx))));
+                let lp = lp.with_clip_rect(list_rect);
+                let a = 1.0 - t;
+                let r = r.intersect(list_rect);
+                lp.rect_filled(r, pal.round(2.0), pal.accent.gamma_multiply(0.14 * a));
+                lp.rect_stroke(r, pal.round(2.0), Stroke::new(1.0, pal.accent.gamma_multiply(a)), StrokeKind::Inside);
+                ctx.request_repaint();
+            } else if t >= 1.0 {
+                ctx.data_mut(|d| {
+                    d.remove::<f64>(band_key.with("fade"));
+                    d.remove::<Rect>(band_key.with("last"));
+                });
+            }
+        }
         if tints.animating.get() {
             ctx.request_repaint();
         }
@@ -1509,4 +1734,38 @@ pub fn background_menu() -> Vec<MenuItem> {
         MenuItem::Cmd(ToggleHidden),
         MenuItem::Cmd(Refresh),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_column_layout_is_unchanged() {
+        // The layout before columns could be reordered, from the right: Modified 132,
+        // Rating 88, Size 110, Items 70, Type 150.
+        let r = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 500.0));
+        let c = Cols::new(r, true, true, &MetaCol::order(&[]));
+        let right = 1000.0 - 12.0;
+        assert_eq!(c.modified, Some((right - 132.0, right)));
+        assert_eq!(c.rating, Some((right - 132.0 - 88.0 + 6.0, right - 132.0 - 88.0 + 76.0)));
+        assert_eq!(c.size, (right - 330.0, right - 330.0 + 86.0));
+        assert_eq!(c.items, Some((right - 400.0, right - 400.0 + 60.0)));
+        assert_eq!(c.ty, Some((right - 550.0, right - 550.0 + 140.0)));
+        assert_eq!(c.name, right - 550.0 - 12.0);
+    }
+
+    #[test]
+    fn column_order_is_read_and_completed() {
+        let saved: Vec<String> = ["modified", "bogus", "size", "modified"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            MetaCol::order(&saved),
+            [MetaCol::Modified, MetaCol::Size, MetaCol::Type, MetaCol::Items, MetaCol::Rating]
+        );
+        // Modified first: it now sits right after Name.
+        let r = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 500.0));
+        let c = Cols::new(r, true, true, &MetaCol::order(&saved));
+        assert_eq!(c.slots.first().map(|s| s.0), Some(MetaCol::Modified));
+        assert!(c.modified.unwrap().0 < c.size.0);
+    }
 }

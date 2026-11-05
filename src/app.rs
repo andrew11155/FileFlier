@@ -128,6 +128,12 @@ pub struct Conflict {
 }
 
 /// A popup command menu (right-click menu, ⋮ menu, filter options).
+/// Turns hover tooltips on or off (off: they never get past their delay).
+fn set_tooltips(ctx: &egui::Context, on: bool) {
+    let delay = if on { egui::style::Interaction::default().tooltip_delay } else { f32::INFINITY };
+    ctx.all_styles_mut(|s| s.interaction.tooltip_delay = delay);
+}
+
 /// A sidebar row Ctrl+Up / Ctrl+Down can go to.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SidebarStop {
@@ -346,6 +352,7 @@ impl FileFlier {
             active = cfg.session.active_pane.min(panes.len() - 1);
         }
         theme::apply(&cc.egui_ctx, cfg.palette(), cfg.ui_scale, cfg.animations);
+        set_tooltips(&cc.egui_ctx, cfg.tooltips);
         Self {
             cfg,
             geom: vec![PaneGeom { cols: 1, page_rows: 15 }; panes.len()],
@@ -419,6 +426,7 @@ impl FileFlier {
     /// Re-applies colors and scale after a settings change, and saves.
     pub fn apply_settings(&mut self, ctx: &egui::Context) {
         theme::apply(ctx, self.cfg.palette(), self.cfg.ui_scale, self.cfg.animations);
+        set_tooltips(ctx, self.cfg.tooltips);
         self.cfg.save();
     }
     pub fn tab(&self) -> &Tab {

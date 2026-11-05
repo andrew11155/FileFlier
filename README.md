@@ -48,6 +48,13 @@ the same on every desktop environment.
   doesn't follow symlinked folders, and stops at 200,000 files. Click the
   *Flat* badge in the bottom bar, press the shortcut again, or open another
   folder to leave it.
+- **Rectangle selection.** Drag on empty space (the gap at the end of the
+  details view's rows, below the last item, or between grid tiles) to select
+  everything the rectangle touches; hold `Ctrl` or `Shift` to add to the
+  selection. The list scrolls when you drag past its top or bottom.
+- **Columns.** Drag a column header (Type, Items, Size, Rating, Modified) to
+  move the column; the order is remembered. Click a header to sort by it.
+- **Tooltips** can be turned off in *Settings → Effects*.
 - **Bottom bar.** Each tab's bottom bar shows how many folders and files are
   listed (of how many) and how far down you've scrolled. *Settings → Bottom
   bar* hides any of those, and `Ctrl+J` hides or shows the whole bar.

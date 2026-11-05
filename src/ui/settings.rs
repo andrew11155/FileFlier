@@ -468,6 +468,13 @@ impl FileFlier {
                             restyle = true;
                         }
 
+                        if row(ui, pal, "Tooltips", "Hints that appear when you hover over buttons and items", |ui| {
+                            toggle(ui, pal, Id::new("tooltips"), self.cfg.tooltips)
+                        }) {
+                            self.cfg.tooltips = !self.cfg.tooltips;
+                            restyle = true;
+                        }
+
                         if row(ui, pal, "Frosted glass", "Translucent, floating panels over a soft backdrop", |ui| {
                             toggle(ui, pal, Id::new("glass"), self.cfg.glass)
                         }) {

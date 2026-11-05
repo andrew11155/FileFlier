@@ -112,6 +112,10 @@ pub struct Config {
     pub recent: Vec<PathBuf>,
     pub view: ViewMode,
     pub show_sidebar: bool,
+    /// The details view's columns after Name, by id, in order (see `MetaCol`).
+    pub column_order: Vec<String>,
+    /// Tooltips on hover.
+    pub tooltips: bool,
     /// The bar at the bottom of each tab (Ctrl+J), and which counters it shows.
     pub show_bottom_bar: bool,
     pub show_folder_count: bool,
@@ -204,6 +208,8 @@ impl Default for Config {
             recent: Vec::new(),
             view: ViewMode::Details,
             show_sidebar: true,
+            column_order: Vec::new(),
+            tooltips: true,
             show_bottom_bar: true,
             show_folder_count: true,
             show_file_count: true,
