@@ -8,8 +8,36 @@
 //! attributes (FAT/exFAT USB sticks, some network shares). Where a drive does
 //! support attributes they win, so a tag removed in another app is gone here too.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// Ratings known so far, for sorting (which can't reach `Meta`): from the index,
+/// from attributes read while sorting, and kept up to date as files are rated.
+static RATINGS: Mutex<Option<HashMap<PathBuf, u8>>> = Mutex::new(None);
+
+fn remember_rating(p: &Path, stars: u8) {
+    if let Ok(mut g) = RATINGS.lock() {
+        g.get_or_insert_with(HashMap::new).insert(p.to_path_buf(), stars);
+    }
+}
+
+/// A file's rating for sorting by rating. Each file's attribute is read once.
+pub fn sort_rating(p: &Path) -> u8 {
+    if let Ok(g) = RATINGS.lock()
+        && let Some(r) = g.as_ref().and_then(|m| m.get(p))
+    {
+        return *r;
+    }
+    let r = xattr::get(p, RATING_ATTR).ok().flatten().map_or(0, |v| parse_rating(&v));
+    remember_rating(p, r);
+    r
+}
+
+/// Baloo stores 0-10, two per star.
+fn parse_rating(v: &[u8]) -> u8 {
+    std::str::from_utf8(v).ok().and_then(|s| s.trim().parse::<u8>().ok()).map_or(0, |r| r.div_ceil(2).min(5))
+}
 
 const RATING_ATTR: &str = "user.baloo.rating";
 const TAGS_ATTR: &str = "user.xdg.tags";
@@ -101,6 +129,9 @@ impl Meta {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         m.file = file;
+        for (p, f) in &m.files {
+            remember_rating(p, f.rating);
+        }
         m
     }
 
@@ -148,10 +179,7 @@ impl Meta {
             return; // no attribute support here: the index is all there is
         };
         let found = FileMeta {
-            rating: rating.and_then(|v| String::from_utf8(v).ok()).and_then(|s| s.trim().parse::<u8>().ok()).map_or(
-                0,
-                |r| r.div_ceil(2).min(5), // Baloo stores 0-10, two per star
-            ),
+            rating: rating.map_or(0, |v| parse_rating(&v)),
             tags: tags.map(|v| split_tags(&String::from_utf8_lossy(&v))).unwrap_or_default(),
             index_only: false,
         };
@@ -168,9 +196,13 @@ impl Meta {
     /// Forget which files have been read, so they're read again (Ctrl+R).
     pub fn reread(&mut self) {
         self.seen.clear();
+        if let Ok(mut g) = RATINGS.lock() {
+            *g = Some(self.files.iter().map(|(p, f)| (p.clone(), f.rating)).collect());
+        }
     }
 
     fn put(&mut self, p: &Path, m: FileMeta) {
+        remember_rating(p, m.rating);
         if m.is_empty() {
             self.files.remove(p);
         } else {
@@ -420,6 +452,31 @@ mod tests {
         // Clearing the last thing about a file drops it from the index.
         m.set_rating(std::slice::from_ref(&c), 0);
         assert!(!m.files.contains_key(&c));
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn sorts_by_rating() {
+        use crate::fs_model::{Entry, Sort, SortKey, sort_entries};
+        let d = temp("d");
+        let names = ["a.txt", "b.txt", "c.txt"];
+        for n in names {
+            std::fs::write(d.join(n), "").unwrap();
+        }
+        let mut m = Meta::default();
+        m.set_rating(&[d.join("b.txt")], 5);
+        m.set_rating(&[d.join("c.txt")], 2);
+        let mut entries: Vec<Entry> = names.iter().filter_map(|n| Entry::from_path(&d.join(n))).collect();
+        let sort = Sort { key: SortKey::Rating, descending: true, ..Sort::default() };
+        sort_entries(&mut entries, sort);
+        let got: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(got, ["b.txt", "c.txt", "a.txt"]);
+        // Rated in another app (attribute only) still sorts in.
+        if xattr::set(&d.join("a.txt"), RATING_ATTR, Some("8")).is_ok() {
+            RATINGS.lock().unwrap().as_mut().unwrap().remove(&d.join("a.txt"));
+            sort_entries(&mut entries, sort);
+            assert_eq!(entries[1].name, "a.txt");
+        }
         std::fs::remove_dir_all(d).unwrap();
     }
 
