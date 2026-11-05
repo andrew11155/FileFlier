@@ -211,6 +211,7 @@ pub fn menu_row(ui: &mut Ui, pal: &Palette, selected: bool, icon: RowIcon, label
 }
 
 /// `danger` rows (Move to Trash, Delete) are drawn in red so they're easy to find.
+#[allow(clippy::too_many_arguments)]
 pub fn menu_row_ex(
     ui: &mut Ui,
     pal: &Palette,
