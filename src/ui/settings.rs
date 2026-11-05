@@ -468,6 +468,12 @@ impl FileFlier {
                     self.cfg.show_item_counts = !self.cfg.show_item_counts;
                     restyle = true;
                 }
+                if row(ui, pal, "Folder trees in the sidebar", "An arrow expands a folder into its subfolders", |ui| {
+                    toggle(ui, pal, Id::new("sb_trees"), self.cfg.sidebar_trees)
+                }) {
+                    self.cfg.sidebar_trees = !self.cfg.sidebar_trees;
+                    self.cfg.save();
+                }
                 let styles = [DateStyle::Iso, DateStyle::Relative, DateStyle::Friendly];
                 let si = styles.iter().position(|d| *d == self.cfg.date_style).unwrap_or(0);
                 if let Some(i) = row(ui, pal, "Dates", "", |ui| {

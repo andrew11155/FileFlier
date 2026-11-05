@@ -60,6 +60,21 @@ impl Item {
     }
 }
 
+/// A disclosure arrow, pointing down when `open`. GNOME's in the GNOME icon set.
+fn chevron(p: &egui::Painter, r: Rect, open: bool, c: egui::Color32) {
+    let name = if open { "symbolic/ui/pan-down-symbolic.svg" } else { "symbolic/ui/pan-end-symbolic.svg" };
+    if crate::adwaita::symbolic(p, r, name, c) {
+        return;
+    }
+    // The hand-drawn arrows are drawn smaller than the 16 px symbolic ones.
+    let r = if r.width() > 16.0 { r.shrink(4.0) } else { r };
+    if open {
+        icons::chevron_down(p, r, c);
+    } else {
+        icons::chevron_right(p, r, c);
+    }
+}
+
 impl FileFlier {
     /// Adds `item` to `out`, followed by its subfolders (recursively) if it's open.
     fn push_tree(
@@ -71,6 +86,7 @@ impl FileFlier {
         out: &mut Vec<Item>,
     ) {
         item.tree_key = section.to_string();
+        item.tree &= self.cfg.sidebar_trees;
         let key = (section.to_string(), item.path.clone());
         if !item.tree || !self.sidebar_open.contains(&key) {
             if item.tree && self.dir_tree.known_empty(&item.path, self.cfg.show_hidden) {
@@ -350,11 +366,7 @@ impl FileFlier {
                     };
                     p.text(pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, title, hf, hc);
                     let cr = Rect::from_center_size(pos2(hr.right() - 14.0, hr.center().y), vec2(16.0, 16.0));
-                    if collapsed {
-                        icons::chevron_right(p, cr, pal.text_dim);
-                    } else {
-                        icons::chevron_down(p, cr, pal.text_dim);
-                    }
+                    chevron(p, cr, !collapsed, pal.text_dim);
                     if hresp.clicked() {
                         toggles.push(title.to_string());
                     }
@@ -436,12 +448,7 @@ impl FileFlier {
                             let cresp =
                                 ui.interact(chev, Id::new(("sb_tree", &item.tree_key, &item.path)), Sense::click());
                             let c = if cresp.hovered() { pal.text_strong } else { pal.text_faint };
-                            let cr = chev.shrink(4.0);
-                            if item.open {
-                                icons::chevron_down(ui.painter(), cr, c);
-                            } else {
-                                icons::chevron_right(ui.painter(), cr, c);
-                            }
+                            chevron(ui.painter(), chev, item.open, c);
                             if cresp.clicked() {
                                 tree_toggles.push((item.tree_key.clone(), item.path.clone(), !item.open));
                                 chev_clicked = true;
@@ -454,7 +461,9 @@ impl FileFlier {
                             p.circle_filled(ir.center(), 6.0, *c);
                         } else if item.add_cloud || item.manage_tags {
                             let c = if resp.hovered() { pal.text_strong } else { pal.text_dim };
-                            icons::plus(p, ir.shrink(2.0), c);
+                            if !crate::adwaita::symbolic(p, ir, "symbolic/actions/list-add-symbolic.svg", c) {
+                                icons::plus(p, ir.shrink(2.0), c);
+                            }
                         } else if !item.more {
                             icons::place(p, ir, item.icon, pal);
                         }
@@ -527,7 +536,10 @@ impl FileFlier {
                             if eresp.hovered() {
                                 ui.painter().rect_filled(er, pal.round(4.0), pal.tab_hover);
                             }
-                            icons::eject(ui.painter(), er.shrink(4.0), c);
+                            let eject = "symbolic/actions/media-eject-symbolic.svg";
+                            if !crate::adwaita::symbolic(ui.painter(), er, eject, c) {
+                                icons::eject(ui.painter(), er.shrink(4.0), c);
+                            }
                             if eresp.on_hover_text("Eject — safe to unplug afterwards").clicked() {
                                 actions.push(Action::EjectVolume(v.clone()));
                                 eject_clicked = true;

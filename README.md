@@ -210,7 +210,8 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   system. Folders get Adwaita's folder icons, recolored to the theme's folder
   color or the color you gave a folder, and your Home, Desktop, Documents,
   Downloads, Music, Pictures, Videos, Public and Templates folders show their
-  emblems. The sidebar uses GNOME's symbolic icons, like GNOME Files. If
+  emblems. The sidebar uses GNOME's symbolic icons, like GNOME Files, down to its
+  arrows, eject and add buttons. If
   Adwaita isn't installed, File Flier's own icons are used.
 - **Accent color:** the theme's own, or one of eight colors. Text on the accent
   switches between black and white so it stays readable.
@@ -218,8 +219,9 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   `Ctrl 0`.
 - **Row density:** compact, comfortable or spacious.
 - **Default view** for new tabs.
-- **Browsing:** show hidden files, folders first, and item counts (turn these
-  off if network drives feel slow).
+- **Browsing:** show hidden files, folders first, item counts (turn these
+  off if network drives feel slow), and folder trees in the sidebar (the
+  arrows that expand a folder into its subfolders).
 - **Dates:** `2026-09-26 14:03`, "5 min ago" or `Sep 26, 2026`.
 - **Startup:** open your home folder, or restore last session's tabs and split
   panes.
