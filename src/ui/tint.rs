@@ -11,19 +11,27 @@ use egui::{Color32, Painter, Rect};
 use crate::icons;
 use crate::theme::Palette;
 
-/// The eight color slots. A folder keeps its slot when the scheme changes.
-pub const NAMES: [&str; 8] = ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"];
+/// How many color slots there are. A folder keeps its slot when the scheme changes.
+pub const SLOTS: usize = 8;
 
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
 
-/// The schemes: a name and a color for each slot, in `NAMES` order.
-pub const SCHEMES: [(&str, [Color32; 8]); 5] = [
+pub struct Scheme {
+    pub name: &'static str,
+    /// What each slot is called in this scheme (the tooltips in the Color row).
+    pub names: [&'static str; SLOTS],
+    /// The slot colors; `None` for Mono, which is made from the accent color.
+    colors: Option<[Color32; SLOTS]>,
+}
+
+pub const SCHEMES: [Scheme; 4] = [
     // Soft enough for dark and light themes alike.
-    (
-        "Pastel",
-        [
+    Scheme {
+        name: "Pastel",
+        names: ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"],
+        colors: Some([
             rgb(0xF4A6A6),
             rgb(0xF7C59F),
             rgb(0xF6E3A1),
@@ -32,69 +40,65 @@ pub const SCHEMES: [(&str, [Color32; 8]); 5] = [
             rgb(0xA9C8F0),
             rgb(0xC9B5EC),
             rgb(0xF2B5D4),
-        ],
-    ),
-    // The same rainbow with more color in it.
-    (
-        "Vivid",
-        [
-            rgb(0xEF6F6C),
-            rgb(0xF5A25D),
-            rgb(0xF2D45C),
-            rgb(0x7CCB7A),
-            rgb(0x4FC1B5),
-            rgb(0x6AA6F0),
-            rgb(0xA685E8),
-            rgb(0xEC7FB6),
-        ],
-    ),
-    // Dracula's accent colors (blue is its "comment" color).
-    (
-        "Dracula",
-        [
-            rgb(0xFF5555),
-            rgb(0xFFB86C),
-            rgb(0xF1FA8C),
-            rgb(0x50FA7B),
-            rgb(0x8BE9FD),
-            rgb(0x6272A4),
-            rgb(0xBD93F9),
-            rgb(0xFF79C6),
-        ],
-    ),
-    // Nord's Aurora and Frost; a muted pink to match.
-    (
-        "Nord",
-        [
-            rgb(0xBF616A),
-            rgb(0xD08770),
-            rgb(0xEBCB8B),
-            rgb(0xA3BE8C),
-            rgb(0x8FBCBB),
-            rgb(0x5E81AC),
-            rgb(0xB48EAD),
-            rgb(0xD8A1C4),
-        ],
-    ),
-    // Gruvbox's warm, earthy brights.
-    (
-        "Gruvbox",
-        [
-            rgb(0xFB4934),
-            rgb(0xFE8019),
-            rgb(0xFABD2F),
-            rgb(0xB8BB26),
-            rgb(0x8EC07C),
-            rgb(0x83A598),
-            rgb(0xB16286),
-            rgb(0xD3869B),
-        ],
-    ),
+        ]),
+    },
+    // Clay, ochre and greens: warm and natural.
+    Scheme {
+        name: "Earth",
+        names: ["Terracotta", "Clay", "Ochre", "Sand", "Olive", "Moss", "Sage", "Bark"],
+        colors: Some([
+            rgb(0xD0805F),
+            rgb(0xC9A27E),
+            rgb(0xD9A845),
+            rgb(0xE3D3A6),
+            rgb(0xA3A65A),
+            rgb(0x7E9A62),
+            rgb(0xA9BFA0),
+            rgb(0x8C6E5A),
+        ]),
+    },
+    // Blues, teals and sea greens.
+    Scheme {
+        name: "Ocean",
+        names: ["Navy", "Blue", "Sky", "Ice", "Teal", "Seafoam", "Kelp", "Slate"],
+        colors: Some([
+            rgb(0x3D5A8A),
+            rgb(0x4F86C6),
+            rgb(0x8EC3E8),
+            rgb(0xC8E3EE),
+            rgb(0x3FA7A0),
+            rgb(0x8FD3BF),
+            rgb(0x5F8F6E),
+            rgb(0x7D8DA3),
+        ]),
+    },
+    // Tints and shades of the accent color, so it follows the theme.
+    Scheme {
+        name: "Mono",
+        names: ["Lightest", "Lighter", "Light", "Soft", "Accent", "Deep", "Darker", "Darkest"],
+        colors: None,
+    },
 ];
 
-/// The colors of scheme `i` (the first one if out of range).
-pub fn scheme(i: u8) -> &'static [Color32; 8] {
-    &SCHEMES.get(i as usize).unwrap_or(&SCHEMES[0]).1
+/// The colors of scheme `i` (the first one if out of range), for `accent`.
+pub fn scheme(i: u8, accent: Color32) -> [Color32; SLOTS] {
+    let s = SCHEMES.get(i as usize).unwrap_or(&SCHEMES[0]);
+    s.colors.unwrap_or_else(|| mono(accent))
+}
+
+/// Eight steps from a pale tint of `accent`, through it, to a dark shade.
+fn mono(accent: Color32) -> [Color32; SLOTS] {
+    let (white, black) = (Color32::WHITE, Color32::from_rgb(10, 10, 14));
+    [
+        lerp(accent, white, 0.72),
+        lerp(accent, white, 0.52),
+        lerp(accent, white, 0.32),
+        lerp(accent, white, 0.14),
+        accent,
+        lerp(accent, black, 0.22),
+        lerp(accent, black, 0.40),
+        lerp(accent, black, 0.56),
+    ]
 }
 
 /// How long the change of color takes, in seconds.
@@ -103,9 +107,9 @@ const ANIM: f64 = 0.45;
 /// Folders whose color just changed: the color they had, and when.
 pub type TintAnims = HashMap<PathBuf, (Option<Color32>, f64)>;
 
-pub fn color_of(colors: &BTreeMap<String, u8>, scheme_i: u8, path: &Path) -> Option<Color32> {
+pub fn color_of(colors: &BTreeMap<String, u8>, scheme_i: u8, accent: Color32, path: &Path) -> Option<Color32> {
     let i = *colors.get(path.to_str()?)?;
-    scheme(scheme_i).get(i as usize).copied()
+    scheme(scheme_i, accent).get(i as usize).copied()
 }
 
 /// Everything needed to draw tinted folders during one frame.
@@ -125,7 +129,7 @@ impl<'a> Tints<'a> {
 
     /// Draw the folder icon for `path` in `r`, in its color.
     pub fn folder(&self, p: &Painter, r: Rect, pal: &Palette, path: &Path) {
-        let to = color_of(self.colors, self.scheme, path);
+        let to = color_of(self.colors, self.scheme, pal.accent, path);
         let Some(&(from, start)) = self.anims.get(path) else {
             return icons::folder_tinted(p, r, pal, to);
         };
@@ -151,27 +155,41 @@ fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
 mod tests {
     use super::*;
 
+    const ACCENT: Color32 = Color32::from_rgb(53, 132, 228);
+
     #[test]
     fn schemes_are_distinct() {
-        for (i, a) in SCHEMES.iter().enumerate() {
-            for b in &SCHEMES[i + 1..] {
-                assert_ne!(a.1, b.1, "{} and {} are the same", a.0, b.0);
+        let all: Vec<_> = (0..SCHEMES.len() as u8).map(|i| scheme(i, ACCENT)).collect();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a, b, "two schemes are the same");
             }
             // Within a scheme, every slot is its own color.
-            for (j, c) in a.1.iter().enumerate() {
-                assert!(!a.1[j + 1..].contains(c), "{} repeats a color", a.0);
+            for (j, c) in a.iter().enumerate() {
+                assert!(!a[j + 1..].contains(c), "{} repeats a color", SCHEMES[i].name);
             }
         }
+    }
+
+    #[test]
+    fn mono_follows_the_accent() {
+        let m = scheme(3, ACCENT);
+        assert_eq!(m[4], ACCENT);
+        assert_ne!(scheme(3, Color32::from_rgb(200, 60, 60)), m);
+        // Light to dark.
+        let lum = |c: Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
+        assert!(m.windows(2).all(|w| lum(w[0]) > lum(w[1])));
     }
 
     #[test]
     fn looks_up_and_blends() {
         let mut colors = BTreeMap::new();
         colors.insert("/home/me/Photos".to_string(), 5u8);
-        assert_eq!(color_of(&colors, 0, Path::new("/home/me/Photos")), Some(SCHEMES[0].1[5]));
-        assert_eq!(color_of(&colors, 2, Path::new("/home/me/Photos")), Some(rgb(0x6272A4)));
-        assert_eq!(color_of(&colors, 0, Path::new("/home/me")), None);
-        assert_eq!(scheme(99), scheme(0));
+        let photos = Path::new("/home/me/Photos");
+        assert_eq!(color_of(&colors, 0, ACCENT, photos), Some(scheme(0, ACCENT)[5]));
+        assert_eq!(color_of(&colors, 2, ACCENT, photos), Some(rgb(0x8FD3BF)));
+        assert_eq!(color_of(&colors, 0, ACCENT, Path::new("/home/me")), None);
+        assert_eq!(scheme(99, ACCENT), scheme(0, ACCENT));
         let (a, b) = (Color32::from_rgb(0, 100, 200), Color32::from_rgb(200, 100, 0));
         assert_eq!(lerp(a, b, 0.5), Color32::from_rgb(100, 100, 100));
         assert_eq!(lerp(a, b, 0.0), a);
