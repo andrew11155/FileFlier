@@ -139,6 +139,8 @@ pub struct Config {
     /// The order of the sidebar's groups, by title (dragged into place). Groups not
     /// listed follow in their usual order.
     pub sidebar_order: Vec<String>,
+    /// Sidebar groups turned off in Settings, by title.
+    pub sidebar_hidden: Vec<String>,
     /// Shortcuts the user changed: command id -> keys ("Ctrl+Shift+P"). Others use the defaults.
     pub keymap: std::collections::BTreeMap<String, Vec<String>>,
     /// Extensions switched on or off, by id (see `ext::Ext`). Missing ones are on.
@@ -210,6 +212,7 @@ impl Default for Config {
             gtk_text: None,
             sidebar_trees: true,
             sidebar_order: Vec::new(),
+            sidebar_hidden: Vec::new(),
             keymap: Default::default(),
             extensions: Default::default(),
             collapsed: vec!["Recents".into()],

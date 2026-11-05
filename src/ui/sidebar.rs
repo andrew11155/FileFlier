@@ -295,6 +295,7 @@ impl FileFlier {
                 .collect();
             sections.push(("Tags", Place::Bookmark, filt(tags)));
         }
+        sections.retain(|(t, ..)| !self.cfg.sidebar_hidden.iter().any(|h| h == t));
         let order = &self.cfg.sidebar_order;
         sections.sort_by_key(|(t, ..)| order.iter().position(|o| o == t).unwrap_or(usize::MAX));
         let mut reorder: Option<Vec<String>> = None;

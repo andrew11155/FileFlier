@@ -539,6 +539,29 @@ impl FileFlier {
                     restyle = true;
                 }
 
+                section(ui, pal, "Sidebar");
+                let mut groups = vec!["Bookmarks", "Places", "Storage", "Recents"];
+                if self.cfg.ext_on(crate::ext::Ext::Tags) {
+                    groups.push("Tags");
+                }
+                for g in groups {
+                    let on = !self.cfg.sidebar_hidden.iter().any(|h| h == g);
+                    if row(ui, pal, g, "", |ui| toggle(ui, pal, Id::new(("sb_group", g)), on)) {
+                        if on {
+                            self.cfg.sidebar_hidden.push(g.to_string());
+                        } else {
+                            self.cfg.sidebar_hidden.retain(|h| h != g);
+                        }
+                        self.cfg.save();
+                    }
+                }
+                if row(ui, pal, "Folder trees", "An arrow expands a folder into its subfolders", |ui| {
+                    toggle(ui, pal, Id::new("sb_trees"), self.cfg.sidebar_trees)
+                }) {
+                    self.cfg.sidebar_trees = !self.cfg.sidebar_trees;
+                    self.cfg.save();
+                }
+
                 section(ui, pal, "Browsing");
                 if row(ui, pal, "Show hidden files", &super::keys("Files starting with a dot (Ctrl+H)"), |ui| {
                     toggle(ui, pal, Id::new("hidden"), self.cfg.show_hidden)
@@ -555,12 +578,6 @@ impl FileFlier {
                 }) {
                     self.cfg.show_item_counts = !self.cfg.show_item_counts;
                     restyle = true;
-                }
-                if row(ui, pal, "Folder trees in the sidebar", "An arrow expands a folder into its subfolders", |ui| {
-                    toggle(ui, pal, Id::new("sb_trees"), self.cfg.sidebar_trees)
-                }) {
-                    self.cfg.sidebar_trees = !self.cfg.sidebar_trees;
-                    self.cfg.save();
                 }
                 let styles = [DateStyle::Iso, DateStyle::Relative, DateStyle::Friendly];
                 let si = styles.iter().position(|d| *d == self.cfg.date_style).unwrap_or(0);

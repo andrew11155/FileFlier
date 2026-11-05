@@ -234,9 +234,11 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   `Ctrl 0`.
 - **Row density:** compact, comfortable or spacious.
 - **Default view** for new tabs.
-- **Browsing:** show hidden files, folders first, item counts (turn these
-  off if network drives feel slow), and folder trees in the sidebar (the
-  arrows that expand a folder into its subfolders).
+- **Sidebar:** turn each group (Bookmarks, Places, Storage, Recents, Tags) on
+  or off, and the folder trees (the arrows that expand a folder into its
+  subfolders).
+- **Browsing:** show hidden files, folders first, and item counts (turn these
+  off if network drives feel slow).
 - **Dates:** `2026-09-26 14:03`, "5 min ago" or `Sep 26, 2026`.
 - **Startup:** open your home folder, or restore last session's tabs and split
   panes.

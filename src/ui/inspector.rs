@@ -73,7 +73,7 @@ impl FileFlier {
         };
         let pr = Rect::from_min_size(inner.min, vec2(inner.width(), preview_h));
         let well = if fx.glass { super::glass::with_alpha(pal.bg, 0.5) } else { pal.bg.gamma_multiply(0.7) };
-        ui.painter().rect_filled(pr, pal.round(8.0), well);
+        ui.painter().rect_filled(pr, pal.round(4.0), well);
         let mut view = std::mem::take(&mut self.insp_view);
         let nav = {
             let shown = self.pv.shown_for(&e.path).map(|s| &*s);
@@ -83,7 +83,7 @@ impl FileFlier {
         if let Some(Nav::Page(n)) = nav {
             self.preview_page.1 = n;
         }
-        ui.painter().rect_stroke(pr, pal.round(8.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
+        ui.painter().rect_stroke(pr, pal.round(4.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
 
         let shown = self.pv.shown_for(&e.path);
         let (kind, mut info, times) = match shown {
