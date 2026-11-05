@@ -42,8 +42,19 @@ fn button_layout() -> &'static (Vec<WinButton>, Vec<WinButton>) {
             .ok()
             .filter(|o| o.status.success())
             .and_then(|o| String::from_utf8(o.stdout).ok());
-        parse_layout(s.as_deref().unwrap_or(":minimize,maximize,close"))
+        with_all_buttons(parse_layout(s.as_deref().unwrap_or(":minimize,maximize,close")))
     })
+}
+
+/// Always all three buttons, on the side the layout puts close (or on the right), in
+/// GNOME's order for that side: Ubuntu's layout leaves out maximize, but it's wanted.
+fn with_all_buttons((left, right): (Vec<WinButton>, Vec<WinButton>)) -> (Vec<WinButton>, Vec<WinButton>) {
+    use WinButton::*;
+    if left.contains(&Close) && !right.contains(&Close) {
+        (vec![Close, Minimize, Maximize], vec![])
+    } else {
+        (vec![], vec![Minimize, Maximize, Close])
+    }
 }
 
 fn parse_layout(s: &str) -> (Vec<WinButton>, Vec<WinButton>) {
@@ -609,5 +620,8 @@ mod tests {
         assert_eq!(parse_layout("':minimize,close'\n"), (vec![], vec![Minimize, Close]));
         assert_eq!(parse_layout("'close,minimize,maximize:appmenu'"), (vec![Close, Minimize, Maximize], vec![]));
         assert_eq!(parse_layout("'appmenu:close'"), (vec![], vec![Close]));
+        // Every button is shown, on close's side.
+        assert_eq!(with_all_buttons(parse_layout("':minimize,close'")), (vec![], vec![Minimize, Maximize, Close]));
+        assert_eq!(with_all_buttons(parse_layout("'close:'")), (vec![Close, Minimize, Maximize], vec![]));
     }
 }

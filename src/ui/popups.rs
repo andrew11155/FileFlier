@@ -165,7 +165,7 @@ impl FileFlier {
             menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top())),
         );
         let mut chosen: Option<MenuItem> = None;
-        let mut picked_color: Option<(Vec<PathBuf>, Option<u8>)> = None;
+        let mut picked_color: Option<(Vec<PathBuf>, ColorPick)> = None;
         let mut picked_rating: Option<(Vec<PathBuf>, u8)> = None;
         let mut query = std::mem::take(&mut menu.query);
         let area = egui::Area::new(Id::new("cmd_menu")).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
@@ -186,7 +186,7 @@ impl FileFlier {
                         continue;
                     }
                     if let MenuItem::Colors(paths, current) = item {
-                        if let Some(c) = color_row(ui, pal, width, *current, scheme) {
+                        if let Some(c) = color_row(ui, pal, width, *current, scheme, paths.len() > 1) {
                             picked_color = Some((paths.clone(), c));
                         }
                         continue;
@@ -255,8 +255,10 @@ impl FileFlier {
         if chosen.is_some() || picked_color.is_some() || picked_rating.is_some() || esc || clicked_outside {
             self.menu = None;
         }
-        if let Some((paths, color)) = picked_color {
-            self.actions.push(Action::ColorFolders(paths, color));
+        match picked_color {
+            Some((paths, ColorPick::Set(color))) => self.actions.push(Action::ColorFolders(paths, color)),
+            Some((paths, ColorPick::Rainbow)) => self.actions.push(Action::RainbowFolders(paths)),
+            None => {}
         }
         if let Some((paths, stars)) = picked_rating {
             self.actions.push(Action::Rate(paths, stars));
@@ -1064,22 +1066,54 @@ impl FileFlier {
 
 /// "Color" and a row of swatches: no color, then the scheme's colors. Returns the
 /// one clicked (`Some(None)` = no color).
+/// A choice in the menu's color row.
+enum ColorPick {
+    /// One color (or none) for every folder.
+    Set(Option<u8>),
+    /// The scheme's colors in turn, across the folders.
+    Rainbow,
+}
+
 fn color_row(
     ui: &mut egui::Ui,
     pal: &crate::theme::Palette,
     width: f32,
     current: Option<u8>,
     scheme: u8,
-) -> Option<Option<u8>> {
+    several: bool,
+) -> Option<ColorPick> {
     let names = crate::ui::tint::SCHEMES.get(scheme as usize).unwrap_or(&crate::ui::tint::SCHEMES[0]).names;
     let colors = crate::ui::tint::scheme(scheme, pal.accent);
     let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
     let p = ui.painter().clone();
     text(&p, pos2(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Color", 14.0, pal.text);
     let mut picked = None;
-    let n = names.len() + 1;
+    let n = names.len() + 1 + usize::from(several);
     let gap = ((r.width() - 78.0) / n as f32).min(27.0);
     for i in 0..n {
+        if several && i == n - 1 {
+            // Rainbow: a pie of the scheme's colors.
+            let c = pos2(r.left() + 74.0 + gap * (i as f32 + 0.5), r.center().y);
+            let hit = egui::Rect::from_center_size(c, vec2(gap, 30.0));
+            let resp = ui.interact(hit, Id::new(("menu_color", i)), Sense::click());
+            let grow = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+            let rad = 8.5 + 2.0 * grow;
+            let k = colors.len();
+            for (j, &col) in colors.iter().enumerate() {
+                let a0 = std::f32::consts::TAU * j as f32 / k as f32 - std::f32::consts::FRAC_PI_2;
+                let a1 = std::f32::consts::TAU * (j + 1) as f32 / k as f32 - std::f32::consts::FRAC_PI_2;
+                let mut pts = vec![c];
+                for s in 0..=4 {
+                    let a = a0 + (a1 - a0) * s as f32 / 4.0;
+                    pts.push(c + vec2(a.cos(), a.sin()) * rad);
+                }
+                p.add(egui::epaint::PathShape::convex_polygon(pts, col, Stroke::NONE));
+            }
+            if resp.on_hover_text("Rainbow: each folder the next color").clicked() {
+                picked = Some(ColorPick::Rainbow);
+            }
+            continue;
+        }
         let c = pos2(r.left() + 74.0 + gap * (i as f32 + 0.5), r.center().y);
         let hit = egui::Rect::from_center_size(c, vec2(gap, 30.0));
         let resp = ui.interact(hit, Id::new(("menu_color", i)), Sense::click());
@@ -1099,7 +1133,7 @@ fn color_row(
         }
         let name = if i == 0 { "No color" } else { names[i - 1] };
         if resp.on_hover_text(name).clicked() {
-            picked = Some(value);
+            picked = Some(ColorPick::Set(value));
         }
     }
     picked

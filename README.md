@@ -88,8 +88,9 @@ the same on every desktop environment.
   existing item to the trash rather than deleting it, and `Ctrl+Z` puts
   everything back.
 - **Folder colors.** Right-click a folder and pick one of eight
-  colors (or none) from the *Color* row; every selected folder gets it, and
-  the icon fades to the new color with a little pop. Colors show in every
+  colors (or none) from the *Color* row; every selected folder gets it. With
+  several folders selected, the rainbow swatch at the end gives them the colors
+  in turn, cycling through all eight. The icon fades to the new color with a little pop. Colors show in every
   view, the columns view and tabs, follow a folder when you rename it in File
   Flier, and are kept in File Flier's settings.
   *Settings → Folder colors* picks the scheme they're drawn in: **Pastel**
@@ -220,9 +221,9 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   - **Title bar icon:** File Flier's logo, the Files app's icon from your icon
     theme, a folder, or nothing.
   - **Window buttons:** File Flier's, or **Native**: round buttons as Ubuntu and
-    GNOME draw them, with your icon theme's symbols, on the side and in the
-    order your desktop's button layout says (`button-layout`, e.g. only
-    minimize and close on Ubuntu).
+    GNOME draw them, with your icon theme's symbols: minimize, maximize and
+    close, on the side your desktop's button layout puts close
+    (`button-layout`).
   - **Corners**, **Sidebar** and **Text:** each follows the theme (on in the
     GNOME themes) or can be turned on or off for any theme: rounder corners;
     a GNOME Files-like sidebar (your desktop's font, roomier rows, no accent

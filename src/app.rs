@@ -187,6 +187,8 @@ pub enum Action {
     /// Give items a tag (dropped on it in the sidebar).
     TagPaths(Vec<PathBuf>, String),
     ColorFolders(Vec<PathBuf>, Option<u8>),
+    /// Color folders in turn through the scheme's colors, in the order given.
+    RainbowFolders(Vec<PathBuf>),
     TrashPaths(Vec<PathBuf>),
     MountVolume(String),
     EjectVolume(crate::udisks::Volume),
@@ -1287,10 +1289,16 @@ impl FileFlier {
 
     /// Set (or clear) the color of folders, animating the change.
     pub fn color_folders(&mut self, paths: Vec<PathBuf>, color: Option<u8>, ctx: &egui::Context) {
+        self.color_folders_each(paths.into_iter().map(|p| (p, color)).collect(), ctx);
+    }
+
+    /// Set (or clear) each folder's own color, animating the changes.
+    pub fn color_folders_each(&mut self, colors: Vec<(PathBuf, Option<u8>)>, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
         let accent = self.pal().accent;
         self.tint_anims.retain(|_, (_, start)| now - *start < 1.0);
-        for p in &paths {
+        for (p, color) in &colors {
+            let color = *color;
             let Some(key) = p.to_str().map(str::to_string) else { continue };
             let before = crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, accent, p);
             match color {
@@ -1831,6 +1839,11 @@ impl FileFlier {
                     self.info(format!("Tagged {n} item{} “{t}”", plural(n)));
                 }
                 Action::ColorFolders(paths, color) => self.color_folders(paths, color, ctx),
+                Action::RainbowFolders(paths) => {
+                    let n = crate::ui::tint::SLOTS;
+                    let colors = paths.into_iter().enumerate().map(|(i, p)| (p, Some((i % n) as u8))).collect();
+                    self.color_folders_each(colors, ctx);
+                }
                 Action::Reveal(p) => {
                     if let Some(dir) = p.parent().map(Path::to_path_buf) {
                         self.navigate(dir);
