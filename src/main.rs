@@ -1,6 +1,7 @@
 //! File Flier — a fast, keyboard-driven file manager for Linux and macOS, inspired by File Pilot.
 #![allow(clippy::enum_variant_names)]
 
+mod adwaita;
 mod app;
 mod archive;
 mod cloud;

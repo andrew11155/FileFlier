@@ -319,6 +319,21 @@ impl FileFlier {
                     }
                 });
 
+                section(ui, pal, "Icons");
+                let hint = if crate::adwaita::available() {
+                    "GNOME uses the Adwaita icons installed on this system"
+                } else {
+                    "GNOME needs the Adwaita icon theme, which isn't installed"
+                };
+                let sel = usize::from(self.cfg.gnome_icons);
+                if let Some(i) = row(ui, pal, "Icon set", hint, |ui| {
+                    segmented(ui, pal, Id::new("icon_set"), &["File Flier", "GNOME"], sel)
+                }) {
+                    self.cfg.gnome_icons = i == 1;
+                    crate::adwaita::set_enabled(self.cfg.gnome_icons);
+                    self.cfg.save();
+                }
+
                 section(ui, pal, "Folder colors");
                 let hint = "Right-click a folder to color it. Its color follows the scheme.";
                 let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());

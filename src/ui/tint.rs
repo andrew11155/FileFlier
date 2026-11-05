@@ -145,19 +145,20 @@ impl<'a> Tints<'a> {
     /// Draw the folder icon for `path` in `r`, in its color.
     pub fn folder(&self, p: &Painter, r: Rect, pal: &Palette, path: &Path) {
         let to = color_of(self.colors, self.scheme, pal.accent, path);
+        let special = if crate::adwaita::enabled() { crate::adwaita::special_folder(path) } else { None };
         let Some(&(from, start)) = self.anims.get(path) else {
-            return icons::folder_tinted(p, r, pal, to);
+            return icons::folder_icon(p, r, pal, to, special);
         };
         let t = ((self.now - start) / ANIM).clamp(0.0, 1.0) as f32;
         if t >= 1.0 {
-            return icons::folder_tinted(p, r, pal, to);
+            return icons::folder_icon(p, r, pal, to, special);
         }
         self.animating.set(true);
         let e = crate::ui::ease_out(t);
         let c = lerp(from.unwrap_or(pal.folder), to.unwrap_or(pal.folder), e);
         // A small pop: grow a little and settle back.
         let pop = 1.0 + 0.16 * (std::f32::consts::PI * t).sin() * (1.0 - t * 0.5);
-        icons::folder_tinted(p, Rect::from_center_size(r.center(), r.size() * pop), pal, Some(c));
+        icons::folder_icon(p, Rect::from_center_size(r.center(), r.size() * pop), pal, Some(c), special);
     }
 }
 

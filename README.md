@@ -203,6 +203,13 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   and go further than colors, to sit in with GNOME Files and other GNOME
   apps: rounder corners on rows, tabs, buttons and menus, Adwaita-style
   folders in your accent color (blue unless you pick another), and a sidebar that marks the current place with a highlight only.
+- **Icons:** File Flier's own, or **GNOME**: the icons of GNOME's Adwaita
+  icon theme (by the GNOME Project), read from the copy installed on your
+  system. Folders get Adwaita's folder icons, recolored to the theme's folder
+  color or the color you gave a folder, and your Home, Desktop, Documents,
+  Downloads, Music, Pictures, Videos, Public and Templates folders show their
+  emblems. The sidebar uses GNOME's symbolic icons, like GNOME Files. If
+  Adwaita isn't installed, File Flier's own icons are used.
 - **Accent color:** the theme's own, or one of eight colors. Text on the accent
   switches between black and white so it stays readable.
 - **Interface size:** 80–150%. You can also press `Ctrl +`, `Ctrl −` and

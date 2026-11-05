@@ -83,7 +83,7 @@ impl FileFlier {
             let header = Rect::from_min_size(r.min, vec2(r.width(), 64.0));
             let icon = Rect::from_center_size(pos2(header.left() + 34.0, header.center().y), vec2(30.0, 30.0));
             if e.is_dir {
-                icons::folder_tinted(&p, icon, pal, tint);
+                icons::folder_icon(&p, icon, pal, tint, crate::adwaita::special_folder(&e.path));
             } else {
                 icons::file(&p, icon, file_kind(&e), pal);
             }

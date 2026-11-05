@@ -108,6 +108,8 @@ pub struct Config {
     pub folder_colors: std::collections::BTreeMap<String, u8>,
     /// Which scheme the folder color slots are drawn in (see `ui::tint::SCHEMES`).
     pub folder_scheme: u8,
+    /// Draw folders and the sidebar with GNOME's icons (the installed Adwaita theme).
+    pub gnome_icons: bool,
     /// Shortcuts the user changed: command id -> keys ("Ctrl+Shift+P"). Others use the defaults.
     pub keymap: std::collections::BTreeMap<String, Vec<String>>,
     /// Extensions switched on or off, by id (see `ext::Ext`). Missing ones are on.
@@ -171,6 +173,7 @@ impl Default for Config {
             layout: None,
             folder_colors: Default::default(),
             folder_scheme: 0,
+            gnome_icons: false,
             keymap: Default::default(),
             extensions: Default::default(),
             collapsed: vec!["Recents".into()],

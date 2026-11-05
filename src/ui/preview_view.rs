@@ -136,7 +136,7 @@ fn big_icon(ui: &Ui, rect: Rect, e: &Entry, note: Option<&str>, note_color: Colo
     let ir =
         Rect::from_center_size(rect.center() - vec2(0.0, if note.is_some() { 16.0 } else { 0.0 }), vec2(size, size));
     if e.is_dir {
-        icons::folder(p, ir, pal);
+        icons::folder_icon(p, ir, pal, None, crate::adwaita::special_folder(&e.path));
     } else {
         icons::file(p, ir, file_kind(e), pal);
     }

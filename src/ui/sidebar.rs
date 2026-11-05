@@ -319,6 +319,8 @@ impl FileFlier {
                     }
                     let ir = Rect::from_center_size(pos2(hr.left() + 16.0, hr.center().y), vec2(17.0, 17.0));
                     match icon {
+                        _ if title != "Tags"
+                            && crate::adwaita::symbolic(p, ir, icons::place_symbolic(icon), pal.text_dim) => {}
                         _ if title == "Tags" => {
                             // A luggage tag: a rounded tab with a hole.
                             let r = ir.shrink(2.0);
