@@ -47,6 +47,8 @@ enum ItemAction {
     NewTab(PathBuf),
     /// Tree view: open or close a folder in place.
     ToggleOpen(PathBuf),
+    /// Stars clicked in the Rating column.
+    Rate(PathBuf, u8),
     BackgroundContext(egui::Pos2),
     ClearSelection,
 }
@@ -54,6 +56,7 @@ enum ItemAction {
 /// Column layout for the details view.
 struct Cols {
     name: f32,
+    rating: Option<(f32, f32)>,
     ty: Option<(f32, f32)>,
     items: Option<(f32, f32)>,
     size: (f32, f32),
@@ -61,12 +64,16 @@ struct Cols {
 }
 
 impl Cols {
-    fn new(r: Rect, show_items: bool) -> Self {
+    fn new(r: Rect, show_items: bool, show_rating: bool) -> Self {
         let w = r.width();
         let mut right = r.right() - 12.0;
         let modified = (w > 700.0).then(|| {
             right -= 132.0;
             (right, right + 132.0)
+        });
+        let rating = (show_rating && w > 620.0).then(|| {
+            right -= 88.0;
+            (right + 6.0, right + 76.0)
         });
         let size = {
             right -= 110.0;
@@ -80,7 +87,7 @@ impl Cols {
             right -= 150.0;
             (right, right + 140.0)
         });
-        Cols { name: right - 12.0, ty, items, size, modified }
+        Cols { name: right - 12.0, rating, ty, items, size, modified }
     }
 }
 
@@ -426,6 +433,8 @@ impl FileFlier {
         let row_h = self.cfg.density.row_height();
         let fx = self.fx();
         let date_style = self.cfg.date_style;
+        let show_rating = self.cfg.ext_on(crate::ext::Ext::Ratings);
+        let show_tags = self.cfg.ext_on(crate::ext::Ext::Tags);
         let ctx = ui.ctx().clone();
         let cut_paths: Vec<PathBuf> =
             self.clipboard.as_ref().filter(|c| c.cut).map(|c| c.paths.clone()).unwrap_or_default();
@@ -450,13 +459,13 @@ impl FileFlier {
             ViewMode::Columns => ViewMode::List,
             v => v,
         };
-        let flat = tab.flat;
+        let flat = tab.flat || tab.tag.is_some();
         let n = tab.visible.len();
         let multi = tab.selected.len() > 1;
 
         // ---- column header (details only)
         let mut list_rect = rect;
-        let cols = Cols::new(rect, self.cfg.show_item_counts);
+        let cols = Cols::new(rect, self.cfg.show_item_counts, show_rating);
         let mut header_actions: Vec<Action> = Vec::new();
         if view == ViewMode::Details {
             let h = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER_H));
@@ -530,12 +539,16 @@ impl FileFlier {
                 header(ui, None, "Items", l, r, false, true);
             }
             header(ui, Some(SortKey::Size), "Size", cols.size.0, cols.size.1, true, true);
+            if let Some((l, r)) = cols.rating {
+                header(ui, None, "Rating", l, r, false, true);
+            }
             if let Some((l, r)) = cols.modified {
                 header(ui, Some(SortKey::Modified), "Modified", l, r, false, true);
             }
         }
         self.actions.extend(header_actions);
         let tab = self.panes[idx].tab_mut();
+        let meta = &mut self.meta;
 
         // ---- geometry
         let inner_w = list_rect.width() - 16.0;
@@ -659,6 +672,9 @@ impl FileFlier {
                                 let vi = row * ncols + c;
                                 let Some(&ei) = tab.visible.get(vi) else { break };
                                 let e = &tab.entries[ei];
+                                if show_rating || show_tags {
+                                    meta.observe(&e.path);
+                                }
                                 let item = match view {
                                     ViewMode::Details | ViewMode::Tree | ViewMode::Columns => {
                                         row_rect.shrink2(vec2(8.0, 0.0))
@@ -790,6 +806,20 @@ impl FileFlier {
                                         } else {
                                             item.right() - 6.0
                                         };
+                                        // Tags extension: a dot per tag at the end of the name.
+                                        let tag_defs: Vec<&crate::meta::TagDef> = if show_tags {
+                                            meta.tags_of(&e.path).iter().filter_map(|t| meta.tag(t)).collect()
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        let name_right = if tag_defs.is_empty() {
+                                            name_right
+                                        } else {
+                                            let cy = item.center().y;
+                                            name_right
+                                                - super::tags::paint_tag_dots(p, name_right, cy, &tag_defs, pal)
+                                                - 4.0
+                                        };
                                         let editing = renaming.as_mut().filter(|r| r.pane == idx && r.path == e.path);
                                         if let Some(rn) = editing {
                                             let r = Rect::from_min_max(
@@ -870,6 +900,18 @@ impl FileFlier {
                                                 (human_size(e.size), dim_color)
                                             };
                                             text(p, pos2(cols.size.1, cy), Align2::RIGHT_CENTER, size, 13.0, c);
+                                            // Ratings extension: stars, shown once rated or while hovered.
+                                            if let Some((l, _)) = cols.rating {
+                                                let rating = meta.rating(&e.path);
+                                                if rating > 0 || ui.rect_contains_pointer(item) {
+                                                    let id = Id::new(("row_stars", idx, &e.path));
+                                                    if let Some(n) =
+                                                        super::tags::star_row(ui, id, l, cy, 14.0, rating, pal)
+                                                    {
+                                                        item_actions.push(ItemAction::Rate(e.path.clone(), n));
+                                                    }
+                                                }
+                                            }
                                             if let Some((l, r)) = cols.modified {
                                                 let d =
                                                     e.modified.map(|m| format_time(m, date_style)).unwrap_or_default();
@@ -1069,7 +1111,7 @@ impl FileFlier {
                     }
                     tab.scroll_to_cursor = false;
                     self.actions.push(Action::Activate(idx));
-                    let flat = tab.flat;
+                    let flat = tab.flat || tab.tag.is_some();
                     let mut items = entry_menu(is_dir, archive, flat);
                     if is_dir {
                         // Color every selected folder (files in the selection are left alone).
@@ -1094,6 +1136,19 @@ impl FileFlier {
                         items.insert(at, MenuItem::Colors(folders, current));
                         items.insert(at, MenuItem::Sep);
                     }
+                    // Extensions: rate and tag what the menu is for.
+                    let targets = tab.targets();
+                    let at = items.len() - 2;
+                    if self.cfg.ext_on(crate::ext::Ext::Tags) {
+                        items.insert(at, MenuItem::Cmd(Command::EditTags));
+                    }
+                    if self.cfg.ext_on(crate::ext::Ext::Ratings) {
+                        let current = targets.first().map_or(0, |p| self.meta.rating(p));
+                        items.insert(at, MenuItem::Rating(targets, current));
+                    }
+                    if items.len() - 2 != at {
+                        items.insert(at, MenuItem::Sep);
+                    }
                     self.actions.push(Action::OpenMenu(pos, items));
                 }
                 ItemAction::Open(vi) => {
@@ -1112,6 +1167,7 @@ impl FileFlier {
                     self.actions.push(Action::OpenMenu(pos, background_menu()));
                 }
                 ItemAction::ClearSelection => tab.selected.clear(),
+                ItemAction::Rate(p, n) => self.actions.push(Action::Rate(vec![p], n)),
                 ItemAction::ToggleOpen(p) => {
                     let open = !tab.expanded.contains(&p);
                     tab.set_expanded(&p, open, self.cfg.show_hidden, self.cfg.sort);

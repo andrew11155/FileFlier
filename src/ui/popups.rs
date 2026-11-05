@@ -65,7 +65,7 @@ fn input_row(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: I
     resp
 }
 
-fn plain_input(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: Id) -> egui::Response {
+pub(super) fn plain_input(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: Id) -> egui::Response {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
     let p = ui.painter();
     p.rect_filled(r, 5.0, pal.input);
@@ -140,7 +140,7 @@ impl FileFlier {
             .iter()
             .enumerate()
             .filter(|(_, it)| match it {
-                MenuItem::Sep | MenuItem::Colors(..) => q.is_empty(),
+                MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => q.is_empty(),
                 MenuItem::Cmd(c) | MenuItem::Choice(c, _) => fuzzy::score(&q, c.label()).is_some(),
                 MenuItem::Go(p) => fuzzy::score(&q, &p.to_string_lossy()).is_some(),
                 MenuItem::NewTabAt(_) => fuzzy::score(&q, "Open in new tab").is_some(),
@@ -151,7 +151,7 @@ impl FileFlier {
             .collect();
         let selectable: Vec<usize> = entries
             .iter()
-            .filter(|(_, it)| !matches!(it, MenuItem::Sep | MenuItem::Colors(..)))
+            .filter(|(_, it)| !matches!(it, MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..)))
             .map(|(i, _)| *i)
             .collect();
         menu.cursor = step(menu.cursor, up, down, selectable.len());
@@ -166,6 +166,7 @@ impl FileFlier {
         );
         let mut chosen: Option<MenuItem> = None;
         let mut picked_color: Option<(Vec<PathBuf>, Option<u8>)> = None;
+        let mut picked_rating: Option<(Vec<PathBuf>, u8)> = None;
         let mut query = std::mem::take(&mut menu.query);
         let area = egui::Area::new(Id::new("cmd_menu")).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
             super::animate_in(ui, Id::new("cmd_menu_appear"), &fx, -6.0);
@@ -190,6 +191,18 @@ impl FileFlier {
                         }
                         continue;
                     }
+                    if let MenuItem::Rating(paths, current) = item {
+                        let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
+                        let p = ui.painter().clone();
+                        text(&p, pos2(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Rating", 14.0, pal.text);
+                        let id = Id::new("menu_rating");
+                        if let Some(n) =
+                            super::tags::star_row(ui, id, r.left() + 74.0, r.center().y, 22.0, *current, pal)
+                        {
+                            picked_rating = Some((paths.clone(), n));
+                        }
+                        continue;
+                    }
                     let selected = selectable.get(menu.cursor) == Some(i);
                     let danger = matches!(item, MenuItem::Cmd(Command::Trash | Command::DeletePermanently));
                     let (label, badges, icon) = match item {
@@ -205,7 +218,7 @@ impl FileFlier {
                         MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
                         MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
                         MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
-                        MenuItem::Sep | MenuItem::Colors(..) => unreachable!(),
+                        MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
                     };
                     let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
                     if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
@@ -239,11 +252,14 @@ impl FileFlier {
         let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
             && ctx.pointer_interact_pos().is_some_and(|p| !area.response.rect.contains(p))
             && menu.opened.elapsed() > Duration::from_millis(150);
-        if chosen.is_some() || picked_color.is_some() || esc || clicked_outside {
+        if chosen.is_some() || picked_color.is_some() || picked_rating.is_some() || esc || clicked_outside {
             self.menu = None;
         }
         if let Some((paths, color)) = picked_color {
             self.actions.push(Action::ColorFolders(paths, color));
+        }
+        if let Some((paths, stars)) = picked_rating {
+            self.actions.push(Action::Rate(paths, stars));
         }
         match chosen {
             Some(MenuItem::Cmd(c) | MenuItem::Choice(c, _)) => self.actions.push(Action::Run(c)),
@@ -999,6 +1015,16 @@ impl FileFlier {
             }
             Dialog::Update => {
                 if modal(ctx, "update", 560.0, pal, &fx, |ui| self.update_ui(ui)) {
+                    keep = false;
+                }
+            }
+            Dialog::TagFiles { paths, new_tag, error } => {
+                if modal(ctx, "tag_files", 460.0, pal, &fx, |ui| self.tag_files_ui(ui, paths, new_tag, error)) {
+                    keep = false;
+                }
+            }
+            Dialog::ManageTags(st) => {
+                if modal(ctx, "manage_tags", 560.0, pal, &fx, |ui| self.manage_tags_ui(ui, st)) {
                     keep = false;
                 }
             }

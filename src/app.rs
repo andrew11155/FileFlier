@@ -92,6 +92,14 @@ pub enum Dialog {
     Settings,
     Update,
     Cloud(crate::ui::CloudDialog),
+    /// Tags extension: the tags `paths` have (tick to change), and a new tag being typed.
+    TagFiles {
+        paths: Vec<PathBuf>,
+        new_tag: String,
+        error: Option<String>,
+    },
+    /// Tags extension: add, rename, recolor and delete tags.
+    ManageTags(crate::ui::tags::ManageTags),
 }
 
 /// What to do when a pasted item's name is already taken.
@@ -136,6 +144,8 @@ pub enum MenuItem {
     Choice(Command, bool),
     /// A row of folder-color swatches for these folders (with their current color).
     Colors(Vec<PathBuf>, Option<u8>),
+    /// A row of stars rating these items (Ratings extension), with their current rating.
+    Rating(Vec<PathBuf>, u8),
     Sep,
 }
 
@@ -170,6 +180,12 @@ pub enum Action {
     /// Show a short notification.
     Toast(String),
     /// Give folders a color (an index into the pale rainbow), or none.
+    /// Rate items with 0-5 stars (Ratings extension).
+    Rate(Vec<PathBuf>, u8),
+    /// List everything with this tag (Tags extension).
+    ShowTag(String),
+    /// Give items a tag (dropped on it in the sidebar).
+    TagPaths(Vec<PathBuf>, String),
     ColorFolders(Vec<PathBuf>, Option<u8>),
     TrashPaths(Vec<PathBuf>),
     MountVolume(String),
@@ -230,6 +246,8 @@ pub struct FileFlier {
     pub column_cache: std::collections::HashMap<PathBuf, (Instant, Arc<Vec<crate::fs_model::Entry>>)>,
     /// Cached child counts for folders shown in the Items column.
     pub item_counts: ItemCounter,
+    /// Ratings and tags (the Ratings and Tags extensions).
+    pub meta: crate::meta::Meta,
     /// A terminal just launched, watched briefly for failure.
     terminal_launch: Option<(std::process::Child, Instant)>,
     /// Last see-through state sent to the window (blur is only toggled on change).
@@ -339,6 +357,7 @@ impl FileFlier {
             dir_tree: Default::default(),
             column_cache: Default::default(),
             item_counts: ItemCounter::start(cc.egui_ctx.clone()),
+            meta: crate::meta::Meta::load(),
             terminal_launch: None,
             blur_applied: None,
             window_transparent,
@@ -475,6 +494,7 @@ impl FileFlier {
 
     /// A toast with an Undo button for `op` (also available via Ctrl+Z).
     pub fn info_undoable(&mut self, msg: impl Into<String>, op: UndoOp) {
+        self.track_moves(&op, false);
         self.info(msg);
         self.last_undo = Some(op);
         self.toast_undo = true;
@@ -486,12 +506,39 @@ impl FileFlier {
             return;
         };
         let what = op.describe();
+        let moves = op.clone();
         match undo::undo(op) {
-            Ok(msg) => self.info(msg),
+            Ok(msg) => {
+                self.track_moves(&moves, true);
+                self.info(msg);
+            }
             Err(e) => self.error(format!("Couldn't undo {what}: {e}")),
         }
         self.reload_all();
     }
+    /// Ratings and tags follow files that File Flier renamed or moved (`back`: the
+    /// operation was just undone, so they go the other way).
+    fn track_moves(&mut self, op: &UndoOp, back: bool) {
+        match op {
+            UndoOp::Rename { from, to } => {
+                let (a, b) = if back { (to, from) } else { (from, to) };
+                self.meta.moved(a, b);
+            }
+            UndoOp::Transfer { pairs, moved: true } => {
+                for (from, to) in pairs {
+                    let (a, b) = if back { (to, from) } else { (from, to) };
+                    self.meta.moved(a, b);
+                }
+            }
+            UndoOp::Many(ops) => {
+                for o in ops {
+                    self.track_moves(o, back);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn error(&mut self, msg: impl Into<String>) {
         self.toast_undo = false;
         self.status = Some((msg.into(), Instant::now(), true));
@@ -831,6 +878,12 @@ impl FileFlier {
     pub fn run(&mut self, cmd: Command, ctx: &egui::Context) {
         use Command::*;
         let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
+        if let Some(e) = cmd.ext()
+            && !self.cfg.ext_on(e)
+        {
+            self.info(format!("{} is turned off (Settings → Extensions)", e.name()));
+            return;
+        }
         match cmd {
             CommandPalette => self.dialog = Some(Dialog::Palette { query: String::new(), cursor: 0 }),
             Search => {
@@ -919,7 +972,10 @@ impl FileFlier {
                     self.navigate(home);
                 }
             }
-            Refresh => self.reload_all(),
+            Refresh => {
+                self.meta.reread();
+                self.reload_all();
+            }
             Open => self.open_entries(),
             OpenTerminal => {
                 let dir = self.tab().path.clone();
@@ -1101,6 +1157,18 @@ impl FileFlier {
             }
             OpenWith => self.open_with(ctx),
             ShowTrash => self.show_trash(),
+            RateNone | Rate1 | Rate2 | Rate3 | Rate4 | Rate5 => {
+                let stars = cmd.stars().unwrap_or(0);
+                let paths = self.tab().targets();
+                self.rate(&paths, stars);
+            }
+            EditTags => {
+                let paths = self.tab().targets();
+                if !paths.is_empty() {
+                    self.dialog = Some(Dialog::TagFiles { paths, new_tag: String::new(), error: None });
+                }
+            }
+            ManageTags => self.dialog = Some(Dialog::ManageTags(Default::default())),
             NewFolder | NewFile => {
                 let dir = self.tab().path.clone();
                 let folder = cmd == NewFolder;
@@ -1140,7 +1208,11 @@ impl FileFlier {
                 if let Some(p) = self.tab().cursor_entry().map(|e| e.path.clone())
                     && let Some(dir) = p.parent().map(Path::to_path_buf)
                 {
-                    if dir == self.tab().path {
+                    if dir == self.tab().path && self.tab().tag.is_some() {
+                        // A tag view on the folder it came from: back to the plain folder.
+                        self.tab_mut().tag = None;
+                        self.tab_mut().reload(h, s);
+                    } else if dir == self.tab().path {
                         self.tab_mut().set_flat(false, h, s);
                     } else {
                         self.navigate(dir);
@@ -1749,6 +1821,14 @@ impl FileFlier {
                     });
                 }
                 Action::Toast(msg) => self.info(msg),
+                Action::Rate(paths, stars) => self.rate(&paths, stars),
+                Action::ShowTag(t) => self.show_tag(&t),
+                Action::TagPaths(paths, t) => {
+                    self.meta.set_tag(&paths, &t, true);
+                    self.refresh_tag_views();
+                    let n = paths.len();
+                    self.info(format!("Tagged {n} item{} “{t}”", plural(n)));
+                }
                 Action::ColorFolders(paths, color) => self.color_folders(paths, color, ctx),
                 Action::Reveal(p) => {
                     if let Some(dir) = p.parent().map(Path::to_path_buf) {
@@ -1769,6 +1849,7 @@ impl FileFlier {
         let mut scored: Vec<(i32, PaletteItem)> = commands::ALL
             .iter()
             .filter(|c| **c != Command::CommandPalette)
+            .filter(|c| c.ext().is_none_or(|e| self.cfg.ext_on(e)))
             .filter_map(|&c| fuzzy::score(q, c.label()).map(|s| (s + 5, PaletteItem::Cmd(c))))
             .collect();
         let mut seen = std::collections::HashSet::new();

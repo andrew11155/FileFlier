@@ -96,6 +96,24 @@ the same on every desktop environment.
   (navy, sky, teal, seafoam…) or **Mono** (tints and shades of your accent
   color, so it follows the theme). Each folder keeps its slot, so the first
   color in one scheme becomes the first in the next, fading across.
+- **Extensions.** Optional features you can switch off in *Settings →
+  Extensions* (both are on to start with):
+  - **Ratings.** Give files 1 to 5 stars with `Ctrl+Alt+1` … `Ctrl+Alt+5`
+    (`Ctrl+Alt+0` clears), from the right-click menu, in the preview panel,
+    or by clicking the stars in the details view's *Rating* column.
+  - **Tags.** Right-click → *Tags…* to tick tags for the selection or make a
+    new one. Tags show as colored dots after the name and as chips in the
+    preview panel. The sidebar's *Tags* list shows every tag with how many
+    files have it: click one to list those files, wherever they are, or drop
+    files on it to tag them. *Manage tags…* renames, recolors (any color) and
+    deletes tags.
+
+  Ratings and tags are stored on the files themselves, as the extended
+  attributes KDE's Dolphin uses (`user.baloo.rating`, `user.xdg.tags`), so
+  they survive renames and moves in other apps and Dolphin shows them too.
+  File Flier also keeps an index in `~/.config/file-flier/meta.json`, which
+  the Tags list is built from and which keeps tags on drives that can't store
+  attributes (FAT/exFAT USB sticks, some network shares).
 - **Compress and extract.** Right-click → *Compress to ZIP* zips the selection.
   *Extract here* unpacks ZIP, tar, tar.gz and gzip files; 7z, RAR, tar.xz,
   tar.zst and more work when `bsdtar` is installed (it's included in the
@@ -242,6 +260,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Alt+1` … `Alt+8` | Details, list, tree, columns, grid, medium grid, large grid, extra large grid |
 | `Ctrl` + mouse wheel | Step through the views in `Alt+1` … `Alt+8` order (wheel up = next) |
 | `Ctrl+H` | Show hidden files |
+| `Ctrl+Alt+1` … `5` / `Ctrl+Alt+0` | Rate 1 to 5 stars / clear the rating (Ratings extension) |
 | `Ctrl+B` | Toggle the sidebar |
 | `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |

@@ -66,6 +66,14 @@ pub enum Command {
     Extract,
     OpenWith,
     ShowTrash,
+    RateNone,
+    Rate1,
+    Rate2,
+    Rate3,
+    Rate4,
+    Rate5,
+    EditTags,
+    ManageTags,
 }
 
 use Command::*;
@@ -130,6 +138,14 @@ pub const ALL: &[Command] = &[
     Extract,
     OpenWith,
     ShowTrash,
+    RateNone,
+    Rate1,
+    Rate2,
+    Rate3,
+    Rate4,
+    Rate5,
+    EditTags,
+    ManageTags,
 ];
 
 const fn sc(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
@@ -140,6 +156,7 @@ const CTRL: Modifiers = Modifiers::COMMAND;
 const SHIFT: Modifiers = Modifiers::SHIFT;
 const ALT: Modifiers = Modifiers::ALT;
 const CTRL_SHIFT: Modifiers = Modifiers { shift: true, ..Modifiers::COMMAND };
+const CTRL_ALT: Modifiers = Modifiers { alt: true, ..Modifiers::COMMAND };
 
 impl Command {
     pub fn label(self) -> &'static str {
@@ -203,7 +220,38 @@ impl Command {
             Extract => "Extract here",
             OpenWith => "Open with…",
             ShowTrash => "Show trash",
+            RateNone => "Rating: none",
+            Rate1 => "Rating: 1 star",
+            Rate2 => "Rating: 2 stars",
+            Rate3 => "Rating: 3 stars",
+            Rate4 => "Rating: 4 stars",
+            Rate5 => "Rating: 5 stars",
+            EditTags => "Tags…",
+            ManageTags => "Manage tags",
         }
+    }
+
+    /// The extension this command belongs to (hidden and inactive while it's off).
+    pub fn ext(self) -> Option<crate::ext::Ext> {
+        use crate::ext::Ext;
+        match self {
+            RateNone | Rate1 | Rate2 | Rate3 | Rate4 | Rate5 => Some(Ext::Ratings),
+            EditTags | ManageTags => Some(Ext::Tags),
+            _ => None,
+        }
+    }
+
+    /// The stars a Rating command gives.
+    pub fn stars(self) -> Option<u8> {
+        Some(match self {
+            RateNone => 0,
+            Rate1 => 1,
+            Rate2 => 2,
+            Rate3 => 3,
+            Rate4 => 4,
+            Rate5 => 5,
+            _ => return None,
+        })
     }
 
     /// The name the keymap is saved under (stable: the variant's name).
@@ -286,6 +334,13 @@ impl Command {
             QuickLook => vec![sc(NONE, Key::Space)],
             Undo => vec![sc(CTRL, Key::Z)],
             Compress | Extract | ShowTrash => vec![],
+            RateNone => vec![sc(CTRL_ALT, Key::Num0)],
+            Rate1 => vec![sc(CTRL_ALT, Key::Num1)],
+            Rate2 => vec![sc(CTRL_ALT, Key::Num2)],
+            Rate3 => vec![sc(CTRL_ALT, Key::Num3)],
+            Rate4 => vec![sc(CTRL_ALT, Key::Num4)],
+            Rate5 => vec![sc(CTRL_ALT, Key::Num5)],
+            EditTags | ManageTags => vec![],
             OpenWith => vec![sc(CTRL_SHIFT, Key::O)],
         }
     }
@@ -401,6 +456,6 @@ mod tests {
         let count = ALL.len();
         let unique: std::collections::HashSet<_> = ALL.iter().map(|c| format!("{c:?}")).collect();
         assert_eq!(unique.len(), count);
-        assert_eq!(count, ShowTrash as usize + 1);
+        assert_eq!(count, ManageTags as usize + 1);
     }
 }

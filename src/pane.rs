@@ -38,6 +38,8 @@ pub struct Tab {
     pub flat_truncated: bool,
     /// Flat view: where to put the cursor once that item turns up.
     flat_keep: Option<PathBuf>,
+    /// Tag view (Tags extension): the tag whose files are listed, instead of a folder.
+    pub tag: Option<String>,
     back: Vec<PathBuf>,
     forward: Vec<PathBuf>,
     dir_mtime: Option<SystemTime>,
@@ -65,6 +67,7 @@ impl Tab {
             flat_scan: None,
             flat_truncated: false,
             flat_keep: None,
+            tag: None,
             back: Vec::new(),
             forward: Vec::new(),
             dir_mtime: None,
@@ -75,6 +78,9 @@ impl Tab {
     }
 
     pub fn title(&self) -> String {
+        if let Some(t) = &self.tag {
+            return format!("Tag: {t}");
+        }
         if self.path == Path::new("/") {
             return "/".into();
         }
@@ -89,6 +95,11 @@ impl Tab {
 
     pub fn reload(&mut self, show_hidden: bool, sort: Sort) {
         let keep = self.cursor_entry().map(|e| e.path.clone());
+        if let Some(tag) = self.tag.clone() {
+            // The same files, read again (who has the tag is up to `set_tag_view`).
+            let paths = self.entries.iter().map(|e| e.path.clone()).collect();
+            return self.set_tag_view(tag, paths, show_hidden, sort);
+        }
         if self.flat {
             // Rescan in the background; files show up as they're found (see `poll_flat`).
             self.flat_keep = keep.or(self.flat_keep.take());
@@ -193,9 +204,39 @@ impl Tab {
         self.scroll_to_cursor = scroll;
     }
 
-    /// Flat view: the folder an item is in, relative to the folder being viewed.
+    /// Tag view: list `paths` (the files tagged `tag`).
+    pub fn set_tag_view(&mut self, tag: String, paths: Vec<PathBuf>, show_hidden: bool, sort: Sort) {
+        let keep = self.cursor_entry().map(|e| e.path.clone());
+        if self.tag.as_ref() != Some(&tag) {
+            self.filter.clear();
+            self.selected.clear();
+            self.cursor = 0;
+            self.anchor = 0;
+        }
+        self.tag = Some(tag);
+        self.flat = false;
+        self.flat_scan = None;
+        self.error = None;
+        self.tree_mtimes.clear();
+        self.entries = paths.iter().filter_map(|p| Entry::from_path(p)).collect();
+        fs_model::sort_entries(&mut self.entries, sort);
+        self.depth = vec![0; self.entries.len()];
+        self.selected.retain(|p| paths.contains(p));
+        self.settle(keep, show_hidden);
+        self.flat_keep = None;
+    }
+
+    /// Flat and tag views: the folder an item is in, relative to the folder being viewed.
     pub fn rel_folder(&self, e: &Entry) -> String {
         let parent = e.path.parent().unwrap_or(&self.path);
+        if self.tag.is_some() {
+            // Tagged files are anywhere: show where, from home.
+            return match dirs::home_dir().and_then(|h| parent.strip_prefix(h).ok().map(Path::to_path_buf)) {
+                Some(r) if r.as_os_str().is_empty() => "~".into(),
+                Some(r) => format!("~/{}", r.display()),
+                None => parent.display().to_string(),
+            };
+        }
         match parent.strip_prefix(&self.path) {
             Ok(r) if r.as_os_str().is_empty() => "—".into(),
             Ok(r) => format!("{}/", r.display()),
@@ -250,7 +291,7 @@ impl Tab {
     /// Cheap auto-refresh: re-read the folder if its mtime changed.
     pub fn check_changed(&mut self, show_hidden: bool, sort: Sort) -> bool {
         // A flat view covers a whole tree; it's rescanned after file operations and Ctrl+R.
-        if self.flat {
+        if self.flat || self.tag.is_some() {
             return false;
         }
         if self.last_check.elapsed().as_millis() < 1000 {
@@ -337,8 +378,9 @@ impl Tab {
     }
 
     fn enter(&mut self, show_hidden: bool, sort: Sort, came_from: Option<&Path>) {
-        // Opening another folder leaves the flat view.
+        // Opening another folder leaves the flat and tag views.
         self.flat = false;
+        self.tag = None;
         self.flat_scan = None;
         self.flat_keep = None;
         self.filter.clear();
@@ -532,6 +574,29 @@ mod tests {
         tab.navigate(root.join("a"), false, s);
         assert!(!tab.flat);
         assert_eq!(names(&tab), ["b", "y.txt"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tag_view_lists_files_from_anywhere() {
+        let root = std::env::temp_dir().join(format!("file-flier-tagview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        let (x, y) = (root.join("a/b/x.txt"), root.join("y.txt"));
+        std::fs::write(&x, "").unwrap();
+        std::fs::write(&y, "").unwrap();
+        let s = Sort::default();
+        let mut tab = Tab::new(root.clone(), false, s, ViewMode::Details);
+        tab.set_tag_view("Work".into(), vec![x.clone(), y.clone(), root.join("gone.txt")], false, s);
+        let names = |t: &Tab| t.visible.iter().map(|&i| t.entries[i].name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&tab), ["x.txt", "y.txt"]);
+        assert_eq!(tab.title(), "Tag: Work");
+        std::fs::remove_file(&y).unwrap();
+        tab.reload(false, s);
+        assert_eq!(names(&tab), ["x.txt"]);
+        tab.navigate(root.join("a"), false, s);
+        assert!(tab.tag.is_none());
+        assert_eq!(names(&tab), ["b"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 

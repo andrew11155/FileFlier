@@ -110,6 +110,8 @@ pub struct Config {
     pub folder_scheme: u8,
     /// Shortcuts the user changed: command id -> keys ("Ctrl+Shift+P"). Others use the defaults.
     pub keymap: std::collections::BTreeMap<String, Vec<String>>,
+    /// Extensions switched on or off, by id (see `ext::Ext`). Missing ones are on.
+    pub extensions: std::collections::BTreeMap<String, bool>,
     pub collapsed: Vec<String>,
     pub inspector_width: f32,
     /// Render office documents as pages with LibreOffice when it's installed.
@@ -131,6 +133,12 @@ impl ViewMode {
 
     pub fn is_grid(self) -> bool {
         Self::GRIDS.contains(&self)
+    }
+}
+
+impl Config {
+    pub fn ext_on(&self, e: crate::ext::Ext) -> bool {
+        self.extensions.get(e.id()).copied().unwrap_or(true)
     }
 }
 
@@ -164,6 +172,7 @@ impl Default for Config {
             folder_colors: Default::default(),
             folder_scheme: 0,
             keymap: Default::default(),
+            extensions: Default::default(),
             collapsed: vec!["Recents".into()],
             inspector_width: 340.0,
             office_previews: true,

@@ -490,6 +490,15 @@ impl FileFlier {
                     self.cfg.save();
                 }
 
+                section(ui, pal, "Extensions");
+                for e in crate::ext::Ext::ALL {
+                    let on = self.cfg.ext_on(e);
+                    if row(ui, pal, e.name(), e.description(), |ui| toggle(ui, pal, Id::new(("ext", e.id())), on)) {
+                        self.cfg.extensions.insert(e.id().to_string(), !on);
+                        self.cfg.save();
+                    }
+                }
+
                 section(ui, pal, "Startup");
                 let starts = [Startup::Home, Startup::RestoreSession];
                 let st = starts.iter().position(|s| *s == self.cfg.startup).unwrap_or(0);

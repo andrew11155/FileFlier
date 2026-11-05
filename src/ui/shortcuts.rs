@@ -89,6 +89,7 @@ impl FileFlier {
         let q = query.trim();
         let mut items: Vec<(i32, Command)> = commands::ALL
             .iter()
+            .filter(|c| c.ext().is_none_or(|e| self.cfg.ext_on(e)))
             .filter_map(|&c| {
                 let keys = c.shortcut_texts(&ctx).join(" ");
                 let s = fuzzy::score(q, c.label()).or_else(|| fuzzy::score(q, &keys).map(|s| s - 200))?;

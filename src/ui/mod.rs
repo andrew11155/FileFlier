@@ -14,6 +14,7 @@ mod quicklook;
 mod settings;
 mod shortcuts;
 mod sidebar;
+pub(crate) mod tags;
 pub mod tint;
 mod update;
 
