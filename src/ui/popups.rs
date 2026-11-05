@@ -163,9 +163,12 @@ impl FileFlier {
         let est_h =
             52.0 + entries.iter().map(|(_, it)| if matches!(it, MenuItem::Sep) { 9.0 } else { 30.0 }).sum::<f32>();
         let screen = ctx.content_rect();
+        // A menu taller than the window starts at the top and scrolls.
+        let list_max_h = (screen.height() - 52.0 - 24.0).max(60.0);
+        let est_h = est_h.min(list_max_h + 52.0);
         let pos = pos2(
-            menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left())),
-            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top())),
+            menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left() + 4.0)),
+            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top() + 4.0)),
         );
         let mut chosen: Option<MenuItem> = None;
         let mut picked_color: Option<(Vec<PathBuf>, ColorPick)> = None;
@@ -182,61 +185,74 @@ impl FileFlier {
                 resp.request_focus();
                 ui.add_space(6.0);
                 let mut sel_i = 0;
-                for (i, item) in &entries {
-                    if let MenuItem::Sep = item {
-                        let (r, _) = ui.allocate_exact_size(vec2(width, 9.0), Sense::hover());
-                        ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal.border));
-                        continue;
-                    }
-                    if let MenuItem::Colors(paths, current) = item {
-                        if let Some(c) = color_row(ui, pal, width, *current, scheme, paths.len() > 1) {
-                            picked_color = Some((paths.clone(), c));
+                egui::ScrollArea::vertical().max_height(list_max_h).auto_shrink([false, true]).show(ui, |ui| {
+                    for (i, item) in &entries {
+                        if let MenuItem::Sep = item {
+                            let (r, _) = ui.allocate_exact_size(vec2(width, 9.0), Sense::hover());
+                            ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal.border));
+                            continue;
                         }
-                        continue;
-                    }
-                    if let MenuItem::Rating(paths, current) = item {
-                        let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
-                        let p = ui.painter().clone();
-                        text(&p, pos2(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Rating", 14.0, pal.text);
-                        let id = Id::new("menu_rating");
-                        if let Some(n) =
-                            super::tags::star_row(ui, id, r.left() + 74.0, r.center().y, 22.0, *current, pal)
-                        {
-                            picked_rating = Some((paths.clone(), n));
+                        if let MenuItem::Colors(paths, current) = item {
+                            if let Some(c) = color_row(ui, pal, width, *current, scheme, paths.len() > 1) {
+                                picked_color = Some((paths.clone(), c));
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    let selected = selectable.get(menu.cursor) == Some(i);
-                    let danger = matches!(item, MenuItem::Cmd(Command::Trash | Command::DeletePermanently));
-                    let (label, badges, icon) = match item {
-                        MenuItem::Cmd(c) if danger => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::Trash),
-                        MenuItem::Cmd(c) => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::None),
-                        MenuItem::Choice(c, on) => {
-                            let label = c.label();
-                            let label = label.strip_prefix("View: ").map_or(label.to_string(), super::capitalize);
-                            (label, c.shortcut_texts(ctx), RowIcon::Check(*on))
+                        if let MenuItem::Rating(paths, current) = item {
+                            let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
+                            let p = ui.painter().clone();
+                            text(
+                                &p,
+                                pos2(r.left() + 10.0, r.center().y),
+                                Align2::LEFT_CENTER,
+                                "Rating",
+                                14.0,
+                                pal.text,
+                            );
+                            let id = Id::new("menu_rating");
+                            if let Some(n) =
+                                super::tags::star_row(ui, id, r.left() + 74.0, r.center().y, 22.0, *current, pal)
+                            {
+                                picked_rating = Some((paths.clone(), n));
+                            }
+                            continue;
                         }
-                        MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
-                        MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
-                        MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
-                        MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
-                        MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
-                        MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
-                        MenuItem::DropboxUnsync(_) => {
-                            ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
+                        let selected = selectable.get(menu.cursor) == Some(i);
+                        let danger = matches!(item, MenuItem::Cmd(Command::Trash | Command::DeletePermanently));
+                        let (label, badges, icon) = match item {
+                            MenuItem::Cmd(c) if danger => {
+                                (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::Trash)
+                            }
+                            MenuItem::Cmd(c) => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::None),
+                            MenuItem::Choice(c, on) => {
+                                let label = c.label();
+                                let label = label.strip_prefix("View: ").map_or(label.to_string(), super::capitalize);
+                                (label, c.shortcut_texts(ctx), RowIcon::Check(*on))
+                            }
+                            MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
+                            MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
+                            MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
+                            MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
+                            MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
+                            MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
+                            MenuItem::DropboxUnsync(_) => {
+                                ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
+                            }
+                            MenuItem::DropboxExcluded => {
+                                ("Dropbox folders not synced here…".into(), vec![], RowIcon::None)
+                            }
+                            MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
+                        };
+                        let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
+                        if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+                            menu.cursor = sel_i;
                         }
-                        MenuItem::DropboxExcluded => ("Dropbox folders not synced here…".into(), vec![], RowIcon::None),
-                        MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
-                    };
-                    let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
-                    if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
-                        menu.cursor = sel_i;
+                        if resp.clicked() {
+                            chosen = Some((*item).clone());
+                        }
+                        sel_i += 1;
                     }
-                    if resp.clicked() {
-                        chosen = Some((*item).clone());
-                    }
-                    sel_i += 1;
-                }
+                });
                 if entries.is_empty() {
                     text(
                         ui.painter(),
