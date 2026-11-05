@@ -145,7 +145,7 @@ impl<'a> Tints<'a> {
     /// Draw the folder icon for `path` in `r`, in its color.
     pub fn folder(&self, p: &Painter, r: Rect, pal: &Palette, path: &Path) {
         let to = color_of(self.colors, self.scheme, pal.accent, path);
-        let special = if crate::adwaita::enabled() { crate::adwaita::special_folder(path) } else { None };
+        let special = if crate::system_icons::enabled() { crate::system_icons::special_folder(path) } else { None };
         let Some(&(from, start)) = self.anims.get(path) else {
             return icons::folder_icon(p, r, pal, to, special);
         };

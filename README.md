@@ -202,17 +202,17 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   and GNOME Light and GNOME Dark. The GNOME themes use libadwaita's colors
   and go further than colors, to sit in with GNOME Files and other GNOME
   apps: rounder corners on rows, tabs, buttons and menus, Adwaita-style
-  folders in your accent color (blue unless you pick another), a sidebar that marks the current place with a highlight only, and sidebar
+  folders in your accent color (blue unless you pick another), a sidebar with GNOME Files' roomier rows that marks the current place with a highlight only, text drawn as GTK draws it (not thickened), and sidebar
   text in your desktop's interface font at its size (Adwaita Sans, or
   whatever GNOME's font setting names, e.g. Ubuntu Sans).
-- **Icons:** File Flier's own, or **GNOME**: the icons of GNOME's Adwaita
-  icon theme (by the GNOME Project), read from the copy installed on your
-  system. Folders get Adwaita's folder icons, recolored to the theme's folder
-  color or the color you gave a folder, and your Home, Desktop, Documents,
-  Downloads, Music, Pictures, Videos, Public and Templates folders show their
-  emblems. The sidebar uses GNOME's symbolic icons, like GNOME Files, down to its
-  arrows, eject and add buttons. If
-  Adwaita isn't installed, File Flier's own icons are used.
+- **Icons:** File Flier's own, or **GNOME**: your desktop's icon theme
+  (the one GNOME's settings name, e.g. Adwaita or Ubuntu's Yaru), looked up
+  as GTK does, so folders and the sidebar look just like in GNOME Files.
+  Folders are drawn as the theme has them (recolored if you gave a folder a
+  color), your Home, Desktop, Documents, Downloads, Music, Pictures, Videos,
+  Public and Templates folders get their own icons, and the sidebar uses the
+  theme's symbolic icons, down to its arrows, eject and add buttons. With no
+  icon theme installed, File Flier's own icons are used.
 - **Accent color:** the theme's own, or one of eight colors. Text on the accent
   switches between black and white so it stays readable.
 - **Interface size:** 80–150%. You can also press `Ctrl +`, `Ctrl −` and

@@ -395,6 +395,10 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
     v.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
     v.popup_shadow = egui::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(110) };
     v.window_shadow = v.popup_shadow;
+    // egui thickens light-on-dark text; GTK doesn't, so the GNOME themes don't either.
+    if p.gnome {
+        v.text_options.color_transfer_function = egui::epaint::FontColorTransferFunction::Off;
+    }
     ctx.set_visuals_of(if dark { egui::Theme::Dark } else { egui::Theme::Light }, v);
     ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.global_style_mut(|s| {

@@ -320,17 +320,20 @@ impl FileFlier {
                 });
 
                 section(ui, pal, "Icons");
-                let hint = if crate::adwaita::available() {
-                    "GNOME uses the Adwaita icons installed on this system"
+                let hint = if crate::system_icons::available() {
+                    format!(
+                        "GNOME uses your desktop's icon theme ({}), as GNOME Files does",
+                        crate::system_icons::theme_name()
+                    )
                 } else {
-                    "GNOME needs the Adwaita icon theme, which isn't installed"
+                    "GNOME needs an icon theme, and none is installed".to_string()
                 };
                 let sel = usize::from(self.cfg.gnome_icons);
-                if let Some(i) = row(ui, pal, "Icon set", hint, |ui| {
+                if let Some(i) = row(ui, pal, "Icon set", &hint, |ui| {
                     segmented(ui, pal, Id::new("icon_set"), &["File Flier", "GNOME"], sel)
                 }) {
                     self.cfg.gnome_icons = i == 1;
-                    crate::adwaita::set_enabled(self.cfg.gnome_icons);
+                    crate::system_icons::set_enabled(self.cfg.gnome_icons, &ctx);
                     self.cfg.save();
                 }
 

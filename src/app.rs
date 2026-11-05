@@ -1939,7 +1939,7 @@ impl eframe::App for FileFlier {
 
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        crate::adwaita::set_enabled(self.cfg.gnome_icons);
+        crate::system_icons::set_enabled(self.cfg.gnome_icons, &ctx);
         if self.native.is_none() {
             self.native = Some(crate::native::Native::new(frame, &ctx));
         }

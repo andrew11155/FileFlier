@@ -31,13 +31,13 @@ pub fn folder_tinted(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>)
 }
 
 /// A folder, with the GNOME icons' emblem for special folders (`adwaita::special_folder`).
-pub fn folder_icon(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>, special: Option<&str>) {
+pub fn folder_icon(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>, special: Option<&'static str>) {
     // The back sheet is a shade darker than the front, as with the theme colors.
     let (front_c, back_c) = match tint {
         Some(c) => (c, mix(c, Color32::BLACK, 0.18)),
         None => (pal.folder, pal.folder_back),
     };
-    if crate::adwaita::folder(p, r, back_c, special) {
+    if crate::system_icons::folder(p, r, tint, special) {
         return;
     }
     let r = snap(p, square(r));
@@ -539,26 +539,26 @@ pub enum Place {
 /// The GNOME icon theme's symbolic icon for a place.
 pub fn place_symbolic(kind: Place) -> &'static str {
     match kind {
-        Place::Home => "symbolic/places/user-home-symbolic.svg",
-        Place::Desktop => "symbolic/places/user-desktop-symbolic.svg",
-        Place::Documents => "symbolic/places/folder-documents-symbolic.svg",
-        Place::Downloads => "symbolic/places/folder-download-symbolic.svg",
-        Place::Music => "symbolic/places/folder-music-symbolic.svg",
-        Place::Pictures => "symbolic/places/folder-pictures-symbolic.svg",
-        Place::Videos => "symbolic/places/folder-videos-symbolic.svg",
-        Place::Trash => "symbolic/places/user-trash-symbolic.svg",
-        Place::Folder => "symbolic/places/folder-symbolic.svg",
-        Place::Bookmark => "symbolic/places/user-bookmarks-symbolic.svg",
-        Place::Recent => "symbolic/actions/document-open-recent-symbolic.svg",
-        Place::Drive => "symbolic/devices/drive-harddisk-symbolic.svg",
-        Place::Network => "symbolic/places/network-server-symbolic.svg",
-        Place::Cloud => "symbolic/places/folder-remote-symbolic.svg",
+        Place::Home => "user-home-symbolic",
+        Place::Desktop => "user-desktop-symbolic",
+        Place::Documents => "folder-documents-symbolic",
+        Place::Downloads => "folder-download-symbolic",
+        Place::Music => "folder-music-symbolic",
+        Place::Pictures => "folder-pictures-symbolic",
+        Place::Videos => "folder-videos-symbolic",
+        Place::Trash => "user-trash-symbolic",
+        Place::Folder => "folder-symbolic",
+        Place::Bookmark => "user-bookmarks-symbolic",
+        Place::Recent => "document-open-recent-symbolic",
+        Place::Drive => "drive-harddisk-symbolic",
+        Place::Network => "network-server-symbolic",
+        Place::Cloud => "folder-remote-symbolic",
     }
 }
 
 pub fn place(p: &Painter, r: Rect, kind: Place, pal: &Palette) {
     // GNOME Files draws its sidebar with symbolic icons in the text color.
-    if crate::adwaita::symbolic(p, r, place_symbolic(kind), pal.text) {
+    if crate::system_icons::symbolic(p, r, place_symbolic(kind), pal.text) {
         return;
     }
     let r = square(r);

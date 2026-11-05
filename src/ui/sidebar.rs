@@ -62,8 +62,8 @@ impl Item {
 
 /// A disclosure arrow, pointing down when `open`. GNOME's in the GNOME icon set.
 fn chevron(p: &egui::Painter, r: Rect, open: bool, c: egui::Color32) {
-    let name = if open { "symbolic/ui/pan-down-symbolic.svg" } else { "symbolic/ui/pan-end-symbolic.svg" };
-    if crate::adwaita::symbolic(p, r, name, c) {
+    let name = if open { "pan-down-symbolic" } else { "pan-end-symbolic" };
+    if crate::system_icons::symbolic(p, r, name, c) {
         return;
     }
     // The hand-drawn arrows are drawn smaller than the 16 px symbolic ones.
@@ -336,7 +336,7 @@ impl FileFlier {
                     let ir = Rect::from_center_size(pos2(hr.left() + 16.0, hr.center().y), vec2(17.0, 17.0));
                     match icon {
                         _ if title != "Tags"
-                            && crate::adwaita::symbolic(p, ir, icons::place_symbolic(icon), pal.text_dim) => {}
+                            && crate::system_icons::symbolic(p, ir, icons::place_symbolic(icon), pal.text_dim) => {}
                         _ if title == "Tags" => {
                             // A luggage tag: a rounded tab with a hole.
                             let r = ir.shrink(2.0);
@@ -385,16 +385,18 @@ impl FileFlier {
                             pal.text_faint,
                         );
                     }
+                    // GNOME Files' sidebar rows are roomier, with a gap between highlights.
+                    let (item_h, child_h, gap) = if pal.gnome { (38.0, 32.0, 2.0) } else { (ITEM_H, CHILD_H, 1.0) };
                     for item in &items {
                         let h = if item.space.is_some() {
-                            ITEM_H + 6.0
+                            item_h + 6.0
                         } else if item.depth > 0 {
-                            CHILD_H
+                            child_h
                         } else {
-                            ITEM_H
+                            item_h
                         };
                         let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
-                        let r = r.shrink2(vec2(6.0, 1.0));
+                        let r = r.shrink2(vec2(6.0, gap));
                         let is_current = match &item.tag {
                             Some((name, ..)) => current_tag.as_deref() == Some(name.as_str()),
                             None => current_tag.is_none() && item.path == current && !item.more && !item.manage_tags,
@@ -461,7 +463,7 @@ impl FileFlier {
                             p.circle_filled(ir.center(), 6.0, *c);
                         } else if item.add_cloud || item.manage_tags {
                             let c = if resp.hovered() { pal.text_strong } else { pal.text_dim };
-                            if !crate::adwaita::symbolic(p, ir, "symbolic/actions/list-add-symbolic.svg", c) {
+                            if !crate::system_icons::symbolic(p, ir, "list-add-symbolic", c) {
                                 icons::plus(p, ir.shrink(2.0), c);
                             }
                         } else if !item.more {
@@ -536,8 +538,8 @@ impl FileFlier {
                             if eresp.hovered() {
                                 ui.painter().rect_filled(er, pal.round(4.0), pal.tab_hover);
                             }
-                            let eject = "symbolic/actions/media-eject-symbolic.svg";
-                            if !crate::adwaita::symbolic(ui.painter(), er, eject, c) {
+                            let eject = "media-eject-symbolic";
+                            if !crate::system_icons::symbolic(ui.painter(), er, eject, c) {
                                 icons::eject(ui.painter(), er.shrink(4.0), c);
                             }
                             if eresp.on_hover_text("Eject — safe to unplug afterwards").clicked() {
