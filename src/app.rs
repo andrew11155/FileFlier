@@ -1184,12 +1184,13 @@ impl FileFlier {
                 let p = self.tab().path.clone();
                 self.toggle_bookmark(p);
             }
-            SortByName | SortBySize | SortByModified | SortByKind | SortByFolder => {
+            SortByName | SortBySize | SortByModified | SortByKind | SortByFolder | SortByRating => {
                 let key = match cmd {
                     SortByName => SortKey::Name,
                     SortBySize => SortKey::Size,
                     SortByModified => SortKey::Modified,
                     SortByKind => SortKey::Kind,
+                    SortByRating => SortKey::Rating,
                     _ => SortKey::Folder,
                 };
                 self.set_sort(key);
@@ -1254,7 +1255,7 @@ impl FileFlier {
             self.cfg.sort.descending = !self.cfg.sort.descending;
         } else {
             self.cfg.sort.key = key;
-            self.cfg.sort.descending = matches!(key, SortKey::Size | SortKey::Modified);
+            self.cfg.sort.descending = matches!(key, SortKey::Size | SortKey::Modified | SortKey::Rating);
         }
         self.cfg.save();
         self.resort_all();
@@ -1368,7 +1369,7 @@ impl FileFlier {
     }
 
     /// Apply a new sort order (flat views are sorted in place, not rescanned).
-    fn resort_all(&mut self) {
+    pub(crate) fn resort_all(&mut self) {
         let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
         for pane in &mut self.panes {
             for tab in &mut pane.tabs {

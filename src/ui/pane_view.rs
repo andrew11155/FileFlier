@@ -523,6 +523,7 @@ impl FileFlier {
                             SortKey::Modified => Command::SortByModified,
                             SortKey::Kind => Command::SortByKind,
                             SortKey::Folder => Command::SortByFolder,
+                            SortKey::Rating => Command::SortByRating,
                         }));
                     }
                 };
@@ -540,7 +541,7 @@ impl FileFlier {
             }
             header(ui, Some(SortKey::Size), "Size", cols.size.0, cols.size.1, true, true);
             if let Some((l, r)) = cols.rating {
-                header(ui, None, "Rating", l, r, false, true);
+                header(ui, Some(SortKey::Rating), "Rating", l, r, false, true);
             }
             if let Some((l, r)) = cols.modified {
                 header(ui, Some(SortKey::Modified), "Modified", l, r, false, true);
@@ -1203,7 +1204,7 @@ impl FileFlier {
             && o.clicked()
         {
             self.actions.push(Action::Activate(idx));
-            let items = vec![
+            let mut items = vec![
                 MenuItem::Cmd(Command::ToggleHidden),
                 MenuItem::Sep,
                 MenuItem::Cmd(Command::SortByName),
@@ -1213,6 +1214,9 @@ impl FileFlier {
                 MenuItem::Cmd(Command::SortByModified),
                 MenuItem::Cmd(Command::ReverseSort),
             ];
+            if self.cfg.ext_on(crate::ext::Ext::Ratings) {
+                items.insert(items.len() - 1, MenuItem::Cmd(Command::SortByRating));
+            }
             self.actions.push(Action::OpenMenu(o.rect.left_top() - vec2(0.0, 250.0), items));
         }
 

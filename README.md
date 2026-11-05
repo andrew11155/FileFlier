@@ -100,7 +100,9 @@ the same on every desktop environment.
   Extensions* (both are on to start with):
   - **Ratings.** Give files 1 to 5 stars with `Ctrl+Alt+1` … `Ctrl+Alt+5`
     (`Ctrl+Alt+0` clears), from the right-click menu, in the preview panel,
-    or by clicking the stars in the details view's *Rating* column.
+    or by clicking the stars in the details view's *Rating* column. Sort by
+    rating with `Ctrl+6`, from the sort menu, or by clicking the column's header
+    (best first).
   - **Tags.** Right-click → *Tags…* to tick tags for the selection or make a
     new one. Tags show as colored dots after the name and as chips in the
     preview panel. The sidebar's *Tags* list shows every tag with how many
@@ -261,6 +263,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Ctrl` + mouse wheel | Step through the views in `Alt+1` … `Alt+8` order (wheel up = next) |
 | `Ctrl+H` | Show hidden files |
 | `Ctrl+Alt+1` … `5` / `Ctrl+Alt+0` | Rate 1 to 5 stars / clear the rating (Ratings extension) |
+| `Ctrl+6` | Sort by rating (Ratings extension) |
 | `Ctrl+B` | Toggle the sidebar |
 | `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |

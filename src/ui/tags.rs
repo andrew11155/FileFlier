@@ -115,6 +115,9 @@ impl FileFlier {
             return;
         }
         self.meta.set_rating(paths, stars);
+        if self.cfg.sort.key == crate::fs_model::SortKey::Rating {
+            self.resort_all();
+        }
         let what = if paths.len() == 1 { display_name(&paths[0]) } else { format!("{} items", paths.len()) };
         self.info(match stars {
             0 => format!("Removed the rating from {what}"),

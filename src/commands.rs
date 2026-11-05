@@ -44,6 +44,7 @@ pub enum Command {
     SortByModified,
     SortByKind,
     SortByFolder,
+    SortByRating,
     ReverseSort,
     Help,
     OpenInNewTab,
@@ -116,6 +117,7 @@ pub const ALL: &[Command] = &[
     SortByModified,
     SortByKind,
     SortByFolder,
+    SortByRating,
     ReverseSort,
     Help,
     OpenInNewTab,
@@ -198,6 +200,7 @@ impl Command {
             SortByModified => "Sort by date modified",
             SortByKind => "Sort by type",
             SortByFolder => "Sort by folder",
+            SortByRating => "Sort by rating",
             ReverseSort => "Reverse sort order",
             Help => "Keyboard shortcuts",
             OpenInNewTab => "Open in new tab",
@@ -235,7 +238,7 @@ impl Command {
     pub fn ext(self) -> Option<crate::ext::Ext> {
         use crate::ext::Ext;
         match self {
-            RateNone | Rate1 | Rate2 | Rate3 | Rate4 | Rate5 => Some(Ext::Ratings),
+            RateNone | Rate1 | Rate2 | Rate3 | Rate4 | Rate5 | SortByRating => Some(Ext::Ratings),
             EditTags | ManageTags => Some(Ext::Tags),
             _ => None,
         }
@@ -314,6 +317,7 @@ impl Command {
             SortByModified => vec![sc(CTRL, Key::Num3)],
             SortByKind => vec![sc(CTRL, Key::Num4)],
             SortByFolder => vec![sc(CTRL, Key::Num5)],
+            SortByRating => vec![sc(CTRL, Key::Num6)],
             ReverseSort => vec![],
             Help => vec![sc(NONE, Key::F1)],
             OpenInNewTab => vec![sc(CTRL, Key::Enter)],

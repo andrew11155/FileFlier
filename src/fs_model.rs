@@ -56,6 +56,8 @@ pub enum SortKey {
     Kind,
     /// The folder an item is in (for the flat view, where items come from many folders).
     Folder,
+    /// Stars (Ratings extension).
+    Rating,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -136,6 +138,9 @@ pub fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
         SortKey::Size => a.size.cmp(&b.size).then_with(|| natural_cmp(&a.name, &b.name)),
         SortKey::Modified => a.modified.cmp(&b.modified),
         SortKey::Kind => a.extension().cmp(&b.extension()).then_with(|| natural_cmp(&a.name, &b.name)),
+        SortKey::Rating => crate::meta::sort_rating(&a.path)
+            .cmp(&crate::meta::sort_rating(&b.path))
+            .then_with(|| natural_cmp(&a.name, &b.name)),
         SortKey::Folder => {
             let folder = |e: &Entry| e.path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
             natural_cmp(&folder(a), &folder(b)).then_with(|| natural_cmp(&a.name, &b.name))
