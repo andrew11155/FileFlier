@@ -10,7 +10,7 @@ use super::{elided, icon_button};
 use crate::app::{Action, CONTROLS_W, DragPaths, DropTarget, FileFlier, TRAFFIC_LIGHTS_W, plural};
 use crate::icons;
 
-const TAB_H: f32 = 32.0;
+pub(crate) const TAB_H: f32 = 32.0;
 
 impl FileFlier {
     /// `strips` holds (pane index, left, right) for each visible pane column.
@@ -89,7 +89,7 @@ impl FileFlier {
         Some(r.left())
     }
 
-    fn tab_strip(&mut self, ui: &mut Ui, idx: usize, strip: Rect) {
+    pub(crate) fn tab_strip(&mut self, ui: &mut Ui, idx: usize, strip: Rect) {
         let pal = self.pal();
         let pane_active = idx == self.active;
         let pane = &self.panes[idx];
@@ -97,7 +97,9 @@ impl FileFlier {
         let tab_w = ((strip.width() - 40.0) / n as f32).clamp(64.0, 220.0);
         let top = strip.bottom() - TAB_H;
         let painter = ui.painter().with_clip_rect(strip);
-        let pointer = ui.input(|i| i.pointer.hover_pos());
+        let can_close = n > 1 || self.panes.len() > 1;
+        let dragging = self.tab_drag;
+        self.strips.push((idx, strip, tab_w));
 
         for (ti, tab) in pane.tabs.iter().enumerate() {
             let r = Rect::from_min_size(pos2(strip.left() + ti as f32 * tab_w, top), vec2(tab_w, TAB_H));
@@ -121,7 +123,7 @@ impl FileFlier {
                         pal.accent,
                     );
                 }
-            } else if hovered {
+            } else if hovered && dragging.is_none() {
                 painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), 6.0, pal.tab_hover);
             } else if ti + 1 < n && ti + 1 != pane.active {
                 painter.line_segment(
@@ -131,13 +133,19 @@ impl FileFlier {
             }
 
             let icon = Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), vec2(18.0, 18.0));
-            icons::folder(&painter, icon, pal);
+            super::tint::Tints::new(
+                &self.cfg.folder_colors,
+                self.cfg.folder_scheme,
+                &self.tint_anims,
+                ui.input(|i| i.time),
+            )
+            .folder(&painter, icon, pal, &tab.path);
             if tab.locked {
                 let lr = Rect::from_center_size(pos2(r.left() + 27.0, r.center().y + 5.0), vec2(10.0, 10.0));
                 painter.circle_filled(lr.center(), 6.0, if is_active { pal.bg } else { pal.titlebar });
                 icons::lock(&painter, lr, pal.text, true);
             }
-            let show_close = n > 1 && (is_active || hovered);
+            let show_close = can_close && (is_active || hovered) && dragging.is_none();
             let text_right = if show_close { r.right() - 30.0 } else { r.right() - 10.0 };
             let color = if is_active { pal.text_strong } else { pal.text_dim };
             let g = elided(&painter, &tab.title(), 14.0, color, text_right - (r.left() + 36.0));
@@ -174,17 +182,12 @@ impl FileFlier {
             if resp.clicked() || resp.drag_started() {
                 self.actions.push(Action::SelectTab(idx, ti));
             }
-            if resp.middle_clicked() && n > 1 {
-                self.actions.push(Action::CloseTab(idx, ti));
+            // Dragging reorders, moves the tab to another pane, or tiles it (see `tab_drag_ui`).
+            if resp.drag_started() {
+                self.tab_drag = Some((idx, ti));
             }
-            // Drag to reorder.
-            if resp.dragged()
-                && let Some(p) = pointer
-            {
-                let target = (((p.x - strip.left()) / tab_w).floor().max(0.0) as usize).min(n - 1);
-                if target != ti {
-                    self.actions.push(Action::MoveTab(idx, ti, target));
-                }
+            if resp.middle_clicked() && can_close {
+                self.actions.push(Action::CloseTab(idx, ti));
             }
             resp.on_hover_text(tab.path.to_string_lossy());
         }
@@ -276,24 +279,104 @@ impl FileFlier {
         }
     }
 
-    pub(crate) fn split_divider(&mut self, ui: &mut Ui, area: Rect, x: f32, draw_line: bool) {
+    pub(crate) fn split_divider(&mut self, ui: &mut Ui, k: usize, d: &crate::layout::Divider, draw_line: bool) {
         let pal = self.pal();
-        let line = Rect::from_min_max(pos2(x, area.top()), pos2(x + 1.0, area.bottom()));
+        let line = if d.row {
+            Rect::from_min_max(pos2(d.at, d.area.top()), pos2(d.at + 1.0, d.area.bottom()))
+        } else {
+            Rect::from_min_max(pos2(d.area.left(), d.at), pos2(d.area.right(), d.at + 1.0))
+        };
         if draw_line {
             ui.painter().rect_filled(line, 0.0, pal.border);
         }
-        let handle = line.expand2(vec2(3.0, 0.0));
-        let resp = ui.interact(handle, Id::new("split_divider"), Sense::drag());
+        let handle = if d.row { line.expand2(vec2(3.0, 0.0)) } else { line.expand2(vec2(0.0, 3.0)) };
+        let resp = ui.interact(handle, Id::new(("split_divider", k)), Sense::drag());
         if resp.hovered() || resp.dragged() {
-            ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+            ui.ctx().set_cursor_icon(if d.row { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical });
         }
         if resp.dragged()
             && let Some(p) = resp.interact_pointer_pos()
+            && let Some(ratio) = self.layout.ratio_mut(&d.path)
         {
-            self.cfg.split_ratio = ((p.x - area.left()) / area.width()).clamp(0.2, 0.8);
+            let r = if d.row { (p.x - d.area.left()) / d.area.width() } else { (p.y - d.area.top()) / d.area.height() };
+            *ratio = r.clamp(crate::layout::MIN_RATIO, 1.0 - crate::layout::MIN_RATIO);
         }
-        if resp.drag_stopped() {
-            self.cfg.save();
+    }
+
+    /// A tab being dragged: reorder it within its strip as it moves, and on release
+    /// move it to another pane's strip, into another pane (middle), or into a new
+    /// pane split off one edge of a pane, like Vivaldi's tab tiling.
+    pub(crate) fn tab_drag_ui(&mut self, ui: &mut Ui) {
+        let Some((src, ti)) = self.tab_drag else { return };
+        let ctx = ui.ctx().clone();
+        let (pos, down) = ctx.input(|i| (i.pointer.latest_pos(), i.pointer.primary_down()));
+        let (Some(pos), true) = (pos, src < self.panes.len() && ti < self.panes[src].tabs.len()) else {
+            self.tab_drag = None;
+            return;
+        };
+        enum Target {
+            Strip(usize, usize),
+            Pane(usize, Option<crate::layout::Side>),
+        }
+        let pal = self.pal();
+        let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("tab_drag")));
+        let mut target = None;
+        if let Some(&(p, strip, tab_w)) = self.strips.iter().find(|s| s.1.contains(pos)) {
+            let n = self.panes[p].tabs.len();
+            if p == src {
+                // Live reorder within the strip.
+                let to = (((pos.x - strip.left()) / tab_w).floor().max(0.0) as usize).min(n - 1);
+                if to != ti {
+                    let pane = &mut self.panes[src];
+                    let t = pane.tabs.remove(ti);
+                    pane.tabs.insert(to, t);
+                    pane.active = to;
+                    self.tab_drag = Some((src, to));
+                }
+            } else {
+                let at = (((pos.x - strip.left()) / tab_w).round().max(0.0) as usize).min(n);
+                let x = (strip.left() + at as f32 * tab_w).min(strip.right() - 2.0);
+                let top = strip.bottom() - TAB_H;
+                painter.rect_filled(
+                    Rect::from_min_max(pos2(x - 1.0, top + 4.0), pos2(x + 1.0, strip.bottom() - 4.0)),
+                    1.0,
+                    pal.accent,
+                );
+                target = Some(Target::Strip(p, at));
+            }
+        } else if let Some(p) = self.pane_rects.iter().position(|r| r.contains(pos)) {
+            let rect = self.pane_rects[p];
+            let side = crate::layout::zone(rect, pos);
+            let alone = self.panes[src].tabs.len() == 1;
+            if !(p == src && (side.is_none() || alone)) {
+                let area = crate::layout::preview(rect, side).shrink(4.0);
+                painter.rect_filled(area, 8.0, pal.accent.gamma_multiply(0.18));
+                painter.rect_stroke(area, 8.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
+                target = Some(Target::Pane(p, side));
+            }
+        }
+        // The tab's name follows the pointer once it leaves its strip.
+        let in_own_strip = self.strips.iter().any(|s| s.0 == src && s.1.contains(pos));
+        if !in_own_strip {
+            let (_, ti) = self.tab_drag.unwrap_or((src, ti));
+            let title = self.panes[src].tabs[ti].title();
+            let g = painter.layout_no_wrap(title, super::font(13.0), pal.text_strong);
+            let at = pos + vec2(14.0, 10.0);
+            let r = Rect::from_min_size(at, g.size()).expand2(vec2(10.0, 6.0));
+            painter.rect_filled(r, 6.0, pal.tab_hover);
+            painter.rect_stroke(r, 6.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            painter.galley(at, g, pal.text_strong);
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+        }
+        if down {
+            return;
+        }
+        let (src, ti) = self.tab_drag.take().unwrap_or((src, ti));
+        match target {
+            Some(Target::Strip(p, at)) => self.move_tab_to(src, ti, p, Some(at)),
+            Some(Target::Pane(p, None)) => self.move_tab_to(src, ti, p, None),
+            Some(Target::Pane(p, Some(side))) => self.split_with_tab(src, ti, p, side),
+            None => {}
         }
     }
 

@@ -82,7 +82,13 @@ pub enum Dialog {
     Conflict(Conflict),
     Trash(crate::trashview::TrashView),
     OpenWith(crate::openwith::OpenWithView),
-    Help,
+    /// The shortcuts overlay: search, run, and change keys. `record` is the command whose
+    /// key is being recorded, and which of its keys (None = a new one).
+    Shortcuts {
+        query: String,
+        cursor: usize,
+        record: Option<(Command, Option<usize>)>,
+    },
     Settings,
     Update,
     Cloud(crate::ui::CloudDialog),
@@ -126,6 +132,10 @@ pub enum MenuItem {
     /// Cloud account (by name): unmount it, or sign out of it.
     CloudDisconnect(String),
     CloudSignOut(String),
+    /// A command shown as one of a set of choices, ticked when it's the current one.
+    Choice(Command, bool),
+    /// A row of folder-color swatches for these folders (with their current color).
+    Colors(Vec<PathBuf>, Option<u8>),
     Sep,
 }
 
@@ -149,13 +159,18 @@ pub enum Action {
     SelectTab(usize, usize),
     CloseTab(usize, usize),
     NewTabIn(usize),
-    MoveTab(usize, usize, usize),
     Drop {
         paths: Vec<PathBuf>,
         dest: PathBuf,
         force_copy: bool,
     },
     OpenMenu(Pos2, Vec<MenuItem>),
+    /// Go to the folder `path` is in and put the cursor on it (columns view).
+    Reveal(PathBuf),
+    /// Show a short notification.
+    Toast(String),
+    /// Give folders a color (an index into the pale rainbow), or none.
+    ColorFolders(Vec<PathBuf>, Option<u8>),
     TrashPaths(Vec<PathBuf>),
     MountVolume(String),
     EjectVolume(crate::udisks::Volume),
@@ -172,8 +187,21 @@ pub struct PaneGeom {
 
 pub struct FileFlier {
     pub cfg: Config,
-    pub panes: [Pane; 2],
+    pub panes: Vec<Pane>,
+    /// How the panes are tiled in the window.
+    pub layout: crate::layout::Layout,
     pub active: usize,
+    /// The pane that was active before the current one (target of F5 / F6).
+    pub prev_active: usize,
+    seen_active: usize,
+    /// Panes hidden by Ctrl+\ (the layout, the other panes and where the shown pane goes back).
+    stashed: Option<(crate::layout::Layout, Vec<Pane>, usize)>,
+    /// A tab being dragged, by (pane, tab).
+    pub tab_drag: Option<(usize, usize)>,
+    /// Tab strips drawn this frame: (pane, strip, tab width), for dragging tabs between them.
+    pub strips: Vec<(usize, Rect, f32)>,
+    /// Pane bodies drawn this frame, indexed by pane.
+    pub pane_rects: Vec<Rect>,
     pub clipboard: Option<Clip>,
     pub dialog: Option<Dialog>,
     pub menu: Option<Menu>,
@@ -191,13 +219,15 @@ pub struct FileFlier {
     /// A remote address (smb://…) to open once the background `gio mount` finishes.
     pending_uri: Option<String>,
     pub actions: Vec<Action>,
-    pub geom: [PaneGeom; 2],
+    pub geom: Vec<PaneGeom>,
     pub sidebar_filter: String,
     /// Sidebar folder-tree nodes that are open, by (section, folder).
     pub sidebar_open: std::collections::HashSet<(String, PathBuf)>,
     /// The folder the sidebar tree last expanded itself to show.
     pub sidebar_revealed: Option<PathBuf>,
     pub dir_tree: crate::dirtree::DirTree,
+    /// Folder listings for the side columns of the columns view, with when they were read.
+    pub column_cache: std::collections::HashMap<PathBuf, (Instant, Arc<Vec<crate::fs_model::Entry>>)>,
     /// Cached child counts for folders shown in the Items column.
     pub item_counts: ItemCounter,
     /// A terminal just launched, watched briefly for failure.
@@ -211,6 +241,10 @@ pub struct FileFlier {
     /// Whether the current toast offers an Undo button.
     pub toast_undo: bool,
     pub quicklook: bool,
+    /// Folders whose color is changing (for the animation).
+    pub tint_anims: crate::ui::tint::TintAnims,
+    /// The video playing in Quick Look.
+    pub ql_player: Option<crate::preview::player::Player>,
     pub renaming: Option<Renaming>,
     /// Where a drive mounted from the sidebar ended up (opened when the job finishes).
     mounted_at: Arc<Mutex<Option<PathBuf>>>,
@@ -230,6 +264,7 @@ impl FileFlier {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::load_fonts(&cc.egui_ctx);
         let mut cfg = Config::load();
+        commands::set_keymap(&cfg.keymap);
         if !cfg.preview_panel_intro {
             // 0.4 made the preview panel much more useful: show it once to everyone.
             cfg.preview_panel_intro = true;
@@ -241,14 +276,19 @@ impl FileFlier {
         let cli_start = start.map(|p| crate::fs_model::canonical(&p)).filter(|p| p.is_dir());
         let restore = cli_start.is_none() && cfg.startup == crate::config::Startup::RestoreSession;
         let start = cli_start.unwrap_or_else(|| home.clone());
-        let mut panes = [
-            Pane::new(start, cfg.show_hidden, cfg.sort, cfg.view),
-            Pane::new(home.clone(), cfg.show_hidden, cfg.sort, cfg.view),
-        ];
+        let mut layout = cfg.layout.clone().unwrap_or_else(|| {
+            if cfg.split { crate::layout::Layout::two(cfg.split_ratio) } else { Default::default() }
+        });
+        if !layout.is_valid(layout.count()) {
+            layout = Default::default();
+        }
+        let mut panes: Vec<Pane> = (0..layout.count())
+            .map(|i| Pane::new(if i == 0 { start.clone() } else { home.clone() }, cfg.show_hidden, cfg.sort, cfg.view))
+            .collect();
         let mut active = 0;
         if restore {
             // Reopen last session's tabs; folders that no longer exist are skipped.
-            for (i, paths) in cfg.session.panes.iter().take(2).enumerate() {
+            for (i, paths) in cfg.session.panes.iter().take(panes.len()).enumerate() {
                 let tabs: Vec<Tab> = paths
                     .iter()
                     .filter(|p| p.is_dir())
@@ -260,13 +300,21 @@ impl FileFlier {
                     panes[i].tabs = tabs;
                 }
             }
-            active = if cfg.split { cfg.session.active_pane.min(1) } else { 0 };
+            active = cfg.session.active_pane.min(panes.len() - 1);
         }
         theme::apply(&cc.egui_ctx, cfg.palette(), cfg.ui_scale, cfg.animations);
         Self {
             cfg,
+            geom: vec![PaneGeom { cols: 1, page_rows: 15 }; panes.len()],
             panes,
+            layout,
             active,
+            prev_active: active,
+            seen_active: active,
+            stashed: None,
+            tab_drag: None,
+            strips: Vec::new(),
+            pane_rects: Vec::new(),
             clipboard: None,
             dialog: None,
             menu: None,
@@ -285,11 +333,11 @@ impl FileFlier {
             },
             pending_uri: None,
             actions: Vec::new(),
-            geom: [PaneGeom { cols: 1, page_rows: 15 }; 2],
             sidebar_filter: String::new(),
             sidebar_open: Default::default(),
             sidebar_revealed: None,
             dir_tree: Default::default(),
+            column_cache: Default::default(),
             item_counts: ItemCounter::start(cc.egui_ctx.clone()),
             terminal_launch: None,
             blur_applied: None,
@@ -297,6 +345,8 @@ impl FileFlier {
             last_undo: None,
             toast_undo: false,
             quicklook: false,
+            ql_player: None,
+            tint_anims: Default::default(),
             renaming: None,
             mounted_at: Default::default(),
             native: None,
@@ -331,8 +381,91 @@ impl FileFlier {
     pub fn tab_mut(&mut self) -> &mut Tab {
         self.panes[self.active].tab_mut()
     }
-    fn other_pane_dir(&self) -> PathBuf {
-        self.panes[1 - self.active].tab().path.clone()
+    /// The pane F5 / F6 copy to: the one used before the current one, or the next one.
+    fn other_pane(&self) -> usize {
+        if self.prev_active != self.active && self.prev_active < self.panes.len() {
+            return self.prev_active;
+        }
+        self.next_pane(1)
+    }
+
+    /// The pane `step` places after the active one in reading order (wrapping).
+    fn next_pane(&self, step: usize) -> usize {
+        let order = self.layout.panes();
+        let at = order.iter().position(|&p| p == self.active).unwrap_or(0);
+        order[(at + step) % order.len()]
+    }
+
+    /// Close a tab; closing the last tab of a pane closes the pane (unless it's the only one).
+    pub fn close_tab(&mut self, p: usize, t: usize) {
+        if self.panes[p].tabs.len() == 1 {
+            self.remove_pane(p);
+        } else {
+            self.panes[p].close_tab(t);
+        }
+    }
+
+    fn remove_pane(&mut self, p: usize) {
+        if self.panes.len() <= 1 || p >= self.panes.len() {
+            return;
+        }
+        let neighbour = {
+            let order = self.layout.panes();
+            let at = order.iter().position(|&x| x == p).unwrap_or(0);
+            order[if at > 0 { at - 1 } else { 1 }]
+        };
+        if self.active == p {
+            self.active =
+                if self.prev_active != p && self.prev_active < self.panes.len() { self.prev_active } else { neighbour };
+        }
+        self.panes.remove(p);
+        self.geom.remove(p);
+        self.layout.remove(p);
+        let fix = |i: usize| if i > p { i - 1 } else { i };
+        self.active = fix(self.active);
+        self.prev_active = fix(self.prev_active).min(self.panes.len() - 1);
+        self.seen_active = self.active;
+        self.panes_changed();
+    }
+
+    /// Layout or pane indices changed: anything that refers to a pane by index is stale.
+    fn panes_changed(&mut self) {
+        self.renaming = None;
+        self.stashed = None;
+        self.geom.resize(self.panes.len(), PaneGeom { cols: 1, page_rows: 15 });
+    }
+
+    /// Move tab `t` of pane `src` into pane `dst` at `at` (the end if `None`).
+    pub fn move_tab_to(&mut self, src: usize, t: usize, dst: usize, at: Option<usize>) {
+        if src == dst || src >= self.panes.len() || dst >= self.panes.len() {
+            return;
+        }
+        let tab = self.panes[src].take_tab(t);
+        let pane = &mut self.panes[dst];
+        let at = at.unwrap_or(pane.tabs.len()).min(pane.tabs.len());
+        pane.tabs.insert(at, tab);
+        pane.active = at;
+        self.active = dst;
+        if self.panes[src].tabs.is_empty() {
+            self.remove_pane(src);
+        }
+        self.panes_changed();
+    }
+
+    /// Move tab `t` of pane `src` into a new pane on `side` of pane `target`.
+    pub fn split_with_tab(&mut self, src: usize, t: usize, target: usize, side: crate::layout::Side) {
+        if src >= self.panes.len() || target >= self.panes.len() || (src == target && self.panes[src].tabs.len() < 2) {
+            return;
+        }
+        let tab = self.panes[src].take_tab(t);
+        let new = self.panes.len();
+        self.panes.push(Pane { tabs: vec![tab], active: 0 });
+        self.layout.split(target, new, side);
+        self.active = new;
+        self.panes_changed();
+        if self.panes[src].tabs.is_empty() {
+            self.remove_pane(src);
+        }
     }
 
     pub fn info(&mut self, msg: impl Into<String>) {
@@ -600,6 +733,7 @@ impl FileFlier {
         });
         match res {
             Ok(()) => {
+                self.carry_folder_color(&rn.path, &target);
                 self.info_undoable(
                     format!("Renamed to {name}"),
                     UndoOp::Rename { from: rn.path.clone(), to: target.clone() },
@@ -720,9 +854,8 @@ impl FileFlier {
                 self.open_tab(p);
             }
             CloseTab => {
-                let pane = &mut self.panes[self.active];
-                let idx = pane.active;
-                pane.close_tab(idx);
+                let (p, t) = (self.active, self.panes[self.active].active);
+                self.close_tab(p, t);
             }
             NextTab => {
                 let pane = &mut self.panes[self.active];
@@ -733,16 +866,35 @@ impl FileFlier {
                 pane.active = (pane.active + pane.tabs.len() - 1) % pane.tabs.len();
             }
             ToggleSplit => {
-                self.cfg.split = !self.cfg.split;
-                if !self.cfg.split {
+                use crate::layout::{Layout, Side};
+                if self.panes.len() > 1 {
+                    // Show only the current pane; Ctrl+\ again brings the others back.
+                    let shown = self.panes.remove(self.active);
+                    let others = std::mem::replace(&mut self.panes, vec![shown]);
+                    let layout = std::mem::take(&mut self.layout);
+                    let at = self.active;
                     self.active = 0;
+                    self.prev_active = 0;
+                    self.panes_changed();
+                    self.stashed = Some((layout, others, at));
+                } else if let Some((layout, mut others, at)) = self.stashed.take() {
+                    others.insert(at, self.panes.remove(0));
+                    self.panes = others;
+                    self.layout = layout;
+                    self.active = at;
+                    self.panes_changed();
+                } else {
+                    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                    let (h, s, v) = (self.cfg.show_hidden, self.cfg.sort, self.tab().view);
+                    self.panes.push(Pane { tabs: vec![Tab::new(home, h, s, v)], active: 0 });
+                    self.layout = Layout::Pane(0);
+                    self.layout.split(0, 1, Side::Right);
+                    self.active = 1;
+                    self.panes_changed();
                 }
-                self.cfg.save();
             }
             SwitchPane => {
-                if self.cfg.split {
-                    self.active = 1 - self.active;
-                }
+                self.active = self.next_pane(1);
             }
             Back => {
                 self.tab_mut().go_back(h, s);
@@ -786,9 +938,14 @@ impl FileFlier {
                 self.cfg.show_hidden = !self.cfg.show_hidden;
                 self.cfg.save();
                 let h = self.cfg.show_hidden;
+                let s = self.cfg.sort;
                 for pane in &mut self.panes {
                     for tab in &mut pane.tabs {
-                        tab.refilter(h);
+                        if tab.flat {
+                            tab.reload(h, s); // the scan skipped hidden folders
+                        } else {
+                            tab.refilter(h);
+                        }
                     }
                 }
                 self.info(if h { "Showing hidden files" } else { "Hiding hidden files" });
@@ -808,13 +965,23 @@ impl FileFlier {
                 self.apply_settings(ctx);
             }
             Settings => self.dialog = Some(Dialog::Settings),
-            ViewDetails | ViewList | ViewGrid => {
+            ViewDetails | ViewList | ViewGrid | ViewMediumGrid | ViewLargeGrid | ViewExtraLargeGrid | ViewTree
+            | ViewColumns => {
                 let view = match cmd {
                     ViewDetails => ViewMode::Details,
                     ViewList => ViewMode::List,
-                    _ => ViewMode::Grid,
+                    ViewGrid => ViewMode::Grid,
+                    ViewMediumGrid => ViewMode::MediumGrid,
+                    ViewLargeGrid => ViewMode::LargeGrid,
+                    ViewExtraLargeGrid => ViewMode::ExtraLargeGrid,
+                    ViewTree => ViewMode::Tree,
+                    _ => ViewMode::Columns,
                 };
+                let was_tree = self.tab().view == ViewMode::Tree;
                 self.tab_mut().view = view;
+                if was_tree != (view == ViewMode::Tree) {
+                    self.tab_mut().reload(h, s); // flatten or unflatten the open folders
+                }
                 self.tab_mut().scroll_to_cursor = true;
                 self.cfg.view = view;
                 self.cfg.save();
@@ -854,12 +1021,12 @@ impl FileFlier {
                 }
             }
             CopyToOtherPane | MoveToOtherPane => {
-                if !self.cfg.split {
+                if self.panes.len() < 2 {
                     self.error(crate::ui::keys("Open split view (Ctrl+\\) to copy between panes"));
                     return;
                 }
                 let paths = self.tab().targets();
-                let dest = self.other_pane_dir();
+                let dest = self.panes[self.other_pane()].tab().path.clone();
                 self.transfer(paths, dest, cmd == MoveToOtherPane);
             }
             Trash => {
@@ -875,7 +1042,7 @@ impl FileFlier {
             Rename => {
                 if let Some(e) = self.tab().cursor_entry() {
                     let (path, name) = (e.path.clone(), e.name.clone());
-                    if self.tab().view == ViewMode::Grid {
+                    if self.tab().view.is_grid() {
                         self.dialog = Some(Dialog::Rename { path, name, init: true, error: None });
                     } else {
                         // Rename in place, right in the row.
@@ -949,21 +1116,39 @@ impl FileFlier {
                 let p = self.tab().path.clone();
                 self.toggle_bookmark(p);
             }
-            SortByName | SortBySize | SortByModified | SortByKind => {
+            SortByName | SortBySize | SortByModified | SortByKind | SortByFolder => {
                 let key = match cmd {
                     SortByName => SortKey::Name,
                     SortBySize => SortKey::Size,
                     SortByModified => SortKey::Modified,
-                    _ => SortKey::Kind,
+                    SortByKind => SortKey::Kind,
+                    _ => SortKey::Folder,
                 };
                 self.set_sort(key);
             }
             ReverseSort => {
                 self.cfg.sort.descending = !self.cfg.sort.descending;
                 self.cfg.save();
-                self.reload_all();
+                self.resort_all();
             }
-            Help => self.dialog = Some(Dialog::Help),
+            ToggleFlat => {
+                let on = !self.tab().flat;
+                self.tab_mut().set_flat(on, h, s);
+                self.tab_mut().scroll_to_cursor = true;
+            }
+            OpenContainingFolder => {
+                if let Some(p) = self.tab().cursor_entry().map(|e| e.path.clone())
+                    && let Some(dir) = p.parent().map(Path::to_path_buf)
+                {
+                    if dir == self.tab().path {
+                        self.tab_mut().set_flat(false, h, s);
+                    } else {
+                        self.navigate(dir);
+                    }
+                    self.tab_mut().select_path(&p);
+                }
+            }
+            Help => self.dialog = Some(Dialog::Shortcuts { query: String::new(), cursor: 0, record: None }),
         }
     }
 
@@ -1000,7 +1185,124 @@ impl FileFlier {
             self.cfg.sort.descending = matches!(key, SortKey::Size | SortKey::Modified);
         }
         self.cfg.save();
-        self.reload_all();
+        self.resort_all();
+    }
+
+    /// A folder (or one inside it) was renamed: its color goes with it.
+    pub fn carry_folder_color(&mut self, from: &Path, to: &Path) {
+        let (Some(from_s), Some(_)) = (from.to_str(), to.to_str()) else { return };
+        let moved: Vec<(String, u8)> = self
+            .cfg
+            .folder_colors
+            .iter()
+            .filter(|(k, _)| Path::new(k.as_str()).starts_with(from_s))
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        for (k, v) in moved {
+            self.cfg.folder_colors.remove(&k);
+            if let Ok(rest) = Path::new(&k).strip_prefix(from)
+                && let Some(new) = to.join(rest).to_str()
+            {
+                self.cfg.folder_colors.insert(new.trim_end_matches('/').to_string(), v);
+            }
+        }
+        self.cfg.save();
+    }
+
+    /// Set (or clear) the color of folders, animating the change.
+    pub fn color_folders(&mut self, paths: Vec<PathBuf>, color: Option<u8>, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let accent = self.pal().accent;
+        self.tint_anims.retain(|_, (_, start)| now - *start < 1.0);
+        for p in &paths {
+            let Some(key) = p.to_str().map(str::to_string) else { continue };
+            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, accent, p);
+            match color {
+                Some(c) => self.cfg.folder_colors.insert(key, c),
+                None => self.cfg.folder_colors.remove(&key),
+            };
+            if before != crate::ui::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, accent, p) {
+                self.tint_anims.insert(p.clone(), (before, now));
+            }
+        }
+        self.cfg.save();
+        ctx.request_repaint();
+    }
+
+    /// Give `cmd` these shortcuts (back to its defaults if they're the same) and save.
+    pub fn set_shortcuts(&mut self, cmd: Command, keys: Vec<egui::KeyboardShortcut>) {
+        let defaults = cmd.default_shortcuts();
+        let same = keys.len() == defaults.len() && keys.iter().zip(&defaults).all(|(a, b)| commands::same(a, b));
+        if same {
+            self.cfg.keymap.remove(&cmd.id());
+        } else {
+            self.cfg.keymap.insert(cmd.id(), keys.iter().map(commands::to_string).collect());
+        }
+        commands::set_keymap(&self.cfg.keymap);
+        self.cfg.save();
+    }
+
+    /// Set key `slot` of `cmd` (None = add one). A command that had this key loses it.
+    pub fn assign_shortcut(
+        &mut self,
+        cmd: Command,
+        slot: Option<usize>,
+        key: egui::KeyboardShortcut,
+        ctx: &egui::Context,
+    ) {
+        let mut taken = Vec::new();
+        for &other in commands::ALL {
+            let keys = other.shortcuts();
+            if other != cmd && keys.iter().any(|k| commands::same(k, &key)) {
+                self.set_shortcuts(other, keys.into_iter().filter(|k| !commands::same(k, &key)).collect());
+                taken.push(other.label());
+            }
+        }
+        let mut keys = cmd.shortcuts();
+        match slot {
+            Some(i) if i < keys.len() => keys[i] = key,
+            _ => keys.push(key),
+        }
+        // A key listed twice (re-recorded onto another slot of the same command) counts once.
+        let mut seen: Vec<egui::KeyboardShortcut> = Vec::new();
+        keys.retain(|k| {
+            let new = !seen.iter().any(|s| commands::same(s, k));
+            seen.push(*k);
+            new
+        });
+        self.set_shortcuts(cmd, keys);
+        if !taken.is_empty() {
+            let k = commands::format_shortcut(ctx, &key);
+            self.info(format!("{k} moved here from “{}”", taken.join("”, “")));
+        }
+    }
+
+    /// Switch the folder color scheme; colored folders crossfade to their new colors.
+    pub fn set_folder_scheme(&mut self, scheme: u8, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let accent = self.pal().accent;
+        let old = self.cfg.folder_scheme;
+        for k in self.cfg.folder_colors.keys() {
+            let p = PathBuf::from(k);
+            let before = crate::ui::tint::color_of(&self.cfg.folder_colors, old, accent, &p);
+            self.tint_anims.insert(p, (before, now));
+        }
+        self.cfg.folder_scheme = scheme;
+        self.cfg.save();
+        ctx.request_repaint();
+    }
+
+    /// Apply a new sort order (flat views are sorted in place, not rescanned).
+    fn resort_all(&mut self) {
+        let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
+        for pane in &mut self.panes {
+            for tab in &mut pane.tabs {
+                tab.resort(h, s);
+            }
+        }
     }
 
     pub fn toggle_bookmark(&mut self, p: PathBuf) {
@@ -1041,6 +1343,22 @@ impl FileFlier {
                 self.quicklook = false;
                 self.open_entries();
                 return;
+            }
+            // Video: K play/pause, J/L back/ahead 5 s, M mute.
+            if let Some(p) = self.ql_player.as_mut() {
+                let pressed = |k| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k));
+                if pressed(Key::K) {
+                    p.toggle_pause();
+                }
+                if pressed(Key::J) {
+                    p.seek(p.position() - 5.0);
+                }
+                if pressed(Key::L) {
+                    p.seek(p.position() + 5.0);
+                }
+                if pressed(Key::M) {
+                    p.toggle_mute();
+                }
             }
             let page = self.preview_page.1;
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::PageDown)) {
@@ -1159,6 +1477,37 @@ impl FileFlier {
                 tab.refilter(self.cfg.show_hidden);
             }
         }
+        if tab.view == ViewMode::Tree {
+            // → opens a folder (or steps into it if open), ← closes it (or steps out to
+            // the folder it's in, or up to the parent folder at the top level).
+            let (h, s) = (self.cfg.show_hidden, self.cfg.sort);
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowRight))
+                && let Some(e) = tab.cursor_entry().filter(|e| e.is_dir)
+            {
+                let p = e.path.clone();
+                if tab.expanded.contains(&p) {
+                    let child = tab.cursor + 1;
+                    if tab.parent_row(child) == Some(tab.cursor) {
+                        tab.move_cursor(child, false);
+                    }
+                } else {
+                    tab.set_expanded(&p, true, h, s);
+                }
+                return;
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowLeft)) {
+                let open =
+                    tab.cursor_entry().filter(|e| e.is_dir && tab.expanded.contains(&e.path)).map(|e| e.path.clone());
+                if let Some(p) = open {
+                    tab.set_expanded(&p, false, h, s);
+                } else if let Some(parent) = tab.parent_row(tab.cursor) {
+                    tab.move_cursor(parent, false);
+                } else {
+                    self.run(Command::Up, ctx);
+                }
+                return;
+            }
+        }
         if cols == 1 {
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowRight))
                 && let Some(e) = tab.cursor_entry().filter(|e| e.is_dir)
@@ -1246,10 +1595,15 @@ impl FileFlier {
             }
             self.cfg.save();
         }
-        let n = if self.cfg.split { 2 } else { 1 };
+        // Divider drags change the layout every frame: save once the button is up.
+        if self.cfg.layout.as_ref() != Some(&self.layout) && !ctx.input(|i| i.pointer.primary_down()) {
+            self.cfg.layout = Some(self.layout.clone());
+            self.cfg.split = self.panes.len() > 1;
+            self.cfg.save();
+        }
         let session = crate::config::Session {
-            panes: self.panes[..n].iter().map(|p| p.tabs.iter().map(|t| t.path.clone()).collect()).collect(),
-            active_tabs: self.panes[..n].iter().map(|p| p.active).collect(),
+            panes: self.panes.iter().map(|p| p.tabs.iter().map(|t| t.path.clone()).collect()).collect(),
+            active_tabs: self.panes.iter().map(|p| p.active).collect(),
             active_pane: self.active,
         };
         if session != self.cfg.session {
@@ -1326,35 +1680,32 @@ impl FileFlier {
                 self.item_counts.clear();
             }
         }
-        ctx.request_repaint_after(Duration::from_millis(1000));
+        let mut scanning = false;
+        for tab in self.panes.iter_mut().flat_map(|p| p.tabs.iter_mut()) {
+            tab.poll_flat(h, s);
+            scanning |= tab.flat_scan.is_some();
+        }
+        ctx.request_repaint_after(Duration::from_millis(if scanning { 60 } else { 1000 }));
     }
 
     fn apply_actions(&mut self, ctx: &egui::Context) {
         for a in std::mem::take(&mut self.actions) {
             match a {
-                Action::Activate(i) => self.active = i,
+                Action::Activate(i) => self.active = i.min(self.panes.len() - 1),
                 Action::Navigate(p) => self.navigate(p),
                 Action::OpenEntries => self.open_entries(),
                 Action::OpenInNewTab(p) => self.open_tab(p),
                 Action::Run(c) => self.run(c, ctx),
                 Action::SelectTab(p, t) => {
-                    self.active = p;
-                    self.panes[p].active = t;
-                }
-                Action::CloseTab(p, t) => {
-                    self.panes[p].close_tab(t);
-                }
-                Action::NewTabIn(p) => {
-                    self.active = p;
-                    self.run(Command::NewTab, ctx);
-                }
-                Action::MoveTab(p, from, to) => {
-                    let pane = &mut self.panes[p];
-                    if from < pane.tabs.len() && to < pane.tabs.len() && from != to {
-                        let t = pane.tabs.remove(from);
-                        pane.tabs.insert(to, t);
-                        pane.active = to;
+                    if t < self.panes.get(p).map_or(0, |p| p.tabs.len()) {
+                        self.active = p;
+                        self.panes[p].active = t;
                     }
+                }
+                Action::CloseTab(p, t) => self.close_tab(p, t),
+                Action::NewTabIn(p) => {
+                    self.active = p.min(self.panes.len() - 1);
+                    self.run(Command::NewTab, ctx);
                 }
                 Action::Drop { paths, dest, force_copy } => self.drop_paths(paths, dest, force_copy),
                 Action::TrashPaths(paths) => self.trash_paths(paths),
@@ -1368,7 +1719,7 @@ impl FileFlier {
                 }
                 Action::EjectVolume(vol) => {
                     // Leave the drive first so it isn't busy.
-                    for i in 0..2 {
+                    for i in 0..self.panes.len() {
                         if vol.mount_points.iter().any(|m| self.panes[i].tab().path.starts_with(m))
                             && let Some(home) = dirs::home_dir()
                         {
@@ -1396,6 +1747,14 @@ impl FileFlier {
                         *slot.lock().unwrap() = Some(a.mount.clone());
                         Ok((format!("{name} connected"), None))
                     });
+                }
+                Action::Toast(msg) => self.info(msg),
+                Action::ColorFolders(paths, color) => self.color_folders(paths, color, ctx),
+                Action::Reveal(p) => {
+                    if let Some(dir) = p.parent().map(Path::to_path_buf) {
+                        self.navigate(dir);
+                        self.tab_mut().select_path(&p);
+                    }
                 }
                 Action::OpenMenu(pos, items) => {
                     self.menu = Some(Menu { pos, query: String::new(), cursor: 0, items, opened: Instant::now() })
@@ -1508,12 +1867,12 @@ impl eframe::App for FileFlier {
         self.persist_ui_state(&ctx);
 
         // Text fields that own the keyboard while focused.
-        let text_ids = [
-            Id::new(("filter", 0usize)),
-            Id::new(("filter", 1usize)),
-            Id::new("sidebar_filter"),
-            Id::new("inline_rename"),
-        ];
+        let mut text_ids: Vec<Id> = (0..self.panes.len()).map(|i| Id::new(("filter", i))).collect();
+        text_ids.extend([Id::new("sidebar_filter"), Id::new("inline_rename")]);
+        if self.active != self.seen_active {
+            self.prev_active = self.seen_active;
+            self.seen_active = self.active;
+        }
         let focused = ctx.memory(|m| m.focused());
         let typing = focused.is_some_and(|f| text_ids.contains(&f));
         if self.dialog.is_none() && self.menu.is_none() {
@@ -1565,16 +1924,6 @@ impl eframe::App for FileFlier {
         let sidebar = Rect::from_min_max(body.min, pos2(body.left() + sb_w, body.bottom()));
         let inspector = Rect::from_min_max(pos2(body.right() - insp_w, body.top()), body.max);
         let panes_area = Rect::from_min_max(pos2(sidebar.right(), body.top()), pos2(inspector.left(), body.bottom()));
-        let pane_rects: Vec<Rect> = if self.cfg.split {
-            let x = panes_area.left() + panes_area.width() * self.cfg.split_ratio.clamp(0.2, 0.8);
-            vec![
-                Rect::from_min_max(panes_area.min, pos2(x, panes_area.bottom())),
-                Rect::from_min_max(pos2(x + 1.0, panes_area.top()), panes_area.max),
-            ]
-        } else {
-            vec![panes_area]
-        };
-
         // Glass mode floats each area as a separate panel with small gaps.
         let g = if fx.glass { 6.0 } else { 0.0 };
         let inset = |r: Rect, l: f32, rt: f32| {
@@ -1582,36 +1931,80 @@ impl eframe::App for FileFlier {
         };
         let sidebar = inset(sidebar, g, g / 2.0);
         let inspector = inset(inspector, g / 2.0, g);
-        let n = pane_rects.len();
-        let pane_rects: Vec<Rect> = pane_rects
+        self.geom.resize(self.panes.len(), PaneGeom { cols: 1, page_rows: 15 });
+        let (tiles, dividers) = self.layout.rects(panes_area, 0.0, self.panes.len());
+        let near = |a: f32, b: f32| (a - b).abs() < 0.5;
+        // Panes along the top edge keep their tabs in the title bar; the others
+        // get a tab strip of their own.
+        let mut title_strips: Vec<(usize, f32, f32)> = Vec::new();
+        let mut inner_strips: Vec<(usize, Rect)> = Vec::new();
+        let pane_rects: Vec<Rect> = tiles
             .iter()
             .enumerate()
             .map(|(i, r)| {
-                let left = if i == 0 && sb_w == 0.0 { g } else { g / 2.0 };
-                let right = if i + 1 == n && insp_w == 0.0 { g } else { g / 2.0 };
-                inset(*r, left, right)
+                let at_left = near(r.left(), panes_area.left());
+                let at_right = near(r.right(), panes_area.right());
+                let at_top = near(r.top(), panes_area.top());
+                let (l, rt) = if fx.glass {
+                    (
+                        if at_left && sb_w == 0.0 { g } else { g / 2.0 },
+                        if at_right && insp_w == 0.0 { g } else { g / 2.0 },
+                    )
+                } else {
+                    (if at_left { 0.0 } else { 1.0 }, 0.0) // 1px for the divider line
+                };
+                let top = if at_top {
+                    0.0
+                } else if fx.glass {
+                    g / 2.0
+                } else {
+                    1.0
+                };
+                let bottom = if near(r.bottom(), panes_area.bottom()) { g } else { g / 2.0 };
+                let r =
+                    Rect::from_min_max(pos2(r.left() + l, r.top() + top), pos2(r.right() - rt, r.bottom() - bottom));
+                if at_top {
+                    title_strips.push((i, r.left(), r.right()));
+                    r
+                } else {
+                    let strip_h = crate::ui::chrome::TAB_H + 4.0;
+                    inner_strips.push((i, Rect::from_min_max(r.min, pos2(r.right(), r.top() + strip_h))));
+                    Rect::from_min_max(pos2(r.left(), r.top() + strip_h), r.max)
+                }
             })
             .collect();
+        self.pane_rects = pane_rects.clone();
+        self.strips.clear();
 
         if self.cfg.show_sidebar {
             self.sidebar_ui(ui, sidebar);
         }
         for (i, r) in pane_rects.iter().enumerate() {
             if fx.glass {
-                crate::ui::surface(ui.painter(), *r, pal.bg, &fx, pal);
+                let full = inner_strips.iter().find(|s| s.0 == i).map_or(*r, |s| s.1.union(*r));
+                crate::ui::surface(ui.painter(), full, pal.bg, &fx, pal);
             }
             self.pane_ui(ui, i, *r);
         }
-        if self.cfg.split {
-            self.split_divider(ui, panes_area, pane_rects[0].right() + g / 2.0, !fx.glass);
+        for (i, strip) in inner_strips {
+            if !fx.glass {
+                ui.painter().rect_filled(strip, 0.0, pal.titlebar);
+            }
+            self.tab_strip(
+                ui,
+                i,
+                Rect::from_min_max(pos2(strip.left() + 6.0, strip.top()), pos2(strip.right() - 4.0, strip.bottom())),
+            );
+        }
+        for (k, d) in dividers.iter().enumerate() {
+            self.split_divider(ui, k, d, !fx.glass);
         }
         if self.cfg.show_preview {
             self.inspector_ui(ui, inspector);
         }
         let title_rect = Rect::from_min_max(full.min, pos2(full.right(), full.top() + TITLE_H));
-        let strips: Vec<(usize, f32, f32)> =
-            pane_rects.iter().enumerate().map(|(i, r)| (i, r.left(), r.right())).collect();
-        self.title_bar(ui, title_rect, sb_w, &strips);
+        self.title_bar(ui, title_rect, sb_w, &title_strips);
+        self.tab_drag_ui(ui);
         if !cfg!(target_os = "macos") {
             self.resize_edges(ui, full); // macOS windows keep their native edges
         }
