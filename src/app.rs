@@ -100,6 +100,7 @@ pub enum Dialog {
     },
     /// Tags extension: add, rename, recolor and delete tags.
     ManageTags(crate::ui::tags::ManageTags),
+    BatchRename(crate::ui::batch_rename::BatchRename),
 }
 
 /// What to do when a pasted item's name is already taken.
@@ -1098,7 +1099,10 @@ impl FileFlier {
                 }
             }
             Rename => {
-                if let Some(e) = self.tab().cursor_entry() {
+                let targets = self.tab().targets();
+                if targets.len() > 1 && self.cfg.ext_on(crate::ext::Ext::BatchRename) {
+                    self.dialog = Some(Dialog::BatchRename(crate::ui::batch_rename::BatchRename::new(targets)));
+                } else if let Some(e) = self.tab().cursor_entry() {
                     let (path, name) = (e.path.clone(), e.name.clone());
                     if self.tab().view.is_grid() {
                         self.dialog = Some(Dialog::Rename { path, name, init: true, error: None });

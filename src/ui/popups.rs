@@ -1025,6 +1025,16 @@ impl FileFlier {
                     keep = false;
                 }
             }
+            Dialog::BatchRename(st) => {
+                if !keep && st.add_open {
+                    // Esc closes the Add menu first.
+                    keep = true;
+                    st.add_open = false;
+                }
+                if modal(ctx, "batch_rename", 640.0, pal, &fx, |ui| self.batch_rename_ui(ui, st)) {
+                    keep = false;
+                }
+            }
             Dialog::ManageTags(st) => {
                 if modal(ctx, "manage_tags", 560.0, pal, &fx, |ui| self.manage_tags_ui(ui, st)) {
                     keep = false;

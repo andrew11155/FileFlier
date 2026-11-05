@@ -8,16 +8,18 @@
 pub enum Ext {
     Ratings,
     Tags,
+    BatchRename,
 }
 
 impl Ext {
-    pub const ALL: [Ext; 2] = [Ext::Ratings, Ext::Tags];
+    pub const ALL: [Ext; 3] = [Ext::Ratings, Ext::Tags, Ext::BatchRename];
 
     /// Key in the config's `extensions` map.
     pub fn id(self) -> &'static str {
         match self {
             Ext::Ratings => "ratings",
             Ext::Tags => "tags",
+            Ext::BatchRename => "batch_rename",
         }
     }
 
@@ -25,6 +27,7 @@ impl Ext {
         match self {
             Ext::Ratings => "Ratings",
             Ext::Tags => "Tags",
+            Ext::BatchRename => "Batch rename",
         }
     }
 
@@ -32,6 +35,9 @@ impl Ext {
         match self {
             Ext::Ratings => "Rate files with 1 to 5 stars: a Rating column, stars in the preview panel and menu",
             Ext::Tags => "Tag files with colored tags and find them again from the Tags list in the sidebar",
+            Ext::BatchRename => {
+                "Rename several selected files at once: from a template with numbers and dates, or by finding and replacing text"
+            }
         }
     }
 }

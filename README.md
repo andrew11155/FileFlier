@@ -99,7 +99,7 @@ the same on every desktop environment.
   color, so it follows the theme). Each folder keeps its slot, so the first
   color in one scheme becomes the first in the next, fading across.
 - **Extensions.** Optional features you can switch off in *Settings →
-  Extensions* (both are on to start with):
+  Extensions* (all are on to start with):
   - **Ratings.** Give files 1 to 5 stars with `Ctrl+Alt+1` … `Ctrl+Alt+5`
     (`Ctrl+Alt+0` clears), from the right-click menu, in the preview panel,
     or by clicking the stars in the details view's *Rating* column. Sort by
@@ -111,6 +111,14 @@ the same on every desktop environment.
     files have it: click one to list those files, wherever they are, or drop
     files on it to tag them. *Manage tags…* (right-click the *Tags* header or a
     tag, or the command palette) renames, recolors (any color) and deletes tags.
+  - **Batch rename.** Select several files and press `F2` (or right-click →
+    *Rename*) to rename them all at once, as in GNOME Files. *Rename using a
+    template* builds each name from a template: *+ Add* inserts automatic
+    numbers (`1, 2, 3`, `01, 02, 03` or `001, 002, 003`, in the order shown),
+    the creation date or the original name. *Find and replace text* changes
+    part of every name instead. Extensions are kept, a preview lists each old
+    and new name, and names that would clash are caught before anything
+    changes. One `Ctrl+Z` undoes the whole batch.
 
   Ratings and tags are stored on the files themselves, as the extended
   attributes KDE's Dolphin uses (`user.baloo.rating`, `user.xdg.tags`), so
