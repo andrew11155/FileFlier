@@ -125,6 +125,69 @@ impl FileFlier {
         }
         y += 40.0;
 
+        // Extensions: the rating, and tags as chips (click one to see everything with it).
+        let path = e.path.clone();
+        if self.cfg.ext_on(crate::ext::Ext::Ratings) {
+            self.meta.observe(&path);
+            let rating = self.meta.rating(&path);
+            let left = inner.center().x - 18.0 * 2.5;
+            if let Some(n) = super::tags::star_row(ui, Id::new("insp_stars"), left, y + 10.0, 18.0, rating, pal) {
+                self.rate(std::slice::from_ref(&path), n);
+            }
+            y += 30.0;
+        }
+        if self.cfg.ext_on(crate::ext::Ext::Tags) {
+            self.meta.observe(&path);
+            let tags: Vec<crate::meta::TagDef> =
+                self.meta.tags_of(&path).iter().filter_map(|t| self.meta.tag(t).cloned()).collect();
+            let mut x = inner.left();
+            let mut show: Option<String> = None;
+            let mut edit = false;
+            let chip_h = 22.0;
+            let chips = tags.iter().map(Some).chain(std::iter::once(None));
+            for (i, t) in chips.enumerate() {
+                let label = t.map_or("+ Tag".to_string(), |t| t.name.clone());
+                let g = ui.painter().layout_no_wrap(label, super::font(12.5), pal.text);
+                let w = g.size().x + if t.is_some() { 28.0 } else { 16.0 };
+                if x + w > inner.right() && x > inner.left() {
+                    x = inner.left();
+                    y += chip_h + 6.0;
+                }
+                let r = Rect::from_min_size(pos2(x, y), vec2(w, chip_h));
+                let resp = ui.interact(r, Id::new(("insp_tag", i)), Sense::click());
+                let p = ui.painter();
+                match t {
+                    Some(t) => {
+                        let c = t.color32();
+                        p.rect_filled(r, chip_h / 2.0, c.gamma_multiply(if resp.hovered() { 0.35 } else { 0.22 }));
+                        p.circle_filled(pos2(r.left() + 11.0, r.center().y), 4.5, c);
+                        p.galley(pos2(r.left() + 20.0, r.center().y - g.size().y / 2.0), g, pal.text);
+                        if resp.on_hover_text(format!("Show everything tagged “{}”", t.name)).clicked() {
+                            show = Some(t.name.clone());
+                        }
+                    }
+                    None => {
+                        let fill = if resp.hovered() { pal.hover } else { pal.tab_hover };
+                        p.rect_filled(r, chip_h / 2.0, fill);
+                        p.galley(pos2(r.left() + 8.0, r.center().y - g.size().y / 2.0), g, pal.text_dim);
+                        edit = resp.on_hover_text("Add or remove tags").clicked();
+                    }
+                }
+                x += w + 6.0;
+            }
+            y += chip_h + 12.0;
+            if let Some(t) = show {
+                self.show_tag(&t);
+            }
+            if edit {
+                self.dialog = Some(crate::app::Dialog::TagFiles {
+                    paths: vec![path.clone()],
+                    new_tag: String::new(),
+                    error: None,
+                });
+            }
+        }
+
         // Information.
         let mut rows: Vec<(String, String)> = info;
         let push_time = |rows: &mut Vec<(String, String)>, k: &str, t: Option<std::time::SystemTime>| {

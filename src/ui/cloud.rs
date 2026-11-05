@@ -403,7 +403,7 @@ impl FileFlier {
     pub(crate) fn cloud_disconnect(&mut self, name: String, sign_out: bool) {
         let Some(a) = cloud::accounts().into_iter().find(|a| a.name == name) else { return };
         // Leave the drive first so it isn't busy.
-        for i in 0..2 {
+        for i in 0..self.panes.len() {
             if self.panes[i].tab().path.starts_with(&a.mount)
                 && let Some(home) = dirs::home_dir()
             {

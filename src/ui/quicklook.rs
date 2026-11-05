@@ -12,12 +12,29 @@ use crate::ui::pane_view::{file_kind, type_label};
 impl FileFlier {
     pub(crate) fn quicklook_ui(&mut self, ctx: &egui::Context) {
         if !self.quicklook {
+            self.ql_player = None; // stops the video and its sound
             return;
         }
         let Some(e) = self.request_preview() else {
             self.quicklook = false;
+            self.ql_player = None;
             return;
         };
+        // Videos play: keep one player for the item shown.
+        let is_video = e.is_file
+            && crate::preview::classify(&e.path) == crate::preview::Kind::Video
+            && crate::preview::player::available();
+        if !is_video {
+            self.ql_player = None;
+        } else if self.ql_player.as_ref().is_none_or(|p| p.path != e.path) {
+            let muted = self.ql_player.as_ref().is_some_and(|p| p.muted);
+            self.ql_player = Some(crate::preview::player::Player::open(&e.path, muted));
+        }
+        if let Some(p) = self.ql_player.as_mut() {
+            p.update(ctx);
+        }
+        let mut player = self.ql_player.take();
+        let tint = super::tint::color_of(&self.cfg.folder_colors, self.cfg.folder_scheme, self.pal().accent, &e.path);
         let loading = self.pv.is_loading();
         let mut view = std::mem::take(&mut self.ql_view);
         let mut nav = None;
@@ -66,7 +83,7 @@ impl FileFlier {
             let header = Rect::from_min_size(r.min, vec2(r.width(), 64.0));
             let icon = Rect::from_center_size(pos2(header.left() + 34.0, header.center().y), vec2(30.0, 30.0));
             if e.is_dir {
-                icons::folder(&p, icon, pal);
+                icons::folder_tinted(&p, icon, pal, tint);
             } else {
                 icons::file(&p, icon, file_kind(&e), pal);
             }
@@ -120,7 +137,11 @@ impl FileFlier {
                 &p,
                 pos2(footer.right() - 18.0, footer.center().y),
                 Align2::RIGHT_CENTER,
-                "← →  browse   ·   scroll  zoom   ·   PgUp PgDn  pages   ·   Enter  open   ·   Space  close",
+                if player.is_some() {
+                    "K  play/pause   ·   J L  −5 s / +5 s   ·   M  mute   ·   ← →  browse   ·   Enter  open   ·   Space  close"
+                } else {
+                    "← →  browse   ·   scroll  zoom   ·   PgUp PgDn  pages   ·   Enter  open   ·   Space  close"
+                },
                 12.0,
                 pal.text_dim,
             );
@@ -130,8 +151,38 @@ impl FileFlier {
                 pos2(r.left() + 16.0, header.bottom() + 12.0),
                 pos2(r.right() - 16.0, footer.top() - 12.0),
             );
-            nav = preview_view::show(ui, body, &e, shown, loading, &mut view, pal, Style { big: true });
+            match player.as_mut() {
+                Some(pl) => {
+                    let bar = Rect::from_min_max(pos2(body.left(), body.bottom() - 36.0), body.max);
+                    let screen_r = Rect::from_min_max(body.min, pos2(body.right(), bar.top() - 8.0));
+                    match &pl.tex {
+                        Some(tex) => {
+                            let size = tex.size_vec2();
+                            let s = (screen_r.width() / size.x).min(screen_r.height() / size.y);
+                            let img = Rect::from_center_size(screen_r.center(), size * s);
+                            p.rect_filled(screen_r, 8.0, Color32::BLACK);
+                            p.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                        }
+                        // Until the first frame: the still the preview made.
+                        None => {
+                            nav = preview_view::show(ui, screen_r, &e, shown, loading, &mut view, pal, Style { big: true });
+                        }
+                    }
+                    if let Some(err) = &pl.error {
+                        text(&p, screen_r.center_bottom() - vec2(0.0, 20.0), Align2::CENTER_CENTER, err, 13.0, pal.text_dim);
+                    }
+                    // Clicking the picture pauses or plays.
+                    if ui.interact(screen_r, Id::new("ql_video"), Sense::click()).clicked() {
+                        pl.toggle_pause();
+                    }
+                    video_controls(ui, bar, pl, pal);
+                }
+                None => {
+                    nav = preview_view::show(ui, body, &e, shown, loading, &mut view, pal, Style { big: true });
+                }
+            }
         });
+        self.ql_player = player;
         self.ql_view = view;
         if let Some(Nav::Page(n)) = nav {
             self.preview_page.1 = n;
@@ -144,4 +195,100 @@ impl FileFlier {
             self.quicklook = false;
         }
     }
+}
+
+/// Play/pause, time, a seek bar and mute, under a playing video.
+fn video_controls(ui: &mut egui::Ui, bar: Rect, pl: &mut crate::preview::player::Player, pal: &crate::theme::Palette) {
+    use crate::preview::format_duration;
+    let p = ui.painter().clone();
+    let cy = bar.center().y;
+    // Play / pause.
+    let pr = Rect::from_center_size(pos2(bar.left() + 18.0, cy), vec2(32.0, 32.0));
+    let presp = ui.interact(pr, Id::new("ql_play"), Sense::click());
+    if presp.hovered() {
+        p.rect_filled(pr, 6.0, pal.tab_hover);
+    }
+    let c = pal.text_strong;
+    if pl.paused() || pl.ended {
+        let (x, y) = (pr.center().x - 4.0, cy);
+        p.add(egui::Shape::convex_polygon(
+            vec![pos2(x - 2.0, y - 8.0), pos2(x + 10.0, y), pos2(x - 2.0, y + 8.0)],
+            c,
+            Stroke::NONE,
+        ));
+    } else {
+        for dx in [-4.5, 2.0] {
+            p.rect_filled(Rect::from_min_size(pos2(pr.center().x + dx, cy - 7.5), vec2(3.5, 15.0)), 1.0, c);
+        }
+    }
+    let tip = if pl.ended {
+        "Play again (K)"
+    } else if pl.paused() {
+        "Play (K)"
+    } else {
+        "Pause (K)"
+    };
+    if presp.on_hover_text(tip).clicked() {
+        pl.toggle_pause();
+    }
+    let duration = pl.info.map_or(0.0, |i| i.duration);
+    let has_audio = pl.info.is_some_and(|i| i.has_audio);
+    // Mute, at the right end.
+    let mut right = bar.right();
+    if has_audio {
+        let mr = Rect::from_center_size(pos2(bar.right() - 18.0, cy), vec2(32.0, 32.0));
+        right = mr.left() - 6.0;
+        let mresp = ui.interact(mr, Id::new("ql_mute"), Sense::click());
+        if mresp.hovered() {
+            p.rect_filled(mr, 6.0, pal.tab_hover);
+        }
+        let (x, y) = (mr.center().x - 5.0, cy);
+        p.rect_filled(Rect::from_min_size(pos2(x - 4.0, y - 3.0), vec2(4.0, 6.0)), 0.0, c);
+        p.add(egui::Shape::convex_polygon(
+            vec![pos2(x, y - 3.0), pos2(x + 5.0, y - 7.0), pos2(x + 5.0, y + 7.0), pos2(x, y + 3.0)],
+            c,
+            Stroke::NONE,
+        ));
+        if pl.muted {
+            p.line_segment([pos2(x + 8.0, y - 4.0), pos2(x + 14.0, y + 4.0)], Stroke::new(1.6, c));
+            p.line_segment([pos2(x + 14.0, y - 4.0), pos2(x + 8.0, y + 4.0)], Stroke::new(1.6, c));
+        } else {
+            p.line_segment([pos2(x + 8.0, y - 3.0), pos2(x + 8.0, y + 3.0)], Stroke::new(1.6, c));
+            p.line_segment([pos2(x + 11.5, y - 6.0), pos2(x + 11.5, y + 6.0)], Stroke::new(1.6, c));
+        }
+        if mresp.on_hover_text(if pl.muted { "Unmute (M)" } else { "Mute (M)" }).clicked() {
+            pl.toggle_mute();
+        }
+    }
+    // Time and seek bar. Dragging shows where it would go; letting go seeks.
+    let label = format!("{} / {}", format_duration(pl.position()), format_duration(duration));
+    let tw = p.layout_no_wrap(label.clone(), super::font(12.5), pal.text).size().x;
+    let time_r = Rect::from_min_max(pos2(right - tw - 8.0, bar.top()), pos2(right, bar.bottom()));
+    let track = Rect::from_min_max(pos2(pr.right() + 12.0, cy - 3.0), pos2(time_r.left() - 12.0, cy + 3.0));
+    let hit = track.expand2(vec2(0.0, 10.0));
+    let sresp = ui.interact(hit, Id::new("ql_seek"), Sense::click_and_drag());
+    let frac_at = |x: f32| ((x - track.left()) / track.width()).clamp(0.0, 1.0);
+    let scrub = sresp.interact_pointer_pos().filter(|_| sresp.dragged() || sresp.drag_stopped()).map(|p| frac_at(p.x));
+    let frac = scrub.unwrap_or(if duration > 0.0 { (pl.position() / duration) as f32 } else { 0.0 });
+    p.rect_filled(track, 3.0, pal.input);
+    p.rect_filled(
+        Rect::from_min_max(track.min, pos2(track.left() + track.width() * frac, track.bottom())),
+        3.0,
+        pal.accent,
+    );
+    let knob = pos2(track.left() + track.width() * frac, cy);
+    p.circle_filled(knob, if sresp.hovered() || sresp.dragged() { 7.0 } else { 5.5 }, pal.accent);
+    if duration > 0.0 {
+        if (sresp.drag_stopped() || sresp.clicked())
+            && let Some(pos) = sresp.interact_pointer_pos()
+        {
+            pl.seek(frac_at(pos.x) as f64 * duration);
+        }
+        if sresp.hovered() || sresp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+    }
+    let shown_time =
+        scrub.map_or(label, |f| format!("{} / {}", format_duration(f as f64 * duration), format_duration(duration)));
+    text(&p, pos2(time_r.right(), cy), Align2::RIGHT_CENTER, shown_time, 12.5, pal.text);
 }
