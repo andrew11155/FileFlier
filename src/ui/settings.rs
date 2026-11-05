@@ -569,6 +569,25 @@ impl FileFlier {
                             self.cfg.view = views[i];
                             restyle = true;
                         }
+                        let tiles: [(crate::ext::Ext, BarToggle); 2] = [
+                            (
+                                crate::ext::Ext::Ratings,
+                                ("Ratings on grid tiles", "Ctrl+Shift+R switches ratings and tags", |c| {
+                                    &mut c.grid_ratings
+                                }),
+                            ),
+                            (crate::ext::Ext::Tags, ("Tags on grid tiles", "", |c| &mut c.grid_tags)),
+                        ];
+                        for (ext, (name, hint, get)) in tiles {
+                            if !self.cfg.ext_on(ext) {
+                                continue;
+                            }
+                            let on = *get(&mut self.cfg);
+                            if row(ui, pal, name, hint, |ui| toggle(ui, pal, Id::new(("grid_meta", name)), on)) {
+                                *get(&mut self.cfg) = !on;
+                                self.cfg.save();
+                            }
+                        }
 
                         section(ui, pal, "Bottom bar");
                         let bars: [BarToggle; 4] = [

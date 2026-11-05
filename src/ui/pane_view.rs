@@ -53,6 +53,21 @@ enum ItemAction {
     ClearSelection,
 }
 
+/// A price-tag shape (the bottom bar's "tags on tiles" switch).
+fn tag_glyph(p: &egui::Painter, r: Rect, c: Color32, filled: bool) {
+    let (l, t, rt, b) = (r.left() + 1.0, r.top() + 3.0, r.right() - 1.0, r.bottom() - 3.0);
+    let tip = l + (b - t) * 0.45;
+    let pts = vec![pos2(l, r.center().y), pos2(tip, t), pos2(rt, t), pos2(rt, b), pos2(tip, b)];
+    let hole = pos2(tip + 1.5, r.center().y);
+    if filled {
+        p.add(egui::Shape::convex_polygon(pts, c, Stroke::NONE));
+        p.circle_filled(hole, 1.8, Color32::from_black_alpha(160));
+    } else {
+        p.add(egui::Shape::closed_line(pts, Stroke::new(1.4, c)));
+        p.circle_stroke(hole, 1.6, Stroke::new(1.2, c));
+    }
+}
+
 /// Empty space at the end of each details row: right-click it for the folder's menu,
 /// or drag from it to select with a rectangle.
 const ROW_END_GAP: f32 = 40.0;
@@ -509,6 +524,8 @@ impl FileFlier {
         let show_rating = self.cfg.ext_on(crate::ext::Ext::Ratings);
         let show_tags = self.cfg.ext_on(crate::ext::Ext::Tags);
         let show_dropbox = self.cfg.ext_on(crate::ext::Ext::Dropbox);
+        let grid_rating = show_rating && self.cfg.grid_ratings;
+        let grid_tags = show_tags && self.cfg.grid_tags;
         let ctx = ui.ctx().clone();
         let cut_paths: Vec<PathBuf> =
             self.clipboard.as_ref().filter(|c| c.cut).map(|c| c.paths.clone()).unwrap_or_default();
@@ -1151,6 +1168,8 @@ impl FileFlier {
                                             vec2(item.width() - 20.0, gs.thumb_h),
                                         );
                                         let mut drew = false;
+                                        // Where the picture (or icon) is, for the stars and tag dots.
+                                        let mut shown = Rect::from_center_size(thumb.center(), vec2(gs.icon, gs.icon));
                                         if e.is_file
                                             && crate::preview::classify(&e.path).has_thumbnail()
                                             && let Some(tex) = thumbs.get(&e.path, e.modified, gs.tier)
@@ -1162,6 +1181,7 @@ impl FileFlier {
                                             let scale =
                                                 (thumb.width() / sz.x).min(thumb.height() / sz.y).min(max_scale);
                                             let fit = Rect::from_center_size(thumb.center(), sz * scale);
+                                            shown = fit;
                                             let p = ui.painter();
                                             // 3D renders have a transparent background: no photo shadow.
                                             let model =
@@ -1204,15 +1224,50 @@ impl FileFlier {
                                         let ty = thumb.bottom() + 6.0;
                                         // Center-aligned galleys are laid out around x = 0.
                                         p.galley(pos2(item.center().x, ty), g.clone(), color);
-                                        let meta = if e.is_dir { String::new() } else { human_size(e.size) };
+                                        let size_text = if e.is_dir { String::new() } else { human_size(e.size) };
                                         text(
                                             p,
                                             pos2(item.center().x, ty + g.size().y + 2.0),
                                             Align2::CENTER_TOP,
-                                            meta,
+                                            size_text,
                                             12.0,
                                             pal.text_dim,
                                         );
+                                        // Tags extension: dots in the picture's top right corner.
+                                        if grid_tags {
+                                            let defs: Vec<&crate::meta::TagDef> =
+                                                meta.tags_of(&e.path).iter().filter_map(|t| meta.tag(t)).collect();
+                                            if !defs.is_empty() {
+                                                let cy = shown.top() + 6.0;
+                                                super::tags::paint_tag_dots(p, shown.right() - 1.0, cy, &defs, pal);
+                                            }
+                                        }
+                                        // Ratings extension: stars along the picture's bottom, shown once
+                                        // rated or while hovered (click one to rate).
+                                        if grid_rating {
+                                            let rating = meta.rating(&e.path);
+                                            if rating > 0 || ui.rect_contains_pointer(item) {
+                                                let size = if gs.icon > 64.0 { 15.0 } else { 11.0 };
+                                                let cx = shown.center().x;
+                                                let cy = shown.bottom().min(thumb.bottom()) - size / 2.0 - 2.0;
+                                                let pill = Rect::from_center_size(
+                                                    pos2(cx, cy),
+                                                    vec2(size * 5.0 + 8.0, size + 4.0),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    pill,
+                                                    pal.round(size / 2.0 + 2.0),
+                                                    pal.bg.gamma_multiply(0.82),
+                                                );
+                                                let id = Id::new(("grid_stars", idx, &e.path));
+                                                let left = cx - size * 2.5;
+                                                if let Some(n) =
+                                                    super::tags::star_row(ui, id, left, cy, size, rating, pal)
+                                                {
+                                                    item_actions.push(ItemAction::Rate(e.path.clone(), n));
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
@@ -1623,6 +1678,49 @@ impl FileFlier {
             }
         }
 
+        // Grid views: switches for the stars and tag dots on the tiles.
+        let counters_left = if g.left() > fr.right() + 8.0 { g.left() } else { pct_r.left() };
+        let mut left_edge = counters_left;
+        if view.is_grid() {
+            let mut toggles: Vec<(bool, &str, u8)> = Vec::new();
+            if self.cfg.ext_on(crate::ext::Ext::Tags) {
+                toggles.push((self.cfg.grid_tags, "Tags on tiles (Ctrl+Shift+R: ratings and tags)", 1));
+            }
+            if self.cfg.ext_on(crate::ext::Ext::Ratings) {
+                toggles.push((self.cfg.grid_ratings, "Ratings on tiles (Ctrl+Shift+R: ratings and tags)", 0));
+            }
+            let room = left_edge - 6.0 - (fr.right() + 8.0);
+            if room >= 28.0 * toggles.len() as f32 {
+                for (on, tip, which) in toggles {
+                    let r = Rect::from_min_size(
+                        pos2(left_edge - 6.0 - 26.0, pct_r.top() + 1.0),
+                        vec2(26.0, pct_r.height() - 2.0),
+                    );
+                    left_edge = r.left() - 2.0;
+                    if on {
+                        ui.painter().rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.22));
+                    }
+                    let accent = pal.accent;
+                    let draw = move |p: &egui::Painter, ir: Rect, c: Color32| {
+                        let c = if on { accent } else { c };
+                        if which == 0 {
+                            super::tags::paint_star(p, ir.center(), ir.width() * 0.48, on.then_some(c), c);
+                        } else {
+                            tag_glyph(p, ir, c, on);
+                        }
+                    };
+                    if icon_button(ui, r, Id::new(("grid_meta", idx, which)), true, pal, tip, draw).clicked() {
+                        if which == 0 {
+                            self.cfg.grid_ratings = !self.cfg.grid_ratings;
+                        } else {
+                            self.cfg.grid_tags = !self.cfg.grid_tags;
+                        }
+                        self.cfg.save();
+                    }
+                }
+            }
+        }
+
         // Flat view badge: shows scan progress; click to leave the flat view.
         let tab = self.panes[idx].tab();
         if tab.flat {
@@ -1634,7 +1732,7 @@ impl FileFlier {
             } else {
                 "Flat view".to_string()
             };
-            let right = if g.left() > fr.right() + 8.0 { g.left() - 6.0 } else { pct_r.left() - 6.0 };
+            let right = left_edge - 6.0;
             let full_w = ui.painter().layout_no_wrap(label.clone(), super::font(13.0), pal.on_accent).size().x + 20.0;
             let label = if fr.right() + 8.0 + full_w <= right { label } else { "Flat".to_string() };
             let w = ui.painter().layout_no_wrap(label.clone(), super::font(13.0), pal.on_accent).size().x + 20.0;

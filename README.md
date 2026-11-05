@@ -114,11 +114,14 @@ the same on every desktop environment.
     (`Ctrl+Alt+0` clears), from the right-click menu, in the preview panel,
     or by clicking the stars in the details view's *Rating* column. Sort by
     rating with `Ctrl+6`, from the sort menu, or by clicking the column's header
-    (best first).
+    (best first). In the grid views the stars show on the tiles; hover a tile
+    and click a star to rate it.
   - **Tags.** Right-click → *Tags…* to tick tags for the selection or make a
-    new one. Tags show as colored dots after the name and as chips in the
-    preview panel. The sidebar's *Tags* list shows every tag with how many
-    files have it: click one to list those files, wherever they are, or drop
+    new one. Tags show as colored dots after the name (in the grid views, in the
+    picture's corner) and as chips in the preview panel. The star and tag
+    buttons in a grid's bottom bar, or `Ctrl+Shift+R` for both, hide or show
+    ratings and tags on the tiles (also in *Settings → Layout*). The
+    sidebar's *Tags* list shows every tag with how many files have it: click one to list those files, wherever they are, or drop
     files on it to tag them. *Manage tags…* (right-click the *Tags* header or a
     tag, or the command palette) renames, recolors (any color) and deletes tags.
   - **Batch rename.** Select several files and press `F2` (or right-click →
@@ -327,6 +330,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Ctrl+B` | Toggle the sidebar |
 | `Ctrl+↑` / `Ctrl+↓` | Previous / next place in the sidebar |
 | `Ctrl+J` | Toggle the bottom bar |
+| `Ctrl+Shift+R` | Show or hide ratings and tags on grid tiles |
 | `F3` or `Ctrl+I` | Toggle the preview panel |
 | `Ctrl+D` | Bookmark the current folder |
 | `Ctrl+Shift+T` | Open a terminal here |

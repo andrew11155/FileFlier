@@ -1056,6 +1056,13 @@ impl FileFlier {
                 self.cfg.show_bottom_bar = !self.cfg.show_bottom_bar;
                 self.cfg.save();
             }
+            ToggleGridMeta => {
+                // Both off if either shows, else both on.
+                let on = !(self.cfg.grid_ratings || self.cfg.grid_tags);
+                self.cfg.grid_ratings = on;
+                self.cfg.grid_tags = on;
+                self.cfg.save();
+            }
             ToggleTheme => {
                 // Flip between the default dark and light themes.
                 let dark = self.pal().is_dark;

@@ -121,6 +121,9 @@ pub struct Config {
     pub show_folder_count: bool,
     pub show_file_count: bool,
     pub show_scroll_pct: bool,
+    /// Grid views: stars and tag dots on the tiles (Ctrl+Shift+R, or the bottom bar).
+    pub grid_ratings: bool,
+    pub grid_tags: bool,
     pub sidebar_width: f32,
     /// Old split position (read only to migrate to `layout`).
     pub split_ratio: f32,
@@ -214,6 +217,8 @@ impl Default for Config {
             show_folder_count: true,
             show_file_count: true,
             show_scroll_pct: true,
+            grid_ratings: true,
+            grid_tags: true,
             sidebar_width: 230.0,
             split_ratio: 0.5,
             layout: None,
