@@ -75,8 +75,8 @@ impl FileFlier {
             if fx.glass {
                 glass::panel(&p, r, fill, 14, pal);
             } else {
-                p.rect_filled(r, 14.0, fill);
-                p.rect_stroke(r, 14.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+                p.rect_filled(r, pal.round(14.0), fill);
+                p.rect_stroke(r, pal.round(14.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
             }
 
             // Header: icon, name, details, actions.
@@ -117,7 +117,7 @@ impl FileFlier {
             let open_r = Rect::from_min_size(pos2(close_r.left() - 96.0, header.center().y - 15.0), vec2(84.0, 30.0));
             let open_resp = ui.interact(open_r, Id::new("ql_open"), Sense::click());
             let fill = if open_resp.hovered() { pal.accent.gamma_multiply(1.15) } else { pal.accent };
-            p.rect_filled(open_r, 6.0, fill);
+            p.rect_filled(open_r, pal.round(6.0), fill);
             text(&p, open_r.center(), Align2::CENTER_CENTER, "Open", 13.5, pal.on_accent);
             open |= open_resp.on_hover_text("Open (Enter)").clicked();
             p.hline(r.x_range().shrink(1.0), header.bottom(), Stroke::new(1.0, pal.row_sep));
@@ -160,7 +160,7 @@ impl FileFlier {
                             let size = tex.size_vec2();
                             let s = (screen_r.width() / size.x).min(screen_r.height() / size.y);
                             let img = Rect::from_center_size(screen_r.center(), size * s);
-                            p.rect_filled(screen_r, 8.0, Color32::BLACK);
+                            p.rect_filled(screen_r, pal.round(8.0), Color32::BLACK);
                             p.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                         }
                         // Until the first frame: the still the preview made.
@@ -206,7 +206,7 @@ fn video_controls(ui: &mut egui::Ui, bar: Rect, pl: &mut crate::preview::player:
     let pr = Rect::from_center_size(pos2(bar.left() + 18.0, cy), vec2(32.0, 32.0));
     let presp = ui.interact(pr, Id::new("ql_play"), Sense::click());
     if presp.hovered() {
-        p.rect_filled(pr, 6.0, pal.tab_hover);
+        p.rect_filled(pr, pal.round(6.0), pal.tab_hover);
     }
     let c = pal.text_strong;
     if pl.paused() || pl.ended {
@@ -240,7 +240,7 @@ fn video_controls(ui: &mut egui::Ui, bar: Rect, pl: &mut crate::preview::player:
         right = mr.left() - 6.0;
         let mresp = ui.interact(mr, Id::new("ql_mute"), Sense::click());
         if mresp.hovered() {
-            p.rect_filled(mr, 6.0, pal.tab_hover);
+            p.rect_filled(mr, pal.round(6.0), pal.tab_hover);
         }
         let (x, y) = (mr.center().x - 5.0, cy);
         p.rect_filled(Rect::from_min_size(pos2(x - 4.0, y - 3.0), vec2(4.0, 6.0)), 0.0, c);
@@ -270,7 +270,7 @@ fn video_controls(ui: &mut egui::Ui, bar: Rect, pl: &mut crate::preview::player:
     let frac_at = |x: f32| ((x - track.left()) / track.width()).clamp(0.0, 1.0);
     let scrub = sresp.interact_pointer_pos().filter(|_| sresp.dragged() || sresp.drag_stopped()).map(|p| frac_at(p.x));
     let frac = scrub.unwrap_or(if duration > 0.0 { (pl.position() / duration) as f32 } else { 0.0 });
-    p.rect_filled(track, 3.0, pal.input);
+    p.rect_filled(track, pal.round(3.0), pal.input);
     p.rect_filled(
         Rect::from_min_max(track.min, pos2(track.left() + track.width() * frac, track.bottom())),
         3.0,

@@ -38,7 +38,7 @@ impl FileFlier {
                 let installing = progress.installing.load(Ordering::Relaxed);
                 ui.add_space(10.0);
                 let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
-                ui.painter().rect_filled(r, 4.0, pal.input);
+                ui.painter().rect_filled(r, pal.round(4.0), pal.input);
                 let frac = if installing {
                     1.0
                 } else if total > 0 {
@@ -48,7 +48,7 @@ impl FileFlier {
                 };
                 let mut fill = r;
                 fill.set_width(r.width() * frac);
-                ui.painter().rect_filled(fill, 4.0, pal.accent);
+                ui.painter().rect_filled(fill, pal.round(4.0), pal.accent);
                 ui.add_space(6.0);
                 let status = if installing {
                     "Installing…".to_string()

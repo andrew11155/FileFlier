@@ -214,7 +214,7 @@ impl FileFlier {
         let r = Rect::from_min_size(pos2(controls_left - 8.0 - w, rect.center().y - 12.0), vec2(w, 24.0));
         let resp = ui.interact(r, Id::new("update_pill"), Sense::click());
         let fill = if resp.hovered() { pal.accent.gamma_multiply(1.2) } else { pal.accent };
-        ui.painter().rect_filled(r, 12.0, fill);
+        ui.painter().rect_filled(r, pal.round(12.0), fill);
         super::text_bold(ui.painter(), r.center(), egui::Align2::CENTER_CENTER, label, 12.5, pal.on_accent);
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             self.dialog = Some(crate::app::Dialog::Update);
@@ -288,7 +288,7 @@ impl FileFlier {
                 let cr = Rect::from_center_size(pos2(r.right() - 17.0, r.center().y), vec2(20.0, 20.0));
                 let close = ui.interact(cr, id.with("close"), Sense::click());
                 if close.hovered() {
-                    painter.rect_filled(cr, 4.0, pal.border);
+                    painter.rect_filled(cr, pal.round(4.0), pal.border);
                 }
                 icons::close(&painter, cr.shrink(3.0), if close.hovered() { pal.text_strong } else { pal.text_dim });
                 if close.clicked() {
@@ -483,8 +483,8 @@ impl FileFlier {
             let alone = self.panes[src].tabs.len() == 1;
             if !(p == src && (side.is_none() || alone)) {
                 let area = crate::layout::preview(rect, side).shrink(4.0);
-                painter.rect_filled(area, 8.0, pal.accent.gamma_multiply(0.18));
-                painter.rect_stroke(area, 8.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
+                painter.rect_filled(area, pal.round(8.0), pal.accent.gamma_multiply(0.18));
+                painter.rect_stroke(area, pal.round(8.0), Stroke::new(2.0, pal.accent), StrokeKind::Inside);
                 target = Some(Target::Pane(p, side));
             }
         }
@@ -497,7 +497,7 @@ impl FileFlier {
             let at = pos + vec2(14.0, 10.0);
             let r = Rect::from_min_size(at, g.size()).expand2(vec2(10.0, 6.0));
             painter.rect_filled(r, pal.round(6.0), pal.tab_hover);
-            painter.rect_stroke(r, 6.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            painter.rect_stroke(r, pal.round(6.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
             painter.galley(at, g, pal.text_strong);
             ctx.set_cursor_icon(CursorIcon::Grabbing);
         }

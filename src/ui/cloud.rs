@@ -124,7 +124,7 @@ impl FileFlier {
                 for p in Provider::ALL {
                     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
                     let painter = ui.painter();
-                    painter.rect_filled(r, 8.0, if resp.hovered() { pal.tab_hover } else { pal.input });
+                    painter.rect_filled(r, pal.round(8.0), if resp.hovered() { pal.tab_hover } else { pal.input });
                     painter.rect_stroke(
                         r,
                         8.0,

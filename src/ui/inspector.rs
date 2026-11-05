@@ -73,7 +73,7 @@ impl FileFlier {
         };
         let pr = Rect::from_min_size(inner.min, vec2(inner.width(), preview_h));
         let well = if fx.glass { super::glass::with_alpha(pal.bg, 0.5) } else { pal.bg.gamma_multiply(0.7) };
-        ui.painter().rect_filled(pr, 8.0, well);
+        ui.painter().rect_filled(pr, pal.round(8.0), well);
         let mut view = std::mem::take(&mut self.insp_view);
         let nav = {
             let shown = self.pv.shown_for(&e.path).map(|s| &*s);
@@ -83,7 +83,7 @@ impl FileFlier {
         if let Some(Nav::Page(n)) = nav {
             self.preview_page.1 = n;
         }
-        ui.painter().rect_stroke(pr, 8.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+        ui.painter().rect_stroke(pr, pal.round(8.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
 
         let shown = self.pv.shown_for(&e.path);
         let (kind, mut info, times) = match shown {
@@ -112,10 +112,14 @@ impl FileFlier {
         let open = ui.interact(open_r, Id::new("insp_open"), Sense::click());
         let ql = ui.interact(ql_r, Id::new("insp_ql"), Sense::click());
         let p = ui.painter();
-        p.rect_filled(open_r, 6.0, if open.hovered() { pal.accent.gamma_multiply(1.15) } else { pal.accent });
+        p.rect_filled(
+            open_r,
+            pal.round(6.0),
+            if open.hovered() { pal.accent.gamma_multiply(1.15) } else { pal.accent },
+        );
         super::text_bold(p, open_r.center(), Align2::CENTER_CENTER, "Open", 13.0, pal.on_accent);
-        p.rect_filled(ql_r, 6.0, if ql.hovered() { pal.hover } else { pal.tab_hover });
-        p.rect_stroke(ql_r, 6.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+        p.rect_filled(ql_r, pal.round(6.0), if ql.hovered() { pal.hover } else { pal.tab_hover });
+        p.rect_stroke(ql_r, pal.round(6.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
         text(p, ql_r.center(), Align2::CENTER_CENTER, "Quick Look", 13.0, pal.text);
         if open.on_hover_text("Open (Enter)").clicked() {
             self.open_entries();

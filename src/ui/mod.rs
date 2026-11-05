@@ -126,9 +126,9 @@ pub fn search_box(
 ) -> (Response, Option<Response>) {
     let focused = ui.memory(|m| m.has_focus(id));
     let p = ui.painter();
-    p.rect_filled(rect, 5.0, pal.input);
+    p.rect_filled(rect, pal.round(5.0), pal.input);
     let border = if focused { pal.accent } else { pal.border };
-    p.rect_stroke(rect, 5.0, Stroke::new(1.0, border), StrokeKind::Inside);
+    p.rect_stroke(rect, pal.round(5.0), Stroke::new(1.0, border), StrokeKind::Inside);
     let icon = Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), vec2(15.0, 15.0));
     icons::search(p, icon, pal.text_dim);
     let right_pad = if with_options { 34.0 } else { 8.0 };
@@ -162,7 +162,7 @@ pub fn badge(p: &Painter, right: f32, cy: f32, s: &str, pal: &Palette, on_accent
     let w = g.size().x + 14.0;
     let r = Rect::from_min_max(pos2(right - w, cy - 10.0), pos2(right, cy + 10.0));
     let stroke = if on_accent { pal.on_accent.gamma_multiply(0.5) } else { pal.border };
-    p.rect_stroke(r, 4.0, Stroke::new(1.0, stroke), StrokeKind::Inside);
+    p.rect_stroke(r, pal.round(4.0), Stroke::new(1.0, stroke), StrokeKind::Inside);
     p.galley(r.center() - g.size() / 2.0, g, color);
     w
 }
@@ -222,9 +222,9 @@ pub fn menu_row_ex(
     let red = danger_color(pal);
     if selected {
         // A deeper red than the text color, so white text stays readable.
-        p.rect_filled(rect, 4.0, if danger { Color32::from_rgb(196, 48, 43) } else { pal.accent });
+        p.rect_filled(rect, pal.round(4.0), if danger { Color32::from_rgb(196, 48, 43) } else { pal.accent });
     } else if resp.hovered() {
-        p.rect_filled(rect, 4.0, if danger { red.gamma_multiply(0.18) } else { pal.tab_hover });
+        p.rect_filled(rect, pal.round(4.0), if danger { red.gamma_multiply(0.18) } else { pal.tab_hover });
     }
     let mut x = rect.left() + 10.0;
     if !matches!(icon, RowIcon::None) {
@@ -255,9 +255,9 @@ pub fn checkbox(p: &Painter, r: Rect, checked: bool, pal: &Palette, on_accent: b
     let r = Rect::from_center_size(r.center(), vec2(16.0, 16.0));
     let stroke = if on_accent { pal.on_accent } else { pal.text_dim };
     if checked {
-        p.rect_filled(r, 3.0, if on_accent { pal.on_accent.gamma_multiply(0.15) } else { pal.accent });
+        p.rect_filled(r, pal.round(3.0), if on_accent { pal.on_accent.gamma_multiply(0.15) } else { pal.accent });
     }
-    p.rect_stroke(r, 3.0, Stroke::new(1.3, stroke), StrokeKind::Inside);
+    p.rect_stroke(r, pal.round(3.0), Stroke::new(1.3, stroke), StrokeKind::Inside);
     if checked {
         let pts = vec![
             pos2(r.left() + 3.5, r.center().y),

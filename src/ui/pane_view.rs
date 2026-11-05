@@ -400,7 +400,7 @@ impl FileFlier {
                 // Resting on a parent crumb goes there.
                 let (t, fire) = super::dnd::spring(ui.ctx(), Id::new(("spring", target)), super::dnd::SPRING_DELAY);
                 painter.rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.30 * t));
-                painter.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), StrokeKind::Inside);
+                painter.rect_stroke(r, pal.round(4.0), Stroke::new(1.5, pal.accent), StrokeKind::Inside);
                 self.drop_target = Some(crate::app::DropTarget::Folder(target.clone()));
                 if fire {
                     self.actions.push(Action::Activate(idx));
@@ -714,7 +714,12 @@ impl FileFlier {
                                 if view == ViewMode::Grid {
                                     if selected {
                                         p.rect_filled(bg_rect, pal.round(5.0), pal.grid_sel);
-                                        p.rect_stroke(bg_rect, 5.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                                        p.rect_stroke(
+                                            bg_rect,
+                                            pal.round(5.0),
+                                            Stroke::new(1.0, pal.accent),
+                                            StrokeKind::Inside,
+                                        );
                                     } else if resp.hovered() {
                                         p.rect_filled(bg_rect, pal.round(5.0), pal.hover);
                                     }
@@ -733,7 +738,12 @@ impl FileFlier {
                                     }
                                 }
                                 if is_cursor && !(selected && view != ViewMode::Grid) {
-                                    p.rect_stroke(bg_rect, 4.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                                    p.rect_stroke(
+                                        bg_rect,
+                                        pal.round(4.0),
+                                        Stroke::new(1.0, pal.accent),
+                                        StrokeKind::Inside,
+                                    );
                                 }
                                 if drop_target {
                                     // Resting on a folder opens it; the fill builds up until it does.
@@ -743,7 +753,12 @@ impl FileFlier {
                                         super::dnd::SPRING_DELAY,
                                     );
                                     p.rect_filled(bg_rect, pal.round(4.0), pal.accent.gamma_multiply(0.10 + 0.30 * t));
-                                    p.rect_stroke(bg_rect, 4.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
+                                    p.rect_stroke(
+                                        bg_rect,
+                                        pal.round(4.0),
+                                        Stroke::new(2.0, pal.accent),
+                                        StrokeKind::Inside,
+                                    );
                                     drop_folder = Some(e.path.clone());
                                     if fire {
                                         spring_open = Some(e.path.clone());
@@ -1237,10 +1252,10 @@ impl FileFlier {
             pos2(rect.right() - 54.0, rect.top() + 7.0),
             pos2(rect.right() - 8.0, rect.bottom() - 7.0),
         );
-        p.rect_filled(pct_r, 4.0, pal.input);
+        p.rect_filled(pct_r, pal.round(4.0), pal.input);
         let fill_w = (pct_r.width() * pct).max(4.0);
         p.rect_filled(Rect::from_min_size(pct_r.min, vec2(fill_w, pct_r.height())), 4.0, pal.accent);
-        p.rect_stroke(pct_r, 4.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+        p.rect_stroke(pct_r, pal.round(4.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
         text(p, pct_r.center(), Align2::CENTER_CENTER, format!("{}%", (pct * 100.0).round() as i32), 12.5, pal.text);
         ui.interact(pct_r, Id::new(("scroll_pct_tip", idx)), Sense::hover())
             .on_hover_text("How far down the list you've scrolled");
@@ -1255,7 +1270,7 @@ impl FileFlier {
             pos2(pct_r.left() - 6.0, pct_r.bottom()),
         );
         if g.left() > fr.right() + 8.0 {
-            p.rect_stroke(g, 4.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            p.rect_stroke(g, pal.round(4.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
             let mut x = g.left() + 10.0;
             icons::folder_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(17.0, 17.0)), pal.text);
             x += 22.0;

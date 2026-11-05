@@ -153,14 +153,14 @@ impl FileFlier {
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
             let p = ui.painter();
             if resp.hovered() {
-                p.rect_filled(r, 5.0, pal.hover);
+                p.rect_filled(r, pal.round(5.0), pal.hover);
             }
             // Tick box: full, partly (some of the items), or empty.
             let bx = Rect::from_center_size(pos2(r.left() + 16.0, r.center().y), vec2(16.0, 16.0));
             if have == 0 {
-                p.rect_stroke(bx, 4.0, Stroke::new(1.3, pal.text_dim), egui::StrokeKind::Inside);
+                p.rect_stroke(bx, pal.round(4.0), Stroke::new(1.3, pal.text_dim), egui::StrokeKind::Inside);
             } else {
-                p.rect_filled(bx, 4.0, pal.accent);
+                p.rect_filled(bx, pal.round(4.0), pal.accent);
                 if have == paths.len() {
                     super::paint_row_icon(p, bx.shrink(1.0), super::RowIcon::Check(true), pal);
                 } else {

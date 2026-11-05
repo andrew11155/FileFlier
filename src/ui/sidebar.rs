@@ -340,7 +340,7 @@ impl FileFlier {
                         && let Some(pl) = hresp.dnd_hover_payload::<DragPaths>()
                         && pl.0.iter().any(|p| p.is_dir())
                     {
-                        p.rect_stroke(hr, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                        p.rect_stroke(hr, pal.round(4.0), Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
                         if let Some(pl) = hresp.dnd_release_payload::<DragPaths>() {
                             new_bookmarks.extend(pl.0.iter().filter(|p| p.is_dir()).cloned());
                         }
@@ -365,7 +365,7 @@ impl FileFlier {
                         }
                         Place::Folder => {
                             let r = ir.shrink(1.0);
-                            p.rect_stroke(r, 2.0, Stroke::new(1.4, pal.text_dim), egui::StrokeKind::Middle);
+                            p.rect_stroke(r, pal.round(2.0), Stroke::new(1.4, pal.text_dim), egui::StrokeKind::Middle);
                             p.hline(r.x_range(), r.top() + 4.0, Stroke::new(1.2, pal.text_dim));
                         }
                         other => icons::place(p, ir, other, pal),
@@ -447,7 +447,7 @@ impl FileFlier {
                         }
                         let is_trash = matches!(item.icon, Place::Trash) && item.depth == 0 && !item.tree;
                         if drop_hover {
-                            p.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                            p.rect_stroke(r, pal.round(4.0), Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
                             drop_target =
                                 Some(if is_trash { DropTarget::Trash } else { DropTarget::Folder(item.path.clone()) });
                             if !is_trash {
@@ -576,7 +576,12 @@ impl FileFlier {
                             let hover = resp.dnd_hover_payload::<DragPaths>().is_some();
                             if hover {
                                 let p = ui.painter();
-                                p.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                                p.rect_stroke(
+                                    r,
+                                    pal.round(4.0),
+                                    Stroke::new(1.5, pal.accent),
+                                    egui::StrokeKind::Inside,
+                                );
                             }
                             if let Some(pl) = resp.dnd_release_payload::<DragPaths>() {
                                 actions.push(Action::TagPaths(pl.0.clone(), name.clone()));

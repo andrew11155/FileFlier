@@ -176,8 +176,8 @@ impl FileFlier {
             let br = Rect::from_min_max(pos2(fr.right() - g.size().x - 24.0, fr.top()), fr.right_bottom());
             let resp = ui.interact(br, Id::new("shortcuts_reset_all"), Sense::click());
             let p = ui.painter();
-            p.rect_filled(br, 5.0, if resp.hovered() { pal.tab_hover } else { pal.input });
-            p.rect_stroke(br, 5.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            p.rect_filled(br, pal.round(5.0), if resp.hovered() { pal.tab_hover } else { pal.input });
+            p.rect_stroke(br, pal.round(5.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
             p.galley(br.center() - g.size() / 2.0, g, pal.text);
             if resp.on_hover_text("Put every shortcut back to its default").clicked() {
                 ops.push(Op::ResetAll);
@@ -235,9 +235,9 @@ fn command_row(
     let p = ui.painter().clone();
     let item = rect.shrink2(vec2(2.0, 1.0));
     if selected {
-        p.rect_filled(item, 5.0, pal.accent_dim);
+        p.rect_filled(item, pal.round(5.0), pal.accent_dim);
     } else if resp.hovered() {
-        p.rect_filled(item, 5.0, pal.hover);
+        p.rect_filled(item, pal.round(5.0), pal.hover);
     }
     let cy = rect.center().y;
     let id = Id::new(("shortcut_row", c.id()));
@@ -247,7 +247,7 @@ fn command_row(
     let run = Rect::from_min_max(pos2(right - 26.0, cy - 12.0), pos2(right, cy + 12.0));
     let run_resp = ui.interact(run, id.with("run"), Sense::click());
     if run_resp.hovered() {
-        p.rect_filled(run, 5.0, pal.tab_hover);
+        p.rect_filled(run, pal.round(5.0), pal.tab_hover);
     }
     let color = if run_resp.hovered() { pal.accent } else { pal.text_dim };
     let t = run.center();
@@ -266,7 +266,7 @@ fn command_row(
         let r = Rect::from_min_max(pos2(right - 24.0, cy - 12.0), pos2(right, cy + 12.0));
         let resp = ui.interact(r, id.with("reset"), Sense::click());
         if resp.hovered() {
-            p.rect_filled(r, 5.0, pal.tab_hover);
+            p.rect_filled(r, pal.round(5.0), pal.tab_hover);
         }
         text(&p, r.center(), Align2::CENTER_CENTER, "↺", 15.0, if resp.hovered() { pal.text } else { pal.text_dim });
         let defaults = c.default_shortcuts().iter().map(|s| commands::format_shortcut(&ctx, s)).collect::<Vec<_>>();
@@ -286,7 +286,7 @@ fn command_row(
     let add_resp = ui.interact(add, id.with("add"), Sense::click());
     let adding = recording == Some(None);
     if add_resp.hovered() || adding {
-        p.rect_filled(add, 5.0, pal.tab_hover);
+        p.rect_filled(add, pal.round(5.0), pal.tab_hover);
     }
     crate::icons::plus(&p, add.shrink(5.0), if add_resp.hovered() { pal.text } else { pal.text_dim });
     if add_resp.on_hover_text("Add a shortcut").clicked() {
@@ -317,8 +317,8 @@ fn command_row(
             } else {
                 (Color32::TRANSPARENT, Stroke::new(1.0, pal.border), pal.text_dim)
             };
-            p.rect_filled(chip, 4.0, fill);
-            p.rect_stroke(chip, 4.0, stroke, StrokeKind::Inside);
+            p.rect_filled(chip, pal.round(4.0), fill);
+            p.rect_stroke(chip, pal.round(4.0), stroke, StrokeKind::Inside);
             text(&p, chip.center(), Align2::CENTER_CENTER, shown, 12.0, fg);
             if let Some(i) = slot {
                 if cresp.secondary_clicked() {

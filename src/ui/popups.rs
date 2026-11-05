@@ -68,8 +68,8 @@ fn input_row(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: I
 pub(super) fn plain_input(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: Id) -> egui::Response {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(r, 5.0, pal.input);
-    p.rect_stroke(r, 5.0, Stroke::new(1.0, pal.accent), egui::StrokeKind::Inside);
+    p.rect_filled(r, pal.round(5.0), pal.input);
+    p.rect_stroke(r, pal.round(5.0), Stroke::new(1.0, pal.accent), egui::StrokeKind::Inside);
     let inner = r.shrink2(vec2(10.0, 1.0));
     ui.put(
         inner,
@@ -932,7 +932,7 @@ impl FileFlier {
                                     None => {
                                         // No icon (yet): a tile with the app's initial.
                                         let tile = if selected { Color32::from_white_alpha(46) } else { pal.tab_hover };
-                                        p.rect_filled(ir.shrink(2.0), 5.0, tile);
+                                        p.rect_filled(ir.shrink(2.0), pal.round(5.0), tile);
                                         let initial = app.name.chars().next().unwrap_or('?').to_uppercase().to_string();
                                         let c = if selected { pal.on_accent } else { pal.text_dim };
                                         super::text_bold(p, ir.center(), Align2::CENTER_CENTER, initial, 12.0, c);

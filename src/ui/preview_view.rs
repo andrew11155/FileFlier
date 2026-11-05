@@ -400,7 +400,7 @@ fn scroll_area(ui: &mut Ui, rect: Rect, id: impl std::hash::Hash + std::fmt::Deb
 #[allow(clippy::too_many_arguments)]
 fn text_view(ui: &mut Ui, rect: Rect, e: &Entry, t: &str, syntax: &str, truncated: bool, pal: &Palette, style: &Style) {
     let p = ui.painter();
-    p.rect_filled(rect, 6.0, pal.bg);
+    p.rect_filled(rect, pal.round(6.0), pal.bg);
     let size = if style.big { 13.0 } else { 12.0 };
     if t.len() > 40_000 {
         return long_text_view(ui, rect.shrink(8.0), e, t, syntax, truncated, size, pal);
@@ -500,7 +500,7 @@ fn document_view(
     ui.painter().add(
         egui::Shadow { offset: [0, 2], blur: 10, spread: 0, color: Color32::from_black_alpha(50) }.as_shape(paper, 4),
     );
-    ui.painter().rect_filled(paper, 4.0, PAPER);
+    ui.painter().rect_filled(paper, pal.round(4.0), PAPER);
     let scale = if style.big { 1.0 } else { 0.86 };
     scroll_area(ui, paper.shrink2(vec2(if style.big { 36.0 } else { 16.0 }, 14.0)), ("pv_doc", &e.path), |ui| {
         ui.spacing_mut().item_spacing.y = 6.0 * scale;
@@ -563,7 +563,7 @@ fn document_view(
 
 fn table_view(ui: &mut Ui, rect: Rect, e: &Entry, rows: &[Vec<String>], truncated: bool, pal: &Palette) {
     let p = ui.painter();
-    p.rect_filled(rect, 6.0, pal.bg);
+    p.rect_filled(rect, pal.round(6.0), pal.bg);
     if rows.is_empty() {
         text(p, rect.center(), Align2::CENTER_CENTER, "Empty sheet", 13.5, pal.text_dim);
         return;
@@ -688,7 +688,7 @@ fn dir_tiles(ui: &mut Ui, rect: Rect, e: &Entry, entries: &[Entry], pal: &Palett
 }
 
 fn listing_view(ui: &mut Ui, rect: Rect, e: &Entry, items: &[crate::preview::ListItem], pal: &Palette) {
-    ui.painter().rect_filled(rect, 6.0, pal.bg);
+    ui.painter().rect_filled(rect, pal.round(6.0), pal.bg);
     if items.is_empty() {
         text(ui.painter(), rect.center(), Align2::CENTER_CENTER, "Empty archive", 13.5, pal.text_dim);
         return;

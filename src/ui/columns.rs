@@ -128,9 +128,9 @@ impl FileFlier {
                     let on_path = Some(e.path.as_path()) == highlight;
                     let p = ui.painter();
                     if on_path {
-                        p.rect_filled(item, 4.0, pal.accent_dim);
+                        p.rect_filled(item, pal.round(4.0), pal.accent_dim);
                     } else if resp.hovered() {
-                        p.rect_filled(item, 4.0, pal.hover);
+                        p.rect_filled(item, pal.round(4.0), pal.hover);
                     }
                     let color = if e.is_hidden() { pal.text.gamma_multiply(0.55) } else { pal.text };
                     let icon = Rect::from_center_size(pos2(item.left() + 16.0, item.center().y), vec2(18.0, 18.0));

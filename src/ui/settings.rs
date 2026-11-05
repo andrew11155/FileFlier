@@ -54,19 +54,19 @@ fn segmented(ui: &mut Ui, pal: &Palette, id: Id, options: &[&str], selected: usi
         .collect();
     let (r, _) = ui.allocate_exact_size(vec2(widths.iter().sum::<f32>() + 4.0, 28.0), Sense::hover());
     let p = ui.painter().clone();
-    p.rect_filled(r, 6.0, pal.input);
-    p.rect_stroke(r, 6.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+    p.rect_filled(r, pal.round(6.0), pal.input);
+    p.rect_stroke(r, pal.round(6.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
     let mut x = r.left() + 2.0;
     let mut picked = None;
     for (i, (label, w)) in options.iter().zip(&widths).enumerate() {
         let seg = Rect::from_min_size(pos2(x, r.top() + 2.0), vec2(*w, r.height() - 4.0));
         let resp = ui.interact(seg, id.with(i), Sense::click());
         let color = if i == selected {
-            p.rect_filled(seg, 5.0, pal.accent);
+            p.rect_filled(seg, pal.round(5.0), pal.accent);
             pal.on_accent
         } else {
             if resp.hovered() {
-                p.rect_filled(seg, 5.0, pal.tab_hover);
+                p.rect_filled(seg, pal.round(5.0), pal.tab_hover);
             }
             pal.text
         };
@@ -85,7 +85,7 @@ fn toggle(ui: &mut Ui, pal: &Palette, id: Id, on: bool) -> bool {
     let resp = ui.interact(r, id, Sense::click());
     let t = ui.ctx().animate_bool(id, on);
     let track = if on { pal.accent } else { pal.border };
-    ui.painter().rect_filled(r, CornerRadius::same(11), track);
+    ui.painter().rect_filled(r, CornerRadius::same(pal.round(11.0) as u8), track);
     let knob = if on { pal.on_accent } else { pal.text_strong };
     let cx = egui::lerp(r.left() + 11.0..=r.right() - 11.0, t);
     ui.painter().circle_filled(pos2(cx, r.center().y), 8.0, knob);
@@ -98,7 +98,7 @@ fn theme_card(ui: &mut Ui, current: &Palette, id: ThemeId, accent: Option<Color3
     let (r, resp) = ui.allocate_exact_size(vec2(138.0, 108.0), Sense::click());
     let p = ui.painter();
     let preview = Rect::from_min_size(r.min, vec2(r.width(), 80.0));
-    p.rect_filled(preview, 6.0, t.bg);
+    p.rect_filled(preview, t.round(6.0), t.bg);
     let title = Rect::from_min_size(preview.min, vec2(preview.width(), 14.0));
     p.rect_filled(title, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, t.titlebar);
     p.rect_filled(
@@ -116,7 +116,7 @@ fn theme_card(ui: &mut Ui, current: &Palette, id: ThemeId, accent: Option<Color3
         let y = title.bottom() + 6.0 + i as f32 * 12.0;
         let row = Rect::from_min_size(pos2(side.right() + 5.0, y), vec2(preview.right() - side.right() - 10.0, 10.0));
         if i == 1 {
-            p.rect_filled(row, 2.0, t.accent);
+            p.rect_filled(row, t.round(2.0), t.accent);
         }
         p.rect_filled(Rect::from_min_size(row.min + vec2(3.0, 2.0), vec2(8.0, 6.0)), 1.0, t.folder);
         let fg = if i == 1 { t.on_accent } else { t.text };
@@ -129,7 +129,7 @@ fn theme_card(ui: &mut Ui, current: &Palette, id: ThemeId, accent: Option<Color3
     } else {
         Stroke::new(1.0, current.border)
     };
-    p.rect_stroke(preview, 6.0, stroke, StrokeKind::Outside);
+    p.rect_stroke(preview, t.round(6.0), stroke, StrokeKind::Outside);
     let color = if selected { current.text_strong } else { current.text };
     let g = elided(p, id.name(), 13.0, color, r.width());
     p.galley(pos2(r.center().x - g.size().x / 2.0, preview.bottom() + 8.0), g, color);
@@ -144,7 +144,7 @@ fn scheme_row(ui: &mut Ui, pal: &Palette, name: &str, colors: &[Color32; 8], sel
     let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
     let p = ui.painter();
     let fill = if selected { pal.accent.gamma_multiply(0.14) } else { pal.bg };
-    p.rect_filled(r, 6.0, fill);
+    p.rect_filled(r, pal.round(6.0), fill);
     let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
     let color = if selected { pal.text_strong } else { pal.text };
     let g = elided(p, name, 13.0, color, label_w - 8.0);
@@ -166,7 +166,7 @@ fn scheme_row(ui: &mut Ui, pal: &Palette, name: &str, colors: &[Color32; 8], sel
     } else {
         Stroke::new(1.0, pal.border)
     };
-    p.rect_stroke(r, 6.0, stroke, StrokeKind::Inside);
+    p.rect_stroke(r, pal.round(6.0), stroke, StrokeKind::Inside);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -228,8 +228,8 @@ impl FileFlier {
                 pal.input
             };
             let color = if available && !busy { pal.on_accent } else { pal.text };
-            ui.painter().rect_filled(r, 5.0, fill);
-            ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            ui.painter().rect_filled(r, pal.round(5.0), fill);
+            ui.painter().rect_stroke(r, pal.round(5.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
             text(ui.painter(), r.center(), Align2::CENTER_CENTER, label, 13.5, color);
             // The status sits to the left of the button.
             let color = if err { Color32::from_rgb(255, 140, 130) } else { pal.text_dim };
@@ -620,8 +620,8 @@ impl FileFlier {
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     let (r, resp) = ui.allocate_exact_size(vec2(150.0, 30.0), Sense::click());
-                    ui.painter().rect_filled(r, 5.0, if resp.hovered() { pal.tab_hover } else { pal.input });
-                    ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+                    ui.painter().rect_filled(r, pal.round(5.0), if resp.hovered() { pal.tab_hover } else { pal.input });
+                    ui.painter().rect_stroke(r, pal.round(5.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
                     text(ui.painter(), r.center(), Align2::CENTER_CENTER, "Reset appearance", 13.5, pal.text);
                     if resp.clicked() {
                         self.cfg.theme = Some(ThemeId::Dark);
