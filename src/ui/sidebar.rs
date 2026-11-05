@@ -371,7 +371,7 @@ impl FileFlier {
                         other => icons::place(p, ir, other, pal),
                     }
                     let hc = if hresp.hovered() { pal.text_strong } else { pal.text_dim };
-                    let hf = if pal.gnome {
+                    let hf = if pal.gnome_sidebar {
                         FontId::new(13.0, egui::FontFamily::Name(crate::theme::GNOME_UI.into()))
                     } else {
                         super::bold(13.0)
@@ -409,7 +409,8 @@ impl FileFlier {
                         );
                     }
                     // GNOME Files' sidebar rows are roomier, with a gap between highlights.
-                    let (item_h, child_h, gap) = if pal.gnome { (38.0, 32.0, 2.0) } else { (ITEM_H, CHILD_H, 1.0) };
+                    let (item_h, child_h, gap) =
+                        if pal.gnome_sidebar { (38.0, 32.0, 2.0) } else { (ITEM_H, CHILD_H, 1.0) };
                     for item in &items {
                         let h = if item.space.is_some() {
                             item_h + 6.0
@@ -435,7 +436,7 @@ impl FileFlier {
                             p.rect_filled(r, pal.round(4.0), pal.tab_hover);
                             // Accent marker for where you are.
                             let m = Rect::from_center_size(pos2(r.left() + 1.5, r.center().y), vec2(3.0, h * 0.5));
-                            if !pal.gnome {
+                            if !pal.gnome_sidebar {
                                 p.rect_filled(m, 1.5, pal.accent);
                             }
                             if reveal {
@@ -508,7 +509,7 @@ impl FileFlier {
                         let label_x = r.left() + 48.0 + indent;
                         let size = if item.depth > 0 { 13.5 } else { 14.0 };
                         // The GNOME themes use the desktop's font, at its size, as GNOME Files does.
-                        let font = if pal.gnome {
+                        let font = if pal.gnome_sidebar {
                             let size = crate::theme::gnome_font_size() - if item.depth > 0 { 0.5 } else { 0.0 };
                             FontId::new(size, egui::FontFamily::Name(crate::theme::GNOME_UI.into()))
                         } else {

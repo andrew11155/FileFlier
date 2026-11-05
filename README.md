@@ -206,22 +206,27 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
   folders in your accent color (blue unless you pick another), a sidebar with GNOME Files' roomier rows that marks the current place with a highlight only, text drawn as GTK draws it (not thickened), and sidebar
   text in your desktop's interface font at its size (Adwaita Sans, or
   whatever GNOME's font setting names, e.g. Ubuntu Sans).
-- **Icons:** File Flier's own, or **GNOME**: your desktop's icon theme
-  (the one GNOME's settings name, e.g. Adwaita or Ubuntu's Yaru), looked up
-  as GTK does, so folders and the sidebar look just like in GNOME Files.
-  Folders are drawn as the theme has them (recolored if you gave a folder a
-  color), your Home, Desktop, Documents, Downloads, Music, Pictures, Videos,
-  Public and Templates folders get their own icons, and the sidebar uses the
-  theme's symbolic icons, down to its arrows, eject and add buttons. With no
-  icon theme installed, File Flier's own icons are used.
-- **Title bar icon:** File Flier's logo, the Files app's icon from your icon
-  theme, a folder, or nothing.
-- **Window buttons:** File Flier's, or **Native**: round buttons as Ubuntu and
-  GNOME draw them, with your icon theme's symbols, on the side and in the
-  order your desktop's button layout says (`button-layout`, e.g. only
-  minimize and close on Ubuntu).
-- **Native Ubuntu look:** one click for the GNOME theme (dark or light, as
-  your desktop is set), the GNOME icons and window buttons, and the Files icon.
+- **Desktop look:** everything that makes File Flier look like your GNOME or
+  Ubuntu desktop, in one place. *Native Ubuntu look → Apply* turns it all on
+  at once (with the GNOME theme, dark or light as your desktop is set).
+  - **Icons:** File Flier's own, or **GNOME**: your desktop's icon theme
+    (the one GNOME's settings name, e.g. Adwaita or Ubuntu's Yaru), looked up
+    as GTK does, so folders and the sidebar look just like in GNOME Files.
+    Folders are drawn as the theme has them (recolored if you gave a folder a
+    color), your Home, Desktop, Documents, Downloads, Music, Pictures, Videos,
+    Public and Templates folders get their own icons, and the sidebar uses the
+    theme's symbolic icons, down to its arrows, eject and add buttons. With no
+    icon theme installed, File Flier's own icons are used.
+  - **Title bar icon:** File Flier's logo, the Files app's icon from your icon
+    theme, a folder, or nothing.
+  - **Window buttons:** File Flier's, or **Native**: round buttons as Ubuntu and
+    GNOME draw them, with your icon theme's symbols, on the side and in the
+    order your desktop's button layout says (`button-layout`, e.g. only
+    minimize and close on Ubuntu).
+  - **Corners**, **Sidebar** and **Text:** each follows the theme (on in the
+    GNOME themes) or can be turned on or off for any theme: rounder corners;
+    a GNOME Files-like sidebar (your desktop's font, roomier rows, no accent
+    bar); and text drawn as GTK draws it, not thickened on dark backgrounds.
 - **Accent color:** the theme's own, or one of eight colors. Text on the accent
   switches between black and white so it stays readable.
 - **Interface size:** 80–150%. You can also press `Ctrl +`, `Ctrl −` and

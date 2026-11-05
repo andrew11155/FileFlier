@@ -128,6 +128,12 @@ pub struct Config {
     pub title_icon: TitleIcon,
     /// Window buttons as GNOME and Ubuntu draw them, in the desktop's button layout.
     pub native_buttons: bool,
+    /// Rounder corners; None follows the theme (on in the GNOME themes).
+    pub rounded: Option<bool>,
+    /// A GNOME Files-like sidebar; None follows the theme.
+    pub gnome_sidebar: Option<bool>,
+    /// Text drawn as GTK draws it; None follows the theme.
+    pub gtk_text: Option<bool>,
     /// Sidebar folders have an arrow that expands them into a tree of their subfolders.
     pub sidebar_trees: bool,
     /// The order of the sidebar's groups, by title (dragged into place). Groups not
@@ -199,6 +205,9 @@ impl Default for Config {
             gnome_icons: false,
             title_icon: TitleIcon::Logo,
             native_buttons: false,
+            rounded: None,
+            gnome_sidebar: None,
+            gtk_text: None,
             sidebar_trees: true,
             sidebar_order: Vec::new(),
             keymap: Default::default(),
@@ -246,7 +255,9 @@ impl Config {
     }
 
     pub fn palette(&self) -> &'static crate::theme::Palette {
-        crate::theme::palette(self.theme(), self.accent_color())
+        let look =
+            crate::theme::Look { rounded: self.rounded, gnome_sidebar: self.gnome_sidebar, gtk_text: self.gtk_text };
+        crate::theme::palette_with(self.theme(), self.accent_color(), look)
     }
 
     pub fn save(&self) {

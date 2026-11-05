@@ -16,6 +16,9 @@ fn section(ui: &mut Ui, pal: &Palette, title: &str) {
     ui.add_space(2.0);
 }
 
+/// A Theme / On / Off setting row: id, label, hint, option names and current value.
+type Tweak<'a> = (&'a str, &'a str, &'a str, [&'a str; 3], Option<bool>);
+
 /// Whether GNOME is set to dark style (`color-scheme` is "prefer-dark").
 fn desktop_prefers_dark() -> bool {
     std::process::Command::new("gsettings")
@@ -329,7 +332,21 @@ impl FileFlier {
                     }
                 });
 
-                section(ui, pal, "Icons");
+                // Everything that makes File Flier look like the desktop (GNOME / Ubuntu).
+                section(ui, pal, "Desktop look");
+                let hint = "The GNOME theme with all of the below, and the Files icon";
+                if row(ui, pal, "Native Ubuntu look", hint, |ui| super::popups::button(ui, pal, "Apply", true, false))
+                    .clicked()
+                {
+                    let dark = desktop_prefers_dark();
+                    self.cfg.theme = Some(if dark { ThemeId::AdwaitaDark } else { ThemeId::AdwaitaLight });
+                    self.cfg.gnome_icons = true;
+                    self.cfg.native_buttons = !cfg!(target_os = "macos");
+                    self.cfg.title_icon = TitleIcon::Files;
+                    (self.cfg.rounded, self.cfg.gnome_sidebar, self.cfg.gtk_text) = (None, None, None);
+                    crate::system_icons::set_enabled(true, &ctx);
+                    restyle = true;
+                }
                 let hint = if crate::system_icons::available() {
                     format!(
                         "GNOME uses your desktop's icon theme ({}), as GNOME Files does",
@@ -339,7 +356,7 @@ impl FileFlier {
                     "GNOME needs an icon theme, and none is installed".to_string()
                 };
                 let sel = usize::from(self.cfg.gnome_icons);
-                if let Some(i) = row(ui, pal, "Icon set", &hint, |ui| {
+                if let Some(i) = row(ui, pal, "Icons", &hint, |ui| {
                     segmented(ui, pal, Id::new("icon_set"), &["File Flier", "GNOME"], sel)
                 }) {
                     self.cfg.gnome_icons = i == 1;
@@ -364,18 +381,43 @@ impl FileFlier {
                         self.cfg.native_buttons = i == 1;
                         self.cfg.save();
                     }
-                    let hint = "The GNOME theme, icons and window buttons, and the Files icon";
-                    if row(ui, pal, "Native Ubuntu look", hint, |ui| {
-                        super::popups::button(ui, pal, "Apply", false, false)
-                    })
-                    .clicked()
+                }
+                // Theme / On / Off: the GNOME themes turn these on.
+                const TRI: [Option<bool>; 3] = [None, Some(true), Some(false)];
+                let tri = |v: Option<bool>| TRI.iter().position(|t| *t == v).unwrap_or(0);
+                let tweaks: [Tweak; 3] = [
+                    (
+                        "rounded",
+                        "Corners",
+                        "Rows, tabs, buttons and menus",
+                        ["Theme", "Round", "Square"],
+                        self.cfg.rounded,
+                    ),
+                    (
+                        "gnome_sidebar",
+                        "Sidebar",
+                        "GNOME: the desktop's font, roomier rows, no accent bar",
+                        ["Theme", "GNOME", "File Flier"],
+                        self.cfg.gnome_sidebar,
+                    ),
+                    (
+                        "gtk_text",
+                        "Text",
+                        "GTK draws light text on dark backgrounds thinner",
+                        ["Theme", "GTK", "File Flier"],
+                        self.cfg.gtk_text,
+                    ),
+                ];
+                for (id, label, hint, options, value) in tweaks {
+                    if let Some(i) =
+                        row(ui, pal, label, hint, |ui| segmented(ui, pal, Id::new(id), &options, tri(value)))
                     {
-                        let dark = desktop_prefers_dark();
-                        self.cfg.theme = Some(if dark { ThemeId::AdwaitaDark } else { ThemeId::AdwaitaLight });
-                        self.cfg.gnome_icons = true;
-                        self.cfg.native_buttons = true;
-                        self.cfg.title_icon = TitleIcon::Files;
-                        crate::system_icons::set_enabled(true, &ctx);
+                        let v = TRI[i];
+                        match id {
+                            "rounded" => self.cfg.rounded = v,
+                            "gnome_sidebar" => self.cfg.gnome_sidebar = v,
+                            _ => self.cfg.gtk_text = v,
+                        }
                         restyle = true;
                     }
                 }

@@ -29,12 +29,26 @@ pub struct Palette {
     /// The GNOME look (the Adwaita themes): rounder corners, Adwaita-style folders,
     /// and a sidebar like GNOME Files'.
     pub gnome: bool,
+    /// Rounder corners on rows, tabs, buttons and menus (the GNOME themes' default).
+    pub rounded: bool,
+    /// A sidebar like GNOME Files': the desktop's font, roomier rows, no accent bar.
+    pub gnome_sidebar: bool,
+    /// Text drawn as GTK draws it, without egui's thickening of light-on-dark text.
+    pub gtk_text: bool,
+}
+
+/// Visual tweaks the user turned on or off; `None` follows the theme.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Look {
+    pub rounded: Option<bool>,
+    pub gnome_sidebar: Option<bool>,
+    pub gtk_text: Option<bool>,
 }
 
 impl Palette {
     /// A corner radius: `r` normally, rounder in the GNOME look.
     pub fn round(&self, r: f32) -> f32 {
-        if self.gnome { (r * 1.6).max(r + 3.0) } else { r }
+        if self.rounded { (r * 1.6).max(r + 3.0) } else { r }
     }
 }
 
@@ -62,6 +76,9 @@ pub const DARK: Palette = Palette {
     folder_back: Color32::from_rgb(236, 168, 44),
     on_accent: Color32::WHITE,
     gnome: false,
+    rounded: false,
+    gnome_sidebar: false,
+    gtk_text: false,
 };
 
 pub const LIGHT: Palette = Palette {
@@ -87,6 +104,9 @@ pub const LIGHT: Palette = Palette {
     folder_back: Color32::from_rgb(230, 160, 30),
     on_accent: Color32::WHITE,
     gnome: false,
+    rounded: false,
+    gnome_sidebar: false,
+    gtk_text: false,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -205,6 +225,9 @@ fn from_spec(s: Spec) -> Palette {
         folder_back: mix(folder, Color32::BLACK, 0.12),
         on_accent: Color32::WHITE,
         gnome: false,
+        rounded: false,
+        gnome_sidebar: false,
+        gtk_text: false,
     };
     set_accent(&mut p, accent);
     p
@@ -346,17 +369,25 @@ fn build(theme: ThemeId) -> Palette {
 /// The palette for a theme, optionally with a custom accent. Palettes are built once
 /// and cached for the life of the program (there are only a few dozen combinations).
 pub fn palette(theme: ThemeId, accent: Option<Color32>) -> &'static Palette {
+    palette_with(theme, accent, Look::default())
+}
+
+/// The palette with the user's visual tweaks.
+pub fn palette_with(theme: ThemeId, accent: Option<Color32>, look: Look) -> &'static Palette {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    type Key = (ThemeId, Option<[u8; 3]>);
+    type Key = (ThemeId, Option<[u8; 3]>, Look);
     static CACHE: OnceLock<Mutex<HashMap<Key, &'static Palette>>> = OnceLock::new();
-    let key = (theme, accent.map(|c| [c.r(), c.g(), c.b()]));
+    let key = (theme, accent.map(|c| [c.r(), c.g(), c.b()]), look);
     let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
     cache.entry(key).or_insert_with(|| {
         let mut p = build(theme);
         if let Some(a) = accent {
             set_accent(&mut p, a);
         }
+        p.rounded = look.rounded.unwrap_or(p.gnome);
+        p.gnome_sidebar = look.gnome_sidebar.unwrap_or(p.gnome);
+        p.gtk_text = look.gtk_text.unwrap_or(p.gnome);
         Box::leak(Box::new(p))
     })
 }
@@ -396,7 +427,7 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
     v.popup_shadow = egui::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(110) };
     v.window_shadow = v.popup_shadow;
     // egui thickens light-on-dark text; GTK doesn't, so the GNOME themes don't either.
-    if p.gnome {
+    if p.gtk_text {
         v.text_options.color_transfer_function = egui::epaint::FontColorTransferFunction::Off;
     }
     ctx.set_visuals_of(if dark { egui::Theme::Dark } else { egui::Theme::Light }, v);
