@@ -289,13 +289,13 @@ impl FileFlier {
         let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
         super::text_bold(
             ui.painter(),
-            hr.left_center() + vec2(4.0, 0.0),
+            hr.left_center() + vec2(20.0, 0.0),
             Align2::LEFT_CENTER,
             "Settings",
             18.0,
             pal.text_strong,
         );
-        let cr = Rect::from_center_size(pos2(hr.right() - 16.0, hr.center().y), vec2(28.0, 28.0));
+        let cr = Rect::from_center_size(pos2(hr.right() - 28.0, hr.center().y), vec2(28.0, 28.0));
         if super::icon_button(ui, cr, Id::new("settings_close"), true, pal, "Close (Esc)", crate::icons::close)
             .clicked()
         {
@@ -305,381 +305,411 @@ impl FileFlier {
         egui::ScrollArea::vertical().max_height(body_h).min_scrolled_height(body_h).auto_shrink([false, true]).show(
             ui,
             |ui| {
-                ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
-                let theme_now = self.cfg.theme();
+                egui::Frame::new().inner_margin(egui::Margin { left: 20, right: 24, top: 0, bottom: 0 }).show(
+                    ui,
+                    |ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                        let theme_now = self.cfg.theme();
 
-                section(ui, pal, "Theme");
-                let accent = self.cfg.accent_color();
-                let per_row = ((ui.available_width() + 10.0) / 148.0).floor().max(1.0) as usize;
-                for chunk in ThemeId::ALL.chunks(per_row) {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0;
-                        for &t in chunk {
-                            if theme_card(ui, pal, t, accent, t == theme_now).clicked() && t != theme_now {
-                                self.cfg.theme = Some(t);
+                        section(ui, pal, "Theme");
+                        let accent = self.cfg.accent_color();
+                        let per_row = ((ui.available_width() + 10.0) / 148.0).floor().max(1.0) as usize;
+                        for chunk in ThemeId::ALL.chunks(per_row) {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 10.0;
+                                for &t in chunk {
+                                    if theme_card(ui, pal, t, accent, t == theme_now).clicked() && t != theme_now {
+                                        self.cfg.theme = Some(t);
+                                        restyle = true;
+                                    }
+                                }
+                            });
+                            ui.add_space(8.0);
+                        }
+
+                        section(ui, pal, "Accent color");
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            let theme_accent = theme::palette(theme_now, None).accent;
+                            if swatch(ui, pal, None, theme_accent, self.cfg.accent.is_none(), "Theme default") {
+                                self.cfg.accent = None;
+                                restyle = true;
+                            }
+                            for (name, c) in ACCENTS {
+                                let rgb = [c.r(), c.g(), c.b()];
+                                if swatch(ui, pal, Some(c), theme_accent, self.cfg.accent == Some(rgb), name) {
+                                    self.cfg.accent = Some(rgb);
+                                    restyle = true;
+                                }
+                            }
+                        });
+
+                        // Everything that makes File Flier look like the desktop (GNOME / Ubuntu).
+                        section(ui, pal, "Desktop look");
+                        let hint = "The GNOME theme with all of the below, and the Files icon";
+                        if row(ui, pal, "Native Ubuntu look", hint, |ui| {
+                            super::popups::button(ui, pal, "Apply", true, false)
+                        })
+                        .clicked()
+                        {
+                            let dark = desktop_prefers_dark();
+                            self.cfg.theme = Some(if dark { ThemeId::AdwaitaDark } else { ThemeId::AdwaitaLight });
+                            self.cfg.gnome_icons = true;
+                            self.cfg.native_buttons = !cfg!(target_os = "macos");
+                            self.cfg.title_icon = TitleIcon::Files;
+                            (self.cfg.rounded, self.cfg.gnome_sidebar, self.cfg.gtk_text) = (None, None, None);
+                            crate::system_icons::set_enabled(true, &ctx);
+                            restyle = true;
+                        }
+                        let hint = if crate::system_icons::available() {
+                            format!(
+                                "GNOME uses your desktop's icon theme ({}), as GNOME Files does",
+                                crate::system_icons::theme_name()
+                            )
+                        } else {
+                            "GNOME needs an icon theme, and none is installed".to_string()
+                        };
+                        let sel = usize::from(self.cfg.gnome_icons);
+                        if let Some(i) = row(ui, pal, "Icons", &hint, |ui| {
+                            segmented(ui, pal, Id::new("icon_set"), &["File Flier", "GNOME"], sel)
+                        }) {
+                            self.cfg.gnome_icons = i == 1;
+                            crate::system_icons::set_enabled(self.cfg.gnome_icons, &ctx);
+                            self.cfg.save();
+                        }
+                        const TITLE_ICONS: [TitleIcon; 4] =
+                            [TitleIcon::Logo, TitleIcon::Files, TitleIcon::Folder, TitleIcon::None];
+                        let ti = TITLE_ICONS.iter().position(|t| *t == self.cfg.title_icon).unwrap_or(0);
+                        if let Some(i) =
+                            row(ui, pal, "Title bar icon", "Top left; Files is the Files app's icon", |ui| {
+                                segmented(
+                                    ui,
+                                    pal,
+                                    Id::new("title_icon"),
+                                    &["File Flier", "Files", "Folder", "None"],
+                                    ti,
+                                )
+                            })
+                        {
+                            self.cfg.title_icon = TITLE_ICONS[i];
+                            self.cfg.save();
+                        }
+                        if !cfg!(target_os = "macos") {
+                            let hint = "Native: round, as in Ubuntu and GNOME, where your desktop puts them";
+                            let sel = usize::from(self.cfg.native_buttons);
+                            if let Some(i) = row(ui, pal, "Window buttons", hint, |ui| {
+                                segmented(ui, pal, Id::new("win_buttons"), &["File Flier", "Native"], sel)
+                            }) {
+                                self.cfg.native_buttons = i == 1;
+                                self.cfg.save();
+                            }
+                        }
+                        // Theme / On / Off: the GNOME themes turn these on.
+                        const TRI: [Option<bool>; 3] = [None, Some(true), Some(false)];
+                        let tri = |v: Option<bool>| TRI.iter().position(|t| *t == v).unwrap_or(0);
+                        let tweaks: [Tweak; 3] = [
+                            (
+                                "rounded",
+                                "Corners",
+                                "Rows, tabs, buttons, menus and the window (after a restart)",
+                                ["Theme", "Round", "Square"],
+                                self.cfg.rounded,
+                            ),
+                            (
+                                "gnome_sidebar",
+                                "Sidebar",
+                                "GNOME: the desktop's font, roomier rows, no accent bar",
+                                ["Theme", "GNOME", "File Flier"],
+                                self.cfg.gnome_sidebar,
+                            ),
+                            (
+                                "gtk_text",
+                                "Text",
+                                "GTK draws light text on dark backgrounds thinner",
+                                ["Theme", "GTK", "File Flier"],
+                                self.cfg.gtk_text,
+                            ),
+                        ];
+                        for (id, label, hint, options, value) in tweaks {
+                            if let Some(i) =
+                                row(ui, pal, label, hint, |ui| segmented(ui, pal, Id::new(id), &options, tri(value)))
+                            {
+                                let v = TRI[i];
+                                match id {
+                                    "rounded" => self.cfg.rounded = v,
+                                    "gnome_sidebar" => self.cfg.gnome_sidebar = v,
+                                    _ => self.cfg.gtk_text = v,
+                                }
                                 restyle = true;
                             }
                         }
-                    });
-                    ui.add_space(8.0);
-                }
 
-                section(ui, pal, "Accent color");
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let theme_accent = theme::palette(theme_now, None).accent;
-                    if swatch(ui, pal, None, theme_accent, self.cfg.accent.is_none(), "Theme default") {
-                        self.cfg.accent = None;
-                        restyle = true;
-                    }
-                    for (name, c) in ACCENTS {
-                        let rgb = [c.r(), c.g(), c.b()];
-                        if swatch(ui, pal, Some(c), theme_accent, self.cfg.accent == Some(rgb), name) {
-                            self.cfg.accent = Some(rgb);
+                        section(ui, pal, "Folder colors");
+                        let hint = "Right-click a folder to color it. Its color follows the scheme.";
+                        let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+                        text(ui.painter(), hr.left_center(), Align2::LEFT_CENTER, hint, 12.5, pal.text_dim);
+                        ui.add_space(6.0);
+                        for (i, s) in super::tint::SCHEMES.iter().enumerate() {
+                            let colors = super::tint::scheme(i as u8, pal.accent);
+                            let selected = i == self.cfg.folder_scheme as usize;
+                            if scheme_row(ui, pal, s.name, &colors, selected).clicked() && !selected {
+                                self.set_folder_scheme(i as u8, &ctx);
+                            }
+                            ui.add_space(2.0);
+                        }
+
+                        section(ui, pal, "Effects");
+
+                        if row(ui, pal, "Animations", "Smooth transitions for lists, menus and previews", |ui| {
+                            toggle(ui, pal, Id::new("anim"), self.cfg.animations)
+                        }) {
+                            self.cfg.animations = !self.cfg.animations;
+
                             restyle = true;
                         }
-                    }
-                });
 
-                // Everything that makes File Flier look like the desktop (GNOME / Ubuntu).
-                section(ui, pal, "Desktop look");
-                let hint = "The GNOME theme with all of the below, and the Files icon";
-                if row(ui, pal, "Native Ubuntu look", hint, |ui| super::popups::button(ui, pal, "Apply", true, false))
-                    .clicked()
-                {
-                    let dark = desktop_prefers_dark();
-                    self.cfg.theme = Some(if dark { ThemeId::AdwaitaDark } else { ThemeId::AdwaitaLight });
-                    self.cfg.gnome_icons = true;
-                    self.cfg.native_buttons = !cfg!(target_os = "macos");
-                    self.cfg.title_icon = TitleIcon::Files;
-                    (self.cfg.rounded, self.cfg.gnome_sidebar, self.cfg.gtk_text) = (None, None, None);
-                    crate::system_icons::set_enabled(true, &ctx);
-                    restyle = true;
-                }
-                let hint = if crate::system_icons::available() {
-                    format!(
-                        "GNOME uses your desktop's icon theme ({}), as GNOME Files does",
-                        crate::system_icons::theme_name()
-                    )
-                } else {
-                    "GNOME needs an icon theme, and none is installed".to_string()
-                };
-                let sel = usize::from(self.cfg.gnome_icons);
-                if let Some(i) = row(ui, pal, "Icons", &hint, |ui| {
-                    segmented(ui, pal, Id::new("icon_set"), &["File Flier", "GNOME"], sel)
-                }) {
-                    self.cfg.gnome_icons = i == 1;
-                    crate::system_icons::set_enabled(self.cfg.gnome_icons, &ctx);
-                    self.cfg.save();
-                }
-                const TITLE_ICONS: [TitleIcon; 4] =
-                    [TitleIcon::Logo, TitleIcon::Files, TitleIcon::Folder, TitleIcon::None];
-                let ti = TITLE_ICONS.iter().position(|t| *t == self.cfg.title_icon).unwrap_or(0);
-                if let Some(i) = row(ui, pal, "Title bar icon", "Top left; Files is the Files app's icon", |ui| {
-                    segmented(ui, pal, Id::new("title_icon"), &["File Flier", "Files", "Folder", "None"], ti)
-                }) {
-                    self.cfg.title_icon = TITLE_ICONS[i];
-                    self.cfg.save();
-                }
-                if !cfg!(target_os = "macos") {
-                    let hint = "Native: round, as in Ubuntu and GNOME, where your desktop puts them";
-                    let sel = usize::from(self.cfg.native_buttons);
-                    if let Some(i) = row(ui, pal, "Window buttons", hint, |ui| {
-                        segmented(ui, pal, Id::new("win_buttons"), &["File Flier", "Native"], sel)
-                    }) {
-                        self.cfg.native_buttons = i == 1;
-                        self.cfg.save();
-                    }
-                }
-                // Theme / On / Off: the GNOME themes turn these on.
-                const TRI: [Option<bool>; 3] = [None, Some(true), Some(false)];
-                let tri = |v: Option<bool>| TRI.iter().position(|t| *t == v).unwrap_or(0);
-                let tweaks: [Tweak; 3] = [
-                    (
-                        "rounded",
-                        "Corners",
-                        "Rows, tabs, buttons, menus and the window (after a restart)",
-                        ["Theme", "Round", "Square"],
-                        self.cfg.rounded,
-                    ),
-                    (
-                        "gnome_sidebar",
-                        "Sidebar",
-                        "GNOME: the desktop's font, roomier rows, no accent bar",
-                        ["Theme", "GNOME", "File Flier"],
-                        self.cfg.gnome_sidebar,
-                    ),
-                    (
-                        "gtk_text",
-                        "Text",
-                        "GTK draws light text on dark backgrounds thinner",
-                        ["Theme", "GTK", "File Flier"],
-                        self.cfg.gtk_text,
-                    ),
-                ];
-                for (id, label, hint, options, value) in tweaks {
-                    if let Some(i) =
-                        row(ui, pal, label, hint, |ui| segmented(ui, pal, Id::new(id), &options, tri(value)))
-                    {
-                        let v = TRI[i];
-                        match id {
-                            "rounded" => self.cfg.rounded = v,
-                            "gnome_sidebar" => self.cfg.gnome_sidebar = v,
-                            _ => self.cfg.gtk_text = v,
+                        if row(ui, pal, "Frosted glass", "Translucent, floating panels over a soft backdrop", |ui| {
+                            toggle(ui, pal, Id::new("glass"), self.cfg.glass)
+                        }) {
+                            self.cfg.glass = !self.cfg.glass;
+
+                            restyle = true;
                         }
-                        restyle = true;
-                    }
-                }
 
-                section(ui, pal, "Folder colors");
-                let hint = "Right-click a folder to color it. Its color follows the scheme.";
-                let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
-                text(ui.painter(), hr.left_center(), Align2::LEFT_CENTER, hint, 12.5, pal.text_dim);
-                ui.add_space(6.0);
-                for (i, s) in super::tint::SCHEMES.iter().enumerate() {
-                    let colors = super::tint::scheme(i as u8, pal.accent);
-                    let selected = i == self.cfg.folder_scheme as usize;
-                    if scheme_row(ui, pal, s.name, &colors, selected).clicked() && !selected {
-                        self.set_folder_scheme(i as u8, &ctx);
-                    }
-                    ui.add_space(2.0);
-                }
+                        if self.cfg.glass {
+                            const LEVELS: [f32; 4] = [0.5, 0.62, 0.72, 0.85];
 
-                section(ui, pal, "Effects");
+                            let li = LEVELS
+                                .iter()
+                                .enumerate()
+                                .min_by(|a, b| {
+                                    (a.1 - self.cfg.glass_opacity)
+                                        .abs()
+                                        .total_cmp(&(b.1 - self.cfg.glass_opacity).abs())
+                                })
+                                .map_or(2, |(i, _)| i);
 
-                if row(ui, pal, "Animations", "Smooth transitions for lists, menus and previews", |ui| {
-                    toggle(ui, pal, Id::new("anim"), self.cfg.animations)
-                }) {
-                    self.cfg.animations = !self.cfg.animations;
+                            if let Some(i) = row(ui, pal, "Glass strength", "", |ui| {
+                                segmented(ui, pal, Id::new("glass_lvl"), &["Airy", "Light", "Balanced", "Solid"], li)
+                            }) {
+                                self.cfg.glass_opacity = LEVELS[i];
 
-                    restyle = true;
-                }
+                                restyle = true;
+                            }
 
-                if row(ui, pal, "Frosted glass", "Translucent, floating panels over a soft backdrop", |ui| {
-                    toggle(ui, pal, Id::new("glass"), self.cfg.glass)
-                }) {
-                    self.cfg.glass = !self.cfg.glass;
+                            let st = match self.cfg.glass_see_through {
+                                None => 0,
 
-                    restyle = true;
-                }
+                                Some(true) => 1,
 
-                if self.cfg.glass {
-                    const LEVELS: [f32; 4] = [0.5, 0.62, 0.72, 0.85];
+                                Some(false) => 2,
+                            };
 
-                    let li = LEVELS
-                        .iter()
-                        .enumerate()
-                        .min_by(|a, b| {
-                            (a.1 - self.cfg.glass_opacity).abs().total_cmp(&(b.1 - self.cfg.glass_opacity).abs())
-                        })
-                        .map_or(2, |(i, _)| i);
+                            if let Some(i) = row(
+                                ui,
+                                pal,
+                                "Show desktop behind window",
+                                if self.cfg.see_through() && !self.window_transparent {
+                                    "Restart File Flier to apply"
+                                } else {
+                                    "Blurred on KDE Plasma and macOS · Auto turns it on only there"
+                                },
+                                |ui| segmented(ui, pal, Id::new("see_through"), &["Auto", "On", "Off"], st),
+                            ) {
+                                self.cfg.glass_see_through = [None, Some(true), Some(false)][i];
 
-                    if let Some(i) = row(ui, pal, "Glass strength", "", |ui| {
-                        segmented(ui, pal, Id::new("glass_lvl"), &["Airy", "Light", "Balanced", "Solid"], li)
-                    }) {
-                        self.cfg.glass_opacity = LEVELS[i];
-
-                        restyle = true;
-                    }
-
-                    let st = match self.cfg.glass_see_through {
-                        None => 0,
-
-                        Some(true) => 1,
-
-                        Some(false) => 2,
-                    };
-
-                    if let Some(i) = row(
-                        ui,
-                        pal,
-                        "Show desktop behind window",
-                        if self.cfg.see_through() && !self.window_transparent {
-                            "Restart File Flier to apply"
-                        } else {
-                            "Blurred on KDE Plasma and macOS · Auto turns it on only there"
-                        },
-                        |ui| segmented(ui, pal, Id::new("see_through"), &["Auto", "On", "Off"], st),
-                    ) {
-                        self.cfg.glass_see_through = [None, Some(true), Some(false)][i];
-
-                        restyle = true;
-                    }
-                }
-
-                section(ui, pal, "Layout");
-                let scale_idx = SCALES.iter().position(|s| (s - self.cfg.ui_scale).abs() < 0.01).unwrap_or(2);
-                let labels = ["80%", "90%", "100%", "110%", "125%", "150%"];
-                if let Some(i) = row(ui, pal, "Interface size", "Also Ctrl + / Ctrl − / Ctrl 0", |ui| {
-                    segmented(ui, pal, Id::new("scale"), &labels, scale_idx)
-                }) {
-                    self.cfg.ui_scale = SCALES[i];
-                    restyle = true;
-                }
-                let dens = [Density::Compact, Density::Comfortable, Density::Spacious];
-                let di = dens.iter().position(|d| *d == self.cfg.density).unwrap_or(1);
-                if let Some(i) = row(ui, pal, "Row density", "", |ui| {
-                    segmented(ui, pal, Id::new("density"), &["Compact", "Comfortable", "Spacious"], di)
-                }) {
-                    self.cfg.density = dens[i];
-                    restyle = true;
-                }
-                let views = [
-                    ViewMode::Details,
-                    ViewMode::List,
-                    ViewMode::Grid,
-                    ViewMode::MediumGrid,
-                    ViewMode::LargeGrid,
-                    ViewMode::ExtraLargeGrid,
-                    ViewMode::Tree,
-                    ViewMode::Columns,
-                ];
-                let vi = views.iter().position(|v| *v == self.cfg.view).unwrap_or(0);
-                if let Some(i) = row(ui, pal, "Default view", "For new tabs", |ui| {
-                    segmented(
-                        ui,
-                        pal,
-                        Id::new("view"),
-                        &["Details", "List", "Grid", "M", "L", "XL", "Tree", "Columns"],
-                        vi,
-                    )
-                }) {
-                    self.cfg.view = views[i];
-                    restyle = true;
-                }
-
-                section(ui, pal, "Bottom bar");
-                let bars: [BarToggle; 4] = [
-                    ("Bottom bar", "Ctrl+J shows or hides it", |c| &mut c.show_bottom_bar),
-                    ("Folder count", "", |c| &mut c.show_folder_count),
-                    ("File count", "", |c| &mut c.show_file_count),
-                    ("Scroll position", "How far down the list you are, in %", |c| &mut c.show_scroll_pct),
-                ];
-                for (i, (name, hint, get)) in bars.into_iter().enumerate() {
-                    if i > 0 && !self.cfg.show_bottom_bar {
-                        break;
-                    }
-                    let on = *get(&mut self.cfg);
-                    if row(ui, pal, name, hint, |ui| toggle(ui, pal, Id::new(("bottom_bar", name)), on)) {
-                        *get(&mut self.cfg) = !on;
-                        self.cfg.save();
-                    }
-                }
-
-                section(ui, pal, "Sidebar");
-                let mut groups = vec!["Bookmarks", "Places", "Storage", "Recents"];
-                if self.cfg.ext_on(crate::ext::Ext::Tags) {
-                    groups.push("Tags");
-                }
-                for g in groups {
-                    let on = !self.cfg.sidebar_hidden.iter().any(|h| h == g);
-                    if row(ui, pal, g, "", |ui| toggle(ui, pal, Id::new(("sb_group", g)), on)) {
-                        if on {
-                            self.cfg.sidebar_hidden.push(g.to_string());
-                        } else {
-                            self.cfg.sidebar_hidden.retain(|h| h != g);
+                                restyle = true;
+                            }
                         }
-                        self.cfg.save();
-                    }
-                }
-                if row(ui, pal, "Folder trees", "An arrow expands a folder into its subfolders", |ui| {
-                    toggle(ui, pal, Id::new("sb_trees"), self.cfg.sidebar_trees)
-                }) {
-                    self.cfg.sidebar_trees = !self.cfg.sidebar_trees;
-                    self.cfg.save();
-                }
 
-                section(ui, pal, "Browsing");
-                if row(ui, pal, "Show hidden files", &super::keys("Files starting with a dot (Ctrl+H)"), |ui| {
-                    toggle(ui, pal, Id::new("hidden"), self.cfg.show_hidden)
-                }) {
-                    self.cfg.show_hidden = !self.cfg.show_hidden;
-                    refilter = true;
-                }
-                if row(ui, pal, "Folders first", "", |ui| toggle(ui, pal, Id::new("ff"), self.cfg.sort.folders_first)) {
-                    self.cfg.sort.folders_first = !self.cfg.sort.folders_first;
-                    resort = true;
-                }
-                if row(ui, pal, "Count items in folders", "Turn off if network drives feel slow", |ui| {
-                    toggle(ui, pal, Id::new("counts"), self.cfg.show_item_counts)
-                }) {
-                    self.cfg.show_item_counts = !self.cfg.show_item_counts;
-                    restyle = true;
-                }
-                let styles = [DateStyle::Iso, DateStyle::Relative, DateStyle::Friendly];
-                let si = styles.iter().position(|d| *d == self.cfg.date_style).unwrap_or(0);
-                if let Some(i) = row(ui, pal, "Dates", "", |ui| {
-                    segmented(ui, pal, Id::new("dates"), &["2026-09-26 14:03", "5 min ago", "Sep 26, 2026"], si)
-                }) {
-                    self.cfg.date_style = styles[i];
-                    restyle = true;
-                }
+                        section(ui, pal, "Layout");
+                        let scale_idx = SCALES.iter().position(|s| (s - self.cfg.ui_scale).abs() < 0.01).unwrap_or(2);
+                        let labels = ["80%", "90%", "100%", "110%", "125%", "150%"];
+                        if let Some(i) = row(ui, pal, "Interface size", "Also Ctrl + / Ctrl − / Ctrl 0", |ui| {
+                            segmented(ui, pal, Id::new("scale"), &labels, scale_idx)
+                        }) {
+                            self.cfg.ui_scale = SCALES[i];
+                            restyle = true;
+                        }
+                        let dens = [Density::Compact, Density::Comfortable, Density::Spacious];
+                        let di = dens.iter().position(|d| *d == self.cfg.density).unwrap_or(1);
+                        if let Some(i) = row(ui, pal, "Row density", "", |ui| {
+                            segmented(ui, pal, Id::new("density"), &["Compact", "Comfortable", "Spacious"], di)
+                        }) {
+                            self.cfg.density = dens[i];
+                            restyle = true;
+                        }
+                        let views = [
+                            ViewMode::Details,
+                            ViewMode::List,
+                            ViewMode::Grid,
+                            ViewMode::MediumGrid,
+                            ViewMode::LargeGrid,
+                            ViewMode::ExtraLargeGrid,
+                            ViewMode::Tree,
+                            ViewMode::Columns,
+                        ];
+                        let vi = views.iter().position(|v| *v == self.cfg.view).unwrap_or(0);
+                        if let Some(i) = row(ui, pal, "Default view", "For new tabs", |ui| {
+                            segmented(
+                                ui,
+                                pal,
+                                Id::new("view"),
+                                &["Details", "List", "Grid", "M", "L", "XL", "Tree", "Columns"],
+                                vi,
+                            )
+                        }) {
+                            self.cfg.view = views[i];
+                            restyle = true;
+                        }
 
-                section(ui, pal, "Previews");
-                if row(ui, pal, "Show preview panel", "Big preview and file details on the right (F3)", |ui| {
-                    toggle(ui, pal, Id::new("pvpanel"), self.cfg.show_preview)
-                }) {
-                    self.cfg.show_preview = !self.cfg.show_preview;
-                    self.cfg.save();
-                }
-                let lo_hint = match crate::preview::libreoffice_available() {
-                    Some(true) => "Real pages for Word, Excel, PowerPoint and OpenDocument files",
-                    Some(false) if crate::ops::in_flatpak() && !crate::ops::flatpak_can_spawn_on_host() => {
-                        "Needs the same host access as \"Open terminal here\""
-                    }
-                    Some(false) => "Install LibreOffice to see real pages (text previews work without it)",
-                    None => "Checking for LibreOffice…",
-                };
-                if row(ui, pal, "Office page previews", lo_hint, |ui| {
-                    toggle(ui, pal, Id::new("lopages"), self.cfg.office_previews)
-                }) {
-                    self.cfg.office_previews = !self.cfg.office_previews;
-                    self.cfg.save();
-                }
+                        section(ui, pal, "Bottom bar");
+                        let bars: [BarToggle; 4] = [
+                            ("Bottom bar", "Ctrl+J shows or hides it", |c| &mut c.show_bottom_bar),
+                            ("Folder count", "", |c| &mut c.show_folder_count),
+                            ("File count", "", |c| &mut c.show_file_count),
+                            ("Scroll position", "How far down the list you are, in %", |c| &mut c.show_scroll_pct),
+                        ];
+                        for (i, (name, hint, get)) in bars.into_iter().enumerate() {
+                            if i > 0 && !self.cfg.show_bottom_bar {
+                                break;
+                            }
+                            let on = *get(&mut self.cfg);
+                            if row(ui, pal, name, hint, |ui| toggle(ui, pal, Id::new(("bottom_bar", name)), on)) {
+                                *get(&mut self.cfg) = !on;
+                                self.cfg.save();
+                            }
+                        }
 
-                section(ui, pal, "Extensions");
-                for e in crate::ext::Ext::ALL {
-                    let on = self.cfg.ext_on(e);
-                    if row(ui, pal, e.name(), e.description(), |ui| toggle(ui, pal, Id::new(("ext", e.id())), on)) {
-                        self.cfg.extensions.insert(e.id().to_string(), !on);
-                        self.cfg.save();
-                    }
-                }
+                        section(ui, pal, "Sidebar");
+                        let mut groups = vec!["Bookmarks", "Places", "Storage", "Recents"];
+                        if self.cfg.ext_on(crate::ext::Ext::Tags) {
+                            groups.push("Tags");
+                        }
+                        for g in groups {
+                            let on = !self.cfg.sidebar_hidden.iter().any(|h| h == g);
+                            if row(ui, pal, g, "", |ui| toggle(ui, pal, Id::new(("sb_group", g)), on)) {
+                                if on {
+                                    self.cfg.sidebar_hidden.push(g.to_string());
+                                } else {
+                                    self.cfg.sidebar_hidden.retain(|h| h != g);
+                                }
+                                self.cfg.save();
+                            }
+                        }
+                        if row(ui, pal, "Folder trees", "An arrow expands a folder into its subfolders", |ui| {
+                            toggle(ui, pal, Id::new("sb_trees"), self.cfg.sidebar_trees)
+                        }) {
+                            self.cfg.sidebar_trees = !self.cfg.sidebar_trees;
+                            self.cfg.save();
+                        }
 
-                section(ui, pal, "Startup");
-                let starts = [Startup::Home, Startup::RestoreSession];
-                let st = starts.iter().position(|s| *s == self.cfg.startup).unwrap_or(0);
-                if let Some(i) = row(ui, pal, "When File Flier starts", "", |ui| {
-                    segmented(ui, pal, Id::new("startup"), &["Open home folder", "Restore last session"], st)
-                }) {
-                    self.cfg.startup = starts[i];
-                    restyle = true;
-                }
+                        section(ui, pal, "Browsing");
+                        if row(ui, pal, "Show hidden files", &super::keys("Files starting with a dot (Ctrl+H)"), |ui| {
+                            toggle(ui, pal, Id::new("hidden"), self.cfg.show_hidden)
+                        }) {
+                            self.cfg.show_hidden = !self.cfg.show_hidden;
+                            refilter = true;
+                        }
+                        if row(ui, pal, "Folders first", "", |ui| {
+                            toggle(ui, pal, Id::new("ff"), self.cfg.sort.folders_first)
+                        }) {
+                            self.cfg.sort.folders_first = !self.cfg.sort.folders_first;
+                            resort = true;
+                        }
+                        if row(ui, pal, "Count items in folders", "Turn off if network drives feel slow", |ui| {
+                            toggle(ui, pal, Id::new("counts"), self.cfg.show_item_counts)
+                        }) {
+                            self.cfg.show_item_counts = !self.cfg.show_item_counts;
+                            restyle = true;
+                        }
+                        let styles = [DateStyle::Iso, DateStyle::Relative, DateStyle::Friendly];
+                        let si = styles.iter().position(|d| *d == self.cfg.date_style).unwrap_or(0);
+                        if let Some(i) = row(ui, pal, "Dates", "", |ui| {
+                            segmented(ui, pal, Id::new("dates"), &["2026-09-26 14:03", "5 min ago", "Sep 26, 2026"], si)
+                        }) {
+                            self.cfg.date_style = styles[i];
+                            restyle = true;
+                        }
 
-                if crate::updater::ENABLED {
-                    section(ui, pal, "Updates");
-                    self.updates_section(ui);
-                }
+                        section(ui, pal, "Previews");
+                        if row(ui, pal, "Show preview panel", "Big preview and file details on the right (F3)", |ui| {
+                            toggle(ui, pal, Id::new("pvpanel"), self.cfg.show_preview)
+                        }) {
+                            self.cfg.show_preview = !self.cfg.show_preview;
+                            self.cfg.save();
+                        }
+                        let lo_hint = match crate::preview::libreoffice_available() {
+                            Some(true) => "Real pages for Word, Excel, PowerPoint and OpenDocument files",
+                            Some(false) if crate::ops::in_flatpak() && !crate::ops::flatpak_can_spawn_on_host() => {
+                                "Needs the same host access as \"Open terminal here\""
+                            }
+                            Some(false) => "Install LibreOffice to see real pages (text previews work without it)",
+                            None => "Checking for LibreOffice…",
+                        };
+                        if row(ui, pal, "Office page previews", lo_hint, |ui| {
+                            toggle(ui, pal, Id::new("lopages"), self.cfg.office_previews)
+                        }) {
+                            self.cfg.office_previews = !self.cfg.office_previews;
+                            self.cfg.save();
+                        }
 
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    let (r, resp) = ui.allocate_exact_size(vec2(150.0, 30.0), Sense::click());
-                    ui.painter().rect_filled(r, pal.round(5.0), if resp.hovered() { pal.tab_hover } else { pal.input });
-                    ui.painter().rect_stroke(r, pal.round(5.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
-                    text(ui.painter(), r.center(), Align2::CENTER_CENTER, "Reset appearance", 13.5, pal.text);
-                    if resp.clicked() {
-                        self.cfg.theme = Some(ThemeId::Dark);
-                        self.cfg.accent = None;
-                        self.cfg.ui_scale = 1.0;
-                        self.cfg.density = Density::Comfortable;
-                        self.cfg.animations = true;
-                        self.cfg.glass = false;
-                        self.cfg.glass_opacity = 0.72;
-                        self.cfg.glass_see_through = None;
-                        restyle = true;
-                    }
-                });
-                ui.add_space(8.0);
+                        section(ui, pal, "Extensions");
+                        for e in crate::ext::Ext::ALL {
+                            let on = self.cfg.ext_on(e);
+                            if row(ui, pal, e.name(), e.description(), |ui| {
+                                toggle(ui, pal, Id::new(("ext", e.id())), on)
+                            }) {
+                                self.cfg.extensions.insert(e.id().to_string(), !on);
+                                self.cfg.save();
+                            }
+                        }
+
+                        section(ui, pal, "Startup");
+                        let starts = [Startup::Home, Startup::RestoreSession];
+                        let st = starts.iter().position(|s| *s == self.cfg.startup).unwrap_or(0);
+                        if let Some(i) = row(ui, pal, "When File Flier starts", "", |ui| {
+                            segmented(ui, pal, Id::new("startup"), &["Open home folder", "Restore last session"], st)
+                        }) {
+                            self.cfg.startup = starts[i];
+                            restyle = true;
+                        }
+
+                        if crate::updater::ENABLED {
+                            section(ui, pal, "Updates");
+                            self.updates_section(ui);
+                        }
+
+                        ui.add_space(16.0);
+                        ui.horizontal(|ui| {
+                            let (r, resp) = ui.allocate_exact_size(vec2(150.0, 30.0), Sense::click());
+                            ui.painter().rect_filled(
+                                r,
+                                pal.round(5.0),
+                                if resp.hovered() { pal.tab_hover } else { pal.input },
+                            );
+                            ui.painter().rect_stroke(
+                                r,
+                                pal.round(5.0),
+                                Stroke::new(1.0, pal.border),
+                                StrokeKind::Inside,
+                            );
+                            text(ui.painter(), r.center(), Align2::CENTER_CENTER, "Reset appearance", 13.5, pal.text);
+                            if resp.clicked() {
+                                self.cfg.theme = Some(ThemeId::Dark);
+                                self.cfg.accent = None;
+                                self.cfg.ui_scale = 1.0;
+                                self.cfg.density = Density::Comfortable;
+                                self.cfg.animations = true;
+                                self.cfg.glass = false;
+                                self.cfg.glass_opacity = 0.72;
+                                self.cfg.glass_see_through = None;
+                                restyle = true;
+                            }
+                        });
+                        ui.add_space(8.0);
+                    },
+                );
             },
         );
 
