@@ -123,6 +123,40 @@ fn theme_card(ui: &mut Ui, current: &Palette, id: ThemeId, accent: Option<Color3
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A folder color scheme: its eight colors on folder icons, on the current theme.
+/// One folder color scheme as a row: its name, then its folders in a line.
+fn scheme_row(ui: &mut Ui, pal: &Palette, name: &str, colors: &[Color32; 8], selected: bool) -> Response {
+    let (label_w, step) = (84.0, 28.0);
+    let w = (24.0 + label_w + step * colors.len() as f32).min(ui.available_width());
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+    let p = ui.painter();
+    let fill = if selected { pal.accent.gamma_multiply(0.14) } else { pal.bg };
+    p.rect_filled(r, 6.0, fill);
+    let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+    let color = if selected { pal.text_strong } else { pal.text };
+    let g = elided(p, name, 13.0, color, label_w - 8.0);
+    p.galley(pos2(r.left() + 12.0, r.center().y - g.size().y / 2.0), g, color);
+    for (i, &c) in colors.iter().enumerate() {
+        let center = pos2(r.left() + 12.0 + label_w + step * (i as f32 + 0.5), r.center().y);
+        // On hover, the folders lift a little in turn.
+        let lift = hover * 2.0 * ((i as f32 * 0.8 + ui.input(|i| i.time) as f32 * 6.0).sin() * 0.5 + 0.5);
+        let icon = Rect::from_center_size(center - vec2(0.0, lift), vec2(22.0, 22.0));
+        crate::icons::folder_tinted(p, icon, pal, Some(c));
+    }
+    if hover > 0.0 {
+        ui.ctx().request_repaint();
+    }
+    let stroke = if selected {
+        Stroke::new(2.0, pal.accent)
+    } else if resp.hovered() {
+        Stroke::new(1.0, pal.text_dim)
+    } else {
+        Stroke::new(1.0, pal.border)
+    };
+    p.rect_stroke(r, 6.0, stroke, StrokeKind::Inside);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 fn swatch(
     ui: &mut Ui,
     pal: &Palette,
@@ -285,6 +319,20 @@ impl FileFlier {
                     }
                 });
 
+                section(ui, pal, "Folder colors");
+                let hint = "Right-click a folder to color it. Its color follows the scheme.";
+                let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+                text(ui.painter(), hr.left_center(), Align2::LEFT_CENTER, hint, 12.5, pal.text_dim);
+                ui.add_space(6.0);
+                for (i, s) in super::tint::SCHEMES.iter().enumerate() {
+                    let colors = super::tint::scheme(i as u8, pal.accent);
+                    let selected = i == self.cfg.folder_scheme as usize;
+                    if scheme_row(ui, pal, s.name, &colors, selected).clicked() && !selected {
+                        self.set_folder_scheme(i as u8, &ctx);
+                    }
+                    ui.add_space(2.0);
+                }
+
                 section(ui, pal, "Effects");
 
                 if row(ui, pal, "Animations", "Smooth transitions for lists, menus and previews", |ui| {
@@ -364,10 +412,25 @@ impl FileFlier {
                     self.cfg.density = dens[i];
                     restyle = true;
                 }
-                let views = [ViewMode::Details, ViewMode::List, ViewMode::Grid];
+                let views = [
+                    ViewMode::Details,
+                    ViewMode::List,
+                    ViewMode::Grid,
+                    ViewMode::MediumGrid,
+                    ViewMode::LargeGrid,
+                    ViewMode::ExtraLargeGrid,
+                    ViewMode::Tree,
+                    ViewMode::Columns,
+                ];
                 let vi = views.iter().position(|v| *v == self.cfg.view).unwrap_or(0);
                 if let Some(i) = row(ui, pal, "Default view", "For new tabs", |ui| {
-                    segmented(ui, pal, Id::new("view"), &["Details", "List", "Grid"], vi)
+                    segmented(
+                        ui,
+                        pal,
+                        Id::new("view"),
+                        &["Details", "List", "Grid", "M", "L", "XL", "Tree", "Columns"],
+                        vi,
+                    )
                 }) {
                     self.cfg.view = views[i];
                     restyle = true;

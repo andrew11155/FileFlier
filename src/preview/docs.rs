@@ -1075,6 +1075,12 @@ pub fn convert_with_libreoffice(path: &Path, cx: &Cx) -> Option<PathBuf> {
         return Some(p);
     }
     let lo = libreoffice()?;
+    // Previews load in parallel; LibreOffice can only run one conversion per profile.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    if cx.cancelled() {
+        return None;
+    }
     let dir = docs_cache()?;
     let key = doc_key(path)?;
     let work = dir.join(format!("tmp-{key}"));

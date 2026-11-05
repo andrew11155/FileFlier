@@ -402,6 +402,9 @@ fn text_view(ui: &mut Ui, rect: Rect, e: &Entry, t: &str, syntax: &str, truncate
     let p = ui.painter();
     p.rect_filled(rect, 6.0, pal.bg);
     let size = if style.big { 13.0 } else { 12.0 };
+    if t.len() > 40_000 {
+        return long_text_view(ui, rect.shrink(8.0), e, t, syntax, truncated, size, pal);
+    }
     scroll_area(ui, rect.shrink(8.0), ("pv_text", &e.path), |ui| {
         if syntax.is_empty() || t.len() > 300_000 {
             ui.add(egui::Label::new(RichText::new(t).monospace().size(size).color(pal.text)).extend());
@@ -415,6 +418,67 @@ fn text_view(ui: &mut Ui, rect: Rect, e: &Entry, t: &str, syntax: &str, truncate
             ui.add_space(6.0);
             ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));
         }
+    });
+}
+
+/// Big text: lay out and highlight only the lines in view. (One label for the
+/// whole text would be laid out, highlighted and drawn in full every frame.)
+/// Lines are highlighted one at a time, which can miss a comment or string that
+/// spans lines; small files keep whole-file highlighting.
+#[allow(clippy::too_many_arguments)]
+fn long_text_view(
+    ui: &mut Ui,
+    rect: Rect,
+    e: &Entry,
+    t: &str,
+    syntax: &str,
+    truncated: bool,
+    size: f32,
+    pal: &Palette,
+) {
+    let lines: Vec<&str> = t.lines().collect();
+    let font = egui::FontId::monospace(size);
+    let row_h = ui.painter().layout_no_wrap("Mg".into(), font.clone(), pal.text).size().y;
+    let rows = lines.len() + if truncated { 2 } else { 0 };
+    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+        ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+        egui::ScrollArea::both().id_salt(("pv_text", &e.path)).auto_shrink(false).show_rows(
+            ui,
+            row_h,
+            rows,
+            |ui, range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
+                theme = theme.with_font_size(size);
+                for i in range {
+                    match lines.get(i) {
+                        Some(line) => {
+                            let line = if line.is_empty() { " " } else { line };
+                            if syntax.is_empty() {
+                                ui.add(
+                                    egui::Label::new(RichText::new(line).font(font.clone()).color(pal.text)).extend(),
+                                );
+                            } else {
+                                let job = egui_extras::syntax_highlighting::highlight(
+                                    ui.ctx(),
+                                    ui.style(),
+                                    &theme,
+                                    line,
+                                    syntax,
+                                );
+                                ui.add(egui::Label::new(job).extend());
+                            }
+                        }
+                        None if i == lines.len() + 1 => {
+                            ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));
+                        }
+                        None => {
+                            ui.add_space(row_h);
+                        }
+                    }
+                }
+            },
+        );
     });
 }
 

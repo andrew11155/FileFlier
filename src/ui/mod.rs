@@ -1,8 +1,9 @@
 //! Custom-drawn UI. Everything is laid out in explicit rects so the look can
 //! match File Pilot closely rather than following egui's default widget style.
 
-mod chrome;
+pub(crate) mod chrome;
 mod cloud;
+mod columns;
 mod dnd;
 pub mod glass;
 mod inspector;
@@ -11,7 +12,9 @@ mod popups;
 mod preview_view;
 mod quicklook;
 mod settings;
+mod shortcuts;
 mod sidebar;
+pub mod tint;
 mod update;
 
 use std::sync::Arc;
@@ -164,6 +167,8 @@ pub enum RowIcon {
     Folder,
     File(FileKind),
     Trash,
+    /// A tick (the current choice), or the space for one.
+    Check(bool),
 }
 
 /// Red used for destructive commands (Move to Trash, Delete).
@@ -177,6 +182,17 @@ pub fn paint_row_icon(p: &Painter, r: Rect, icon: RowIcon, pal: &Palette) {
         RowIcon::Folder => icons::folder(p, r, pal),
         RowIcon::File(k) => icons::file(p, r, k, pal),
         RowIcon::Trash => icons::trash(p, r, danger_color(pal)),
+        RowIcon::Check(true) => {
+            let s = Stroke::new(2.0, pal.text_strong);
+            let (a, b, c) = (
+                r.left_center() + vec2(2.0, 0.5),
+                r.center_bottom() + vec2(-2.0, -4.0),
+                r.right_top() + vec2(-2.0, 4.0),
+            );
+            p.line_segment([a, b], s);
+            p.line_segment([b, c], s);
+        }
+        RowIcon::Check(false) => {}
     }
 }
 
@@ -315,4 +331,10 @@ pub fn popup_frame(pal: &Palette, fx: &Fx) -> egui::Frame {
         .corner_radius(8)
         .inner_margin(6)
         .shadow(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(120) })
+}
+
+/// "large grid" -> "Large grid".
+pub fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
 }
