@@ -171,6 +171,11 @@ impl FileFlier {
                 })
                 .sum::<f32>();
         let screen = ctx.content_rect();
+        // Each menu gets an area of its own, so it isn't shown at the size of the one
+        // before it; egui lays a new area out unseen first, and after that its measured
+        // height places it.
+        let area_id = Id::new("cmd_menu").with(menu.opened);
+        let est_h = ctx.memory(|m| m.area_rect(area_id)).map_or(est_h, |r| r.height());
         // A menu taller than the window starts at the top and scrolls.
         let list_max_h = (screen.height() - 52.0 - 24.0).max(60.0);
         let est_h = est_h.min(list_max_h + 52.0);
@@ -189,7 +194,7 @@ impl FileFlier {
         let mut picked_color: Option<(Vec<PathBuf>, ColorPick)> = None;
         let mut picked_rating: Option<(Vec<PathBuf>, u8)> = None;
         let mut query = std::mem::take(&mut menu.query);
-        let area = egui::Area::new(Id::new("cmd_menu")).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
+        let area = egui::Area::new(area_id).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
             super::animate_in(ui, Id::new("cmd_menu_appear"), &fx, -6.0);
             popup_frame(pal, &fx).show(ui, |ui| {
                 ui.set_width(width);
