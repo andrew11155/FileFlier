@@ -384,7 +384,7 @@ pub fn palette_with(theme: ThemeId, accent: Option<Color32>, look: Look) -> &'st
     type Key = (ThemeId, Option<[u8; 3]>, Look);
     static CACHE: OnceLock<Mutex<HashMap<Key, &'static Palette>>> = OnceLock::new();
     let key = (theme, accent.map(|c| [c.r(), c.g(), c.b()]), look);
-    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
     cache.entry(key).or_insert_with(|| {
         let mut p = build(theme);
         if let Some(a) = accent {

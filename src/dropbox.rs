@@ -37,9 +37,21 @@ fn socket_path() -> Option<PathBuf> {
 /// One command to dropboxd: `name`, then tab-separated `key value...` lines. The reply
 /// is "ok" and lines of the same shape, keyed by their first field.
 fn call(name: &str, args: &[(&str, Vec<String>)]) -> Result<HashMap<String, Vec<String>>, String> {
+    call_within(name, args, Duration::from_secs(5))
+}
+
+/// Calls made while drawing a frame give up quickly, so a stuck Dropbox can't freeze
+/// the window.
+const UI_TIMEOUT: Duration = Duration::from_millis(400);
+
+fn call_within(
+    name: &str,
+    args: &[(&str, Vec<String>)],
+    timeout: Duration,
+) -> Result<HashMap<String, Vec<String>>, String> {
     let sock = socket_path().ok_or("no home folder")?;
     let mut s = UnixStream::connect(&sock).map_err(|_| "Dropbox isn't running".to_string())?;
-    let timeout = Some(Duration::from_secs(5));
+    let timeout = Some(timeout);
     s.set_read_timeout(timeout).ok();
     s.set_write_timeout(timeout).ok();
     let mut msg = format!("{name}\n");
@@ -53,21 +65,29 @@ fn call(name: &str, args: &[(&str, Vec<String>)]) -> Result<HashMap<String, Vec<
     }
     msg.push_str("done\n");
     s.write_all(msg.as_bytes()).map_err(|e| e.to_string())?;
-    parse_reply(BufReader::new(s).lines().map_while(Result::ok))
+    parse_reply(BufReader::new(s).lines().map(|l| l.map_err(|e| e.to_string())))
 }
 
-fn parse_reply(lines: impl Iterator<Item = String>) -> Result<HashMap<String, Vec<String>>, String> {
+/// Reads a reply; one cut short (a timeout, an unreadable line, no "done") is an error,
+/// not a shorter answer.
+fn parse_reply(lines: impl Iterator<Item = Result<String, String>>) -> Result<HashMap<String, Vec<String>>, String> {
     let mut lines = lines;
-    let status = lines.next().ok_or("no reply from Dropbox")?;
+    let status = lines.next().ok_or("no reply from Dropbox")??;
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let mut complete = false;
     for line in lines {
+        let line = line.map_err(|e| format!("Dropbox's reply was cut short ({e})"))?;
         if line == "done" {
+            complete = true;
             break;
         }
         let mut f = line.split('\t').map(str::to_string);
         if let Some(k) = f.next() {
             out.insert(k, f.collect());
         }
+    }
+    if !complete {
+        return Err("Dropbox's reply was cut short".into());
     }
     if status != "ok" {
         let why = out.get("message").map(|m| m.join(" ")).unwrap_or(status);
@@ -76,8 +96,10 @@ fn parse_reply(lines: impl Iterator<Item = String>) -> Result<HashMap<String, Ve
     Ok(out)
 }
 
-fn path_arg(paths: &[PathBuf]) -> Vec<String> {
-    paths.iter().map(|p| p.to_string_lossy().into_owned()).collect()
+/// The paths as protocol fields. None if one can't be sent as it is: the protocol
+/// separates fields with tabs and lines with newlines, and only carries UTF-8.
+fn path_arg(paths: &[PathBuf]) -> Option<Vec<String>> {
+    paths.iter().map(|p| p.to_str().filter(|s| !s.contains(['\t', '\n'])).map(str::to_string)).collect()
 }
 
 /// The Dropbox folders on this computer, from `~/.dropbox/info.json`. A team account's
@@ -114,7 +136,8 @@ pub fn inside(p: &Path) -> bool {
 /// The right-click items Dropbox offers for `paths`. Its own "Right-click actions..."
 /// settings item is left out.
 pub fn options(paths: &[PathBuf]) -> Vec<MenuOption> {
-    let Ok(r) = call("icon_overlay_context_options", &[("paths", path_arg(paths))]) else { return vec![] };
+    let Some(arg) = path_arg(paths) else { return vec![] };
+    let Ok(r) = call_within("icon_overlay_context_options", &[("paths", arg)], UI_TIMEOUT) else { return vec![] };
     r.get("options").map(|o| parse_options(o)).unwrap_or_default()
 }
 
@@ -162,7 +185,8 @@ pub fn run(paths: Vec<PathBuf>, verb: String, ctx: &egui::Context) {
         let e = if verb == "copy_link" {
             // Ask for the link and copy it ourselves: Dropbox's own clipboard copy
             // doesn't reach Wayland apps.
-            match paths.first().map(|p| call("get_shared_link", &[("path", path_arg(std::slice::from_ref(p)))])) {
+            let arg = paths.first().and_then(|p| path_arg(std::slice::from_ref(p)));
+            match arg.map(|a| call("get_shared_link", &[("path", a)])) {
                 Some(Ok(r)) => match r.get("link").and_then(|l| l.first()) {
                     Some(link) if !link.is_empty() => Event::Link(link.clone()),
                     _ => Event::Error("Dropbox didn't give a link for this item".into()),
@@ -171,7 +195,8 @@ pub fn run(paths: Vec<PathBuf>, verb: String, ctx: &egui::Context) {
                 None => return,
             }
         } else {
-            match call("icon_overlay_context_action", &[("paths", path_arg(&paths)), ("verb", vec![verb])]) {
+            let Some(arg) = path_arg(&paths) else { return };
+            match call("icon_overlay_context_action", &[("paths", arg), ("verb", vec![verb])]) {
                 Ok(_) => return,
                 Err(e) => Event::Error(format!("Dropbox: {e}")),
             }
@@ -182,7 +207,7 @@ pub fn run(paths: Vec<PathBuf>, verb: String, ctx: &egui::Context) {
 
 /// Folders set not to sync on this computer (selective sync).
 pub fn excluded() -> Result<Vec<PathBuf>, String> {
-    let r = call("get_ignore_set", &[])?;
+    let r = call_within("get_ignore_set", &[], UI_TIMEOUT)?;
     let mut v: Vec<PathBuf> = r.get("ignore_set").into_iter().flatten().map(PathBuf::from).collect();
     v.sort();
     Ok(v)
@@ -195,7 +220,8 @@ pub fn set_synced(paths: Vec<PathBuf>, sync: bool, ctx: &egui::Context) {
     std::thread::spawn(move || {
         let n = paths.len();
         let cmd = if sync { "ignore_set_remove" } else { "ignore_set_add" };
-        let e = match call(cmd, &[("paths", path_arg(&paths))]) {
+        let Some(arg) = path_arg(&paths) else { return };
+        let e = match call(cmd, &[("paths", arg)]) {
             Ok(_) if sync => Event::Info(format!("Syncing {n} folder{} on this computer again", plural(n))),
             Ok(_) => Event::Info(format!("{n} folder{} kept online only, not on this computer", plural(n))),
             Err(e) => Event::Error(format!("Dropbox: {e}")),
@@ -210,13 +236,26 @@ fn plural(n: usize) -> &'static str {
 
 // ------------------------------------------------------------ sync badges
 
+/// What's known about one file's sync state.
+struct Entry {
+    state: Option<Sync>,
+    /// When Dropbox was last asked.
+    asked: Instant,
+    /// Asked and not answered yet (so it isn't asked again meanwhile).
+    pending: bool,
+    /// When it was last on screen.
+    seen: Instant,
+}
+
 struct Cache {
-    states: Mutex<HashMap<PathBuf, (Option<Sync>, Instant)>>,
+    states: Mutex<HashMap<PathBuf, Entry>>,
     ask: Mutex<Sender<PathBuf>>,
 }
 
 /// How long a reported state is trusted before asking again.
 const FRESH: Duration = Duration::from_secs(4);
+/// Files off screen this long are forgotten (and not asked about any more).
+const FORGET: Duration = Duration::from_secs(60);
 
 fn cache(ctx: &egui::Context) -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
@@ -225,14 +264,37 @@ fn cache(ctx: &egui::Context) -> &'static Cache {
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             while let Ok(p) = rx.recv() {
-                let state = call("icon_overlay_file_status", &[("path", path_arg(std::slice::from_ref(&p)))])
-                    .ok()
-                    .and_then(|r| r.get("status").and_then(|s| s.first()).map(|s| parse_status(s)))
-                    .flatten();
                 let c = CACHE.get().expect("set before the thread asks");
-                let mut m = c.states.lock().unwrap();
-                let old = m.insert(p, (state, Instant::now()));
-                if old.map(|o| o.0) != Some(state) {
+                // Skip files that went off screen while waiting in line.
+                let wanted =
+                    c.states.lock().is_ok_and(|m| m.get(&p).is_some_and(|e| e.seen.elapsed() < Duration::from_secs(2)));
+                let state = if wanted {
+                    path_arg(std::slice::from_ref(&p))
+                        .and_then(|a| call("icon_overlay_file_status", &[("path", a)]).ok())
+                        .and_then(|r| r.get("status").and_then(|s| s.first()).and_then(|s| parse_status(s)))
+                } else {
+                    None
+                };
+                let changed = {
+                    let Ok(mut m) = c.states.lock() else { continue };
+                    let changed = match m.get_mut(&p) {
+                        Some(e) => {
+                            e.pending = false;
+                            let changed = wanted && e.state != state;
+                            if wanted {
+                                e.state = state;
+                                e.asked = Instant::now();
+                            }
+                            changed
+                        }
+                        None => false,
+                    };
+                    if m.len() > 512 {
+                        m.retain(|_, e| e.seen.elapsed() < FORGET);
+                    }
+                    changed
+                };
+                if changed {
                     ctx.request_repaint();
                 }
             }
@@ -259,24 +321,17 @@ pub fn status(p: &Path, ctx: &egui::Context) -> Option<Sync> {
     let c = cache(ctx);
     let mut m = c.states.lock().ok()?;
     let now = Instant::now();
-    match m.get_mut(p) {
-        Some((state, at)) => {
-            if now.duration_since(*at) > FRESH {
-                *at = now;
-                let _ = c.ask.lock().map(|a| a.send(p.to_path_buf()));
-            }
-            // Keep checking while something syncs, so the badge turns green.
-            if *state == Some(Sync::Syncing) {
-                ctx.request_repaint_after(FRESH);
-            }
-            *state
-        }
-        None => {
-            m.insert(p.to_path_buf(), (None, now));
-            let _ = c.ask.lock().map(|a| a.send(p.to_path_buf()));
-            None
-        }
+    // Look again now and then, so a badge changes without anything else happening.
+    ctx.request_repaint_after(FRESH);
+    let e = m.entry(p.to_path_buf()).or_insert(Entry { state: None, asked: now, pending: false, seen: now });
+    e.seen = now;
+    let due = e.state.is_none() && e.asked == now || now.duration_since(e.asked) > FRESH;
+    if due && !e.pending {
+        e.pending = true;
+        e.asked = now;
+        let _ = c.ask.lock().map(|a| a.send(p.to_path_buf()));
     }
+    e.state
 }
 
 /// Draws a sync badge on the bottom-right corner of an icon.
@@ -327,15 +382,22 @@ mod tests {
     #[test]
     fn reads_replies_and_options() {
         let lines = ["ok", "options\tCopy Dropbox link~Copy a link~copy_link\tShare...~Share it~share", "done"];
-        let r = parse_reply(lines.iter().map(|s| s.to_string())).unwrap();
+        let r = parse_reply(lines.iter().map(|s| Ok(s.to_string()))).unwrap();
         let o = parse_options(&r["options"]);
         assert_eq!(o.len(), 2);
         assert_eq!((o[0].label.as_str(), o[0].verb.as_str()), ("Copy Dropbox link", "copy_link"));
         assert_eq!(o[1].label, "Share…");
         let settings = vec!["Right-click actions...~x~context_menu_settings".to_string()];
         assert!(parse_options(&settings).is_empty());
-        let err = parse_reply(["notok", "message\tNo such file", "done"].iter().map(|s| s.to_string()));
+        let err = parse_reply(["notok", "message\tNo such file", "done"].iter().map(|s| Ok(s.to_string())));
         assert_eq!(err.unwrap_err(), "No such file");
+        // A reply cut short isn't taken as a shorter answer.
+        assert!(parse_reply(["ok", "ignore_set\t/a"].iter().map(|s| Ok(s.to_string()))).is_err());
+        let cut = vec![Ok("ok".to_string()), Err("timed out".to_string())];
+        assert!(parse_reply(cut.into_iter()).is_err());
+        // Paths the protocol can't carry aren't sent.
+        assert!(path_arg(&[PathBuf::from("/a/b\tc")]).is_none());
+        assert!(path_arg(&[PathBuf::from("/a/b c")]).is_some());
     }
 
     #[test]

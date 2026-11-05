@@ -300,9 +300,30 @@ fn distance(sizing: Sizing, scale: u32, px: u32) -> u32 {
 
 /// Rendered icons by (name, kind, folder color, size in pixels).
 type Key = (&'static str, u8, Option<[u8; 3]>, u32);
-static TEXTURES: Mutex<Option<HashMap<Key, Option<TextureHandle>>>> = Mutex::new(None);
 
-fn texture(p: &Painter, name: &'static str, kind: Kind, px: u32) -> Option<TextureHandle> {
+/// A rendered icon (None: it couldn't be loaded, so it isn't tried again every frame),
+/// when it was last drawn, and its size in bytes.
+struct Cached {
+    tex: Option<TextureHandle>,
+    used: u64,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct Textures {
+    map: HashMap<Key, Cached>,
+    bytes: usize,
+    /// Counts draws, for "least recently drawn".
+    clock: u64,
+}
+
+static TEXTURES: Mutex<Option<Textures>> = Mutex::new(None);
+
+/// At most this many icons, or this many bytes of them, are kept.
+const MAX_ICONS: usize = 600;
+const MAX_BYTES: usize = 192 << 20;
+
+fn texture(p: &Painter, name: &'static str, kind: Kind, px: u32) -> Option<egui::TextureId> {
     let (tag, tint) = match kind {
         Kind::Folder(Some(c)) => (0, Some([c.r(), c.g(), c.b()])),
         Kind::Folder(None) => (0, None),
@@ -310,27 +331,44 @@ fn texture(p: &Painter, name: &'static str, kind: Kind, px: u32) -> Option<Textu
         Kind::Symbolic => (2, None),
     };
     let key = (name, tag, tint, px);
-    let mut g = TEXTURES.lock().ok()?;
-    let map = g.get_or_insert_with(HashMap::new);
-    if let Some(t) = map.get(&key) {
-        return t.clone();
+    let mut g = TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
+    let t = g.get_or_insert_with(Textures::default);
+    t.clock += 1;
+    let clock = t.clock;
+    if let Some(c) = t.map.get_mut(&key) {
+        c.used = clock;
+        return c.tex.as_ref().map(|h| h.id());
     }
-    // Color changes animate through many shades; don't keep them all.
-    if map.len() > 600 {
-        map.clear();
+    let index = INDEX.get()?;
+    // Color changes animate through many shades: past the limits, drop the icons drawn
+    // longest ago (not all of them, which would make every icon load again at once).
+    if t.map.len() >= MAX_ICONS || t.bytes > MAX_BYTES {
+        let mut by_age: Vec<(u64, Key)> = t.map.iter().map(|(k, c)| (c.used, *k)).collect();
+        by_age.sort_unstable_by_key(|(used, _)| *used);
+        for (_, k) in by_age.into_iter().take(t.map.len() / 4 + 1) {
+            if let Some(c) = t.map.remove(&k) {
+                t.bytes -= c.bytes;
+            }
+        }
     }
-    let c = INDEX.get()?.lookup(name, px)?;
-    let mut rgba = load(&c.path, px)?;
-    match kind {
-        Kind::Symbolic => mask(&mut rgba),
-        Kind::Folder(Some(color)) => recolor(&mut rgba, color),
-        Kind::Folder(None) => {}
-        Kind::Accent(accent) => recolor_to_accent(&mut rgba, accent),
-    }
-    let img = ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &rgba);
-    let tex = Some(p.ctx().load_texture(name, img, TextureOptions::LINEAR));
-    map.insert(key, tex.clone());
-    tex
+    let rgba = index.lookup(name, px).and_then(|c| load(&c.path, px)).map(|mut rgba| {
+        match kind {
+            Kind::Symbolic => mask(&mut rgba),
+            Kind::Folder(Some(color)) => recolor(&mut rgba, color),
+            Kind::Folder(None) => {}
+            Kind::Accent(accent) => recolor_to_accent(&mut rgba, accent),
+        }
+        rgba
+    });
+    let bytes = rgba.as_ref().map_or(0, |v| v.len());
+    let tex = rgba.map(|rgba| {
+        let img = ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &rgba);
+        p.ctx().load_texture(name, img, TextureOptions::LINEAR)
+    });
+    let id = tex.as_ref().map(|h| h.id());
+    t.bytes += bytes;
+    t.map.insert(key, Cached { tex, used: clock, bytes });
+    id
 }
 
 #[derive(Clone, Copy)]
@@ -348,12 +386,18 @@ fn load(path: &Path, px: u32) -> Option<Vec<u8>> {
         rasterize(&data, px)
     } else {
         let img = image::load_from_memory(&data).ok()?.to_rgba8();
-        let img = if img.dimensions() == (px, px) {
-            img
-        } else {
-            image::imageops::resize(&img, px, px, image::imageops::FilterType::Lanczos3)
-        };
-        Some(img.into_raw())
+        if img.dimensions() == (px, px) {
+            return Some(img.into_raw());
+        }
+        // Fit the longer side and center, so a non-square icon isn't stretched.
+        let (w, h) = img.dimensions();
+        let scale = px as f32 / w.max(h).max(1) as f32;
+        let (sw, sh) =
+            (((w as f32 * scale).round() as u32).clamp(1, px), ((h as f32 * scale).round() as u32).clamp(1, px));
+        let small = image::imageops::resize(&img, sw, sh, image::imageops::FilterType::Lanczos3);
+        let mut out = image::RgbaImage::new(px, px);
+        image::imageops::overlay(&mut out, &small, ((px - sw) / 2) as i64, ((px - sh) / 2) as i64);
+        Some(out.into_raw())
     }
 }
 
@@ -363,7 +407,10 @@ fn rasterize(svg: &[u8], px: u32) -> Option<Vec<u8>> {
     let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
     let size = tree.size();
     let scale = px as f32 / size.width().max(size.height());
-    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    // Center a non-square drawing.
+    let (dx, dy) = ((px as f32 - size.width() * scale) / 2.0, (px as f32 - size.height() * scale) / 2.0);
+    let t = tiny_skia::Transform::from_scale(scale, scale).post_translate(dx, dy);
+    resvg::render(&tree, t, &mut pixmap.as_mut());
     let mut data = pixmap.take();
     // tiny-skia's pixels are premultiplied.
     for [r, g, b, a] in data.as_chunks_mut::<4>().0 {
@@ -493,10 +540,11 @@ fn draw(p: &Painter, r: Rect, side: f32, name: &'static str, kind: Kind, tint: C
     let ppp = p.ctx().pixels_per_point();
     let px = (side * ppp).round().clamp(4.0, 1024.0);
     let Some(tex) = texture(p, name, kind, px as u32) else { return false };
+    let tex = egui::load::SizedTexture::new(tex, vec2(px, px));
     let s = px / ppp;
     let min = ((r.center() - vec2(s, s) / 2.0) * ppp).round() / ppp;
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    p.image(tex.id(), Rect::from_min_size(min, vec2(s, s)), uv, tint);
+    p.image(tex.id, Rect::from_min_size(min, vec2(s, s)), uv, tint);
     true
 }
 

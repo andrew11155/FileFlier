@@ -799,9 +799,10 @@ impl FileFlier {
                                 if band_add { tab.selected.iter().cloned().collect() } else { Vec::new() };
                             ui.ctx().data_mut(|d| d.insert_temp(band_key, (press - origin.to_vec2(), base)));
                         }
-                        let band: Option<(egui::Pos2, Vec<PathBuf>)> = ui.ctx().data(|d| d.get_temp(band_key));
-                        if bg.dragged()
-                            && let Some((start, base)) = band
+                        // Read only while dragging: it holds a copy of the selection.
+                        let band: Option<(egui::Pos2, Vec<PathBuf>)> =
+                            if bg.dragged() { ui.ctx().data(|d| d.get_temp(band_key)) } else { None };
+                        if let Some((start, base)) = band
                             && let Some(now) = ui.ctx().pointer_latest_pos()
                         {
                             super::dnd::edge_scroll(ui, list_rect);
@@ -832,6 +833,14 @@ impl FileFlier {
                                             pos2(origin.x + 8.0, top),
                                             pos2(origin.x + w - 8.0 - row_gap, top + pitch),
                                         ),
+                                        // As the list view lays its items out.
+                                        ViewMode::List => {
+                                            let cw = inner_w / ncols as f32;
+                                            Rect::from_min_size(
+                                                pos2(origin.x + 8.0 + c as f32 * cw, top),
+                                                vec2(cw - 6.0, pitch),
+                                            )
+                                        }
                                         _ => {
                                             let cw = inner_w / ncols as f32;
                                             let x = origin.x + 8.0 + c as f32 * cw;
@@ -1255,12 +1264,18 @@ impl FileFlier {
             tab.selected = sel;
             if let Some(&vi) = hits.last() {
                 tab.cursor = vi;
+                // Shift+arrows and Shift+click go on from the rectangle's selection.
+                tab.anchor = hits[0];
             }
             self.actions.push(Action::Activate(idx));
         }
         // Let go: the rectangle fades out.
         if bg.drag_stopped() {
-            ctx.data_mut(|d| d.insert_temp(band_key.with("fade"), ctx.input(|i| i.time)));
+            let now = ctx.input(|i| i.time);
+            ctx.data_mut(|d| {
+                d.insert_temp(band_key.with("fade"), now);
+                d.remove::<(egui::Pos2, Vec<PathBuf>)>(band_key);
+            });
         }
         let faded: Option<(Rect, f64)> =
             ctx.data(|d| Some((d.get_temp::<Rect>(band_key.with("last"))?, d.get_temp::<f64>(band_key.with("fade"))?)));

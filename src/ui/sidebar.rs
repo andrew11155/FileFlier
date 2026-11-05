@@ -698,11 +698,23 @@ impl FileFlier {
                 }
             });
         });
-        if let Some(order) = reorder
-            && order != self.cfg.sidebar_order
-        {
-            self.cfg.sidebar_order = order;
-            self.cfg.save();
+        if let Some(shown) = reorder {
+            // The shown groups take their new order; hidden ones keep their places.
+            let mut full = self.cfg.sidebar_order.clone();
+            for t in &shown {
+                if !full.contains(t) {
+                    full.push(t.clone());
+                }
+            }
+            let mut next = shown.iter();
+            let order: Vec<String> = full
+                .into_iter()
+                .map(|t| if shown.contains(&t) { next.next().cloned().unwrap_or(t) } else { t })
+                .collect();
+            if order != self.cfg.sidebar_order {
+                self.cfg.sidebar_order = order;
+                self.cfg.save();
+            }
         }
         for t in toggles {
             if let Some(i) = self.cfg.collapsed.iter().position(|c| *c == t) {

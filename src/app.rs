@@ -283,6 +283,8 @@ pub struct FileFlier {
     terminal_launch: Option<(std::process::Child, Instant)>,
     /// Last see-through state sent to the window (blur is only toggled on change).
     blur_applied: Option<bool>,
+    /// The window title last sent (sending one asks for another frame, so only on change).
+    title_sent: String,
     /// Whether the window was created with transparency (needed for see-through).
     pub window_transparent: bool,
     /// The last reversible operation (Ctrl+Z).
@@ -394,6 +396,7 @@ impl FileFlier {
             meta: crate::meta::Meta::load(),
             terminal_launch: None,
             blur_applied: None,
+            title_sent: String::new(),
             window_transparent,
             last_undo: None,
             toast_undo: false,
@@ -1559,16 +1562,21 @@ impl FileFlier {
         }
 
         // Ctrl+Up / Ctrl+Down: the previous or next place in the sidebar.
-        let step: isize = ctx.input_mut(|i| {
-            if i.consume_key(Modifiers::COMMAND, Key::ArrowDown) {
-                1
-            } else if i.consume_key(Modifiers::COMMAND, Key::ArrowUp) {
-                -1
-            } else {
-                0
-            }
-        });
-        if step != 0 && !self.sidebar_nav.is_empty() {
+        // Only while the sidebar shows (its list is from the last time it was drawn).
+        let step: isize = if self.cfg.show_sidebar && !self.sidebar_nav.is_empty() {
+            ctx.input_mut(|i| {
+                if i.consume_key(Modifiers::COMMAND, Key::ArrowDown) {
+                    1
+                } else if i.consume_key(Modifiers::COMMAND, Key::ArrowUp) {
+                    -1
+                } else {
+                    0
+                }
+            })
+        } else {
+            0
+        };
+        if step != 0 {
             let last = self.sidebar_nav.len() - 1;
             let to = match self.sidebar_nav_cur {
                 Some(c) => (c as isize + step).clamp(0, last as isize) as usize,
@@ -2077,7 +2085,10 @@ impl eframe::App for FileFlier {
         }
 
         let title = format!("{} — File Flier", self.tab().path.display());
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        if title != self.title_sent {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title_sent = title;
+        }
 
         // ---- layout
         let full = ui.max_rect();
