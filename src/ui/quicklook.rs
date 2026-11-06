@@ -201,7 +201,12 @@ impl FileFlier {
 }
 
 /// Play/pause, time, a seek bar and mute, under a playing video.
-fn video_controls(ui: &mut egui::Ui, bar: Rect, pl: &mut crate::preview::player::Player, pal: &crate::theme::Palette) {
+pub(crate) fn video_controls(
+    ui: &mut egui::Ui,
+    bar: Rect,
+    pl: &mut crate::preview::player::Player,
+    pal: &crate::theme::Palette,
+) {
     use crate::preview::format_duration;
     let p = ui.painter().clone();
     let cy = bar.center().y;

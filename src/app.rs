@@ -296,6 +296,8 @@ pub struct FileFlier {
     pub tint_anims: crate::ui::tint::TintAnims,
     /// The video playing in Quick Look.
     pub ql_player: Option<crate::preview::player::Player>,
+    /// The preview panel's player (started with its play button).
+    pub insp_player: Option<crate::preview::player::Player>,
     pub renaming: Option<Renaming>,
     /// Where a drive mounted from the sidebar ended up (opened when the job finishes).
     mounted_at: Arc<Mutex<Option<PathBuf>>>,
@@ -405,6 +407,7 @@ impl FileFlier {
             toast_undo: false,
             quicklook: false,
             ql_player: None,
+            insp_player: None,
             tint_anims: Default::default(),
             renaming: None,
             mounted_at: Default::default(),
@@ -1050,6 +1053,17 @@ impl FileFlier {
             }
             TogglePreview => {
                 self.cfg.show_preview = !self.cfg.show_preview;
+                self.cfg.save();
+            }
+            PreviewRight | PreviewLeft | PreviewBottom | PreviewTop => {
+                use crate::config::PanelSide;
+                self.cfg.inspector_side = match cmd {
+                    PreviewLeft => PanelSide::Left,
+                    PreviewBottom => PanelSide::Bottom,
+                    PreviewTop => PanelSide::Top,
+                    _ => PanelSide::Right,
+                };
+                self.cfg.show_preview = true;
                 self.cfg.save();
             }
             ToggleSidebar => {
@@ -2175,21 +2189,56 @@ impl eframe::App for FileFlier {
         }
         let body = Rect::from_min_max(pos2(full.left(), full.top() + TITLE_H), full.max);
         let sb_w = if self.cfg.show_sidebar { self.cfg.sidebar_width.clamp(160.0, 420.0) } else { 0.0 };
-        let insp_w = if self.cfg.show_preview {
-            self.cfg.inspector_width.clamp(240.0, 900.0).min(full.width() * 0.5)
+        use crate::config::PanelSide;
+        let side = self.cfg.inspector_side;
+        let show_insp = self.cfg.show_preview;
+        let sidebar = Rect::from_min_max(body.min, pos2(body.left() + sb_w, body.bottom()));
+        // The preview panel takes a side of what's right of the sidebar.
+        let rest = Rect::from_min_max(pos2(sidebar.right(), body.top()), body.max);
+        let insp_w = if show_insp && side.is_column() {
+            self.cfg.inspector_width.clamp(240.0, 900.0).min(rest.width() * 0.6)
         } else {
             0.0
         };
-        let sidebar = Rect::from_min_max(body.min, pos2(body.left() + sb_w, body.bottom()));
-        let inspector = Rect::from_min_max(pos2(body.right() - insp_w, body.top()), body.max);
-        let panes_area = Rect::from_min_max(pos2(sidebar.right(), body.top()), pos2(inspector.left(), body.bottom()));
+        let insp_h = if show_insp && !side.is_column() {
+            self.cfg.inspector_height.clamp(150.0, 800.0).min(rest.height() * 0.6)
+        } else {
+            0.0
+        };
+        let (inspector, panes_area) = match side {
+            PanelSide::Right => (
+                Rect::from_min_max(pos2(rest.right() - insp_w, rest.top()), rest.max),
+                Rect::from_min_max(rest.min, pos2(rest.right() - insp_w, rest.bottom())),
+            ),
+            PanelSide::Left => (
+                Rect::from_min_max(rest.min, pos2(rest.left() + insp_w, rest.bottom())),
+                Rect::from_min_max(pos2(rest.left() + insp_w, rest.top()), rest.max),
+            ),
+            PanelSide::Bottom => (
+                Rect::from_min_max(pos2(rest.left(), rest.bottom() - insp_h), rest.max),
+                Rect::from_min_max(rest.min, pos2(rest.right(), rest.bottom() - insp_h)),
+            ),
+            PanelSide::Top => (
+                Rect::from_min_max(rest.min, pos2(rest.right(), rest.top() + insp_h)),
+                Rect::from_min_max(pos2(rest.left(), rest.top() + insp_h), rest.max),
+            ),
+        };
+        let (insp_left, insp_right) = (show_insp && side == PanelSide::Left, show_insp && side == PanelSide::Right);
         // Glass mode floats each area as a separate panel with small gaps.
         let g = if fx.glass { 6.0 } else { 0.0 };
         let inset = |r: Rect, l: f32, rt: f32| {
             Rect::from_min_max(pos2(r.left() + l, r.top()), pos2(r.right() - rt, r.bottom() - g))
         };
         let sidebar = inset(sidebar, g, g / 2.0);
-        let inspector = inset(inspector, g / 2.0, g);
+        let inspector = match side {
+            PanelSide::Right => inset(inspector, g / 2.0, g),
+            PanelSide::Left => inset(inspector, if sb_w == 0.0 { g } else { g / 2.0 }, g / 2.0),
+            PanelSide::Bottom => inset(inspector, if sb_w == 0.0 { g } else { g / 2.0 }, g),
+            PanelSide::Top => {
+                let r = inset(inspector, if sb_w == 0.0 { g } else { g / 2.0 }, g);
+                Rect::from_min_max(r.min, pos2(r.right(), r.bottom() + g / 2.0))
+            }
+        };
         self.geom.resize(self.panes.len(), PaneGeom { cols: 1, page_rows: 15 });
         let (tiles, dividers) = self.layout.rects(panes_area, 0.0, self.panes.len());
         let near = |a: f32, b: f32| (a - b).abs() < 0.5;
@@ -2203,11 +2252,12 @@ impl eframe::App for FileFlier {
             .map(|(i, r)| {
                 let at_left = near(r.left(), panes_area.left());
                 let at_right = near(r.right(), panes_area.right());
-                let at_top = near(r.top(), panes_area.top());
+                // Only panes right under the title bar keep their tabs up there.
+                let at_top = near(r.top(), body.top());
                 let (l, rt) = if fx.glass {
                     (
-                        if at_left && sb_w == 0.0 { g } else { g / 2.0 },
-                        if at_right && insp_w == 0.0 { g } else { g / 2.0 },
+                        if at_left && sb_w == 0.0 && !insp_left { g } else { g / 2.0 },
+                        if at_right && !insp_right { g } else { g / 2.0 },
                     )
                 } else {
                     (if at_left { 0.0 } else { 1.0 }, 0.0) // 1px for the divider line
@@ -2260,6 +2310,8 @@ impl eframe::App for FileFlier {
         }
         if self.cfg.show_preview {
             self.inspector_ui(ui, inspector);
+        } else {
+            self.insp_player = None;
         }
         let title_rect = Rect::from_min_max(full.min, pos2(full.right(), full.top() + TITLE_H));
         self.title_bar(ui, title_rect, sb_w, &title_strips);

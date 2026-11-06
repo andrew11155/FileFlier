@@ -19,11 +19,18 @@ const AUDIO_LEAD: f64 = 0.12;
 
 #[derive(Clone, Copy)]
 pub struct Info {
+    /// 0 × 0 for sound only (music, recordings).
     pub w: u32,
     pub h: u32,
     pub fps: f64,
     pub duration: f64,
     pub has_audio: bool,
+}
+
+impl Info {
+    pub fn audio_only(&self) -> bool {
+        self.w == 0
+    }
 }
 
 enum Msg {
@@ -158,6 +165,44 @@ impl Player {
         }
     }
 
+    /// Sound only: no frames to wait for, so the clock starts as soon as the length is
+    /// known, and it ends when the time is up. Returns false for videos.
+    fn update_audio_only(&mut self, ctx: &egui::Context) -> bool {
+        while self.info.is_none() {
+            match self.rx.try_recv() {
+                Ok(Msg::Info(i)) => self.info = Some(i),
+                Ok(Msg::Failed(e)) => {
+                    self.error = Some(e);
+                    return true;
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                    return true; // still probing (it may turn out to be a video)
+                }
+                Err(TryRecvError::Disconnected) => return true,
+            }
+        }
+        let Some(info) = self.info.filter(Info::audio_only) else { return false };
+        while self.rx.try_recv().is_ok() {}
+        self.awaiting_frame = false;
+        if self.clock.is_none() {
+            self.clock = Some(Instant::now());
+            if self.paused_at.is_none() && !self.muted {
+                self.audio = play_audio(&self.path, self.info, self.start_pos);
+            }
+        }
+        if !self.paused() && !self.ended && info.duration > 0.0 && self.position() >= info.duration - 0.05 {
+            self.ended = true;
+            self.audio = None;
+        }
+        if !self.paused() && !self.ended {
+            // Only the time and the bar move.
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        true
+    }
+
     /// Steps `frames` frames forward (or back, if negative) and stays paused there.
     pub fn step_frames(&mut self, frames: i32) {
         let fps = self.info.map_or(25.0, |i| i.fps.max(1.0));
@@ -172,6 +217,9 @@ impl Player {
         // The decoder process is handed over so it dies with the player (or on pause).
         if let Ok(child) = self.video_rx.try_recv() {
             self.video = Some(ChildGuard(child));
+        }
+        if self.update_audio_only(ctx) {
+            return;
         }
         loop {
             if self.pending.is_none() {
@@ -241,6 +289,9 @@ fn decode(path: PathBuf, info: Option<Info>, at: f64, tx: SyncSender<Msg>, child
         return;
     };
     let _ = tx.send(Msg::Info(info));
+    if info.audio_only() {
+        return; // the sound is played by `play_audio`; there are no frames
+    }
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-v", "error", "-nostdin", "-ss", &format!("{at:.3}"), "-i"])
         .arg(&path)
@@ -279,7 +330,12 @@ fn probe(path: &Path) -> Option<Info> {
     let out = super::run_cmd(cmd, std::time::Duration::from_secs(10), None)?;
     let p: serde_json::Value = serde_json::from_slice(&out).ok()?;
     let streams = p["streams"].as_array()?;
-    let v = streams.iter().find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1)?;
+    let duration = p["format"]["duration"].as_str().and_then(|d| d.parse().ok()).unwrap_or(0.0);
+    let has_audio = streams.iter().any(|s| s["codec_type"] == "audio");
+    // (A cover picture in a music file doesn't make it a video.)
+    let Some(v) = streams.iter().find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1) else {
+        return has_audio.then_some(Info { w: 0, h: 0, fps: 25.0, duration, has_audio });
+    };
     let (w, h) = (v["width"].as_f64()?, v["height"].as_f64()?);
     let rot = v["side_data_list"]
         .as_array()
@@ -296,8 +352,6 @@ fn probe(path: &Path) -> Option<Info> {
         .filter(|f| f.is_finite() && *f > 0.0)
         .unwrap_or(25.0)
         .min(MAX_FPS);
-    let duration = p["format"]["duration"].as_str().and_then(|d| d.parse().ok()).unwrap_or(0.0);
-    let has_audio = streams.iter().any(|s| s["codec_type"] == "audio");
     Some(Info { w, h, fps, duration, has_audio })
 }
 
@@ -364,6 +418,36 @@ mod tests {
         p.step_frames(-1);
         wait(&mut p, &|p| !p.awaiting_frame);
         assert!((p.position() - (at + 0.2)).abs() < 1e-6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Sound files play with no frames: the clock runs and they end (muted here).
+    #[test]
+    fn plays_sound_only_files() {
+        if !available() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("file-flier-audio-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sound = dir.join("t.wav");
+        let made = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.6"])
+            .arg(&sound)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let mut p = Player::open(&sound, true);
+        let start = Instant::now();
+        while !p.ended && start.elapsed().as_secs() < 10 {
+            p.update(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(p.info.is_some_and(|i| i.audio_only() && i.has_audio), "{:?}", p.error);
+        assert!(p.ended, "never got to the end");
+        assert!(p.tex.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

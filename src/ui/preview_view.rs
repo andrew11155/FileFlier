@@ -399,25 +399,45 @@ fn scroll_area(ui: &mut Ui, rect: Rect, id: impl std::hash::Hash + std::fmt::Deb
 
 #[allow(clippy::too_many_arguments)]
 fn text_view(ui: &mut Ui, rect: Rect, e: &Entry, t: &str, syntax: &str, truncated: bool, pal: &Palette, style: &Style) {
+    let size = if style.big { 13.0 } else { 12.0 };
+    // An editor's look: the code on the window's background, line numbers in a gutter.
+    let lines = t.lines().count().max(1);
+    let digits = lines.to_string().len().max(2);
+    let gutter_w =
+        ui.painter().layout_no_wrap("0".repeat(digits), egui::FontId::monospace(size), pal.text).size().x + 16.0;
     let p = ui.painter();
     p.rect_filled(rect, pal.round(3.0), pal.bg);
-    let size = if style.big { 13.0 } else { 12.0 };
+    let gutter = Rect::from_min_max(rect.min, pos2(rect.left() + gutter_w, rect.bottom()));
+    p.rect_filled(gutter, 0.0, pal.sidebar.gamma_multiply(0.6));
+    p.vline(gutter.right(), rect.y_range(), Stroke::new(1.0, pal.row_sep));
+    let body = Rect::from_min_max(pos2(rect.left(), rect.top() + 6.0), pos2(rect.right() - 4.0, rect.bottom() - 4.0));
     if t.len() > 40_000 {
-        return long_text_view(ui, rect.shrink(8.0), e, t, syntax, truncated, size, pal);
+        return long_text_view(ui, body, e, t, syntax, truncated, size, pal, gutter_w);
     }
-    scroll_area(ui, rect.shrink(8.0), ("pv_text", &e.path), |ui| {
-        if syntax.is_empty() || t.len() > 300_000 {
-            ui.add(egui::Label::new(RichText::new(t).monospace().size(size).color(pal.text)).extend());
-        } else {
-            let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
-            theme = theme.with_font_size(size);
-            let job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, t, syntax);
-            ui.add(egui::Label::new(job).extend());
-        }
-        if truncated {
-            ui.add_space(6.0);
-            ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));
-        }
+    scroll_area(ui, body, ("pv_text", &e.path), |ui| {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let nums: String = (1..=lines).map(|n| format!("{n:>digits$}\n")).collect();
+            ui.add_sized(
+                vec2(gutter_w - 8.0, 0.0),
+                egui::Label::new(RichText::new(nums.trim_end()).monospace().size(size).color(pal.text_faint)).extend(),
+            );
+            ui.add_space(16.0);
+            ui.vertical(|ui| {
+                if syntax.is_empty() || t.len() > 300_000 {
+                    ui.add(egui::Label::new(RichText::new(t).monospace().size(size).color(pal.text)).extend());
+                } else {
+                    let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
+                    theme = theme.with_font_size(size);
+                    let job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, t, syntax);
+                    ui.add(egui::Label::new(job).extend());
+                }
+                if truncated {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));
+                }
+            });
+        });
     });
 }
 
@@ -435,8 +455,10 @@ fn long_text_view(
     truncated: bool,
     size: f32,
     pal: &Palette,
+    gutter_w: f32,
 ) {
     let lines: Vec<&str> = t.lines().collect();
+    let digits = lines.len().to_string().len().max(2);
     let font = egui::FontId::monospace(size);
     let row_h = ui.painter().layout_no_wrap("Mg".into(), font.clone(), pal.text).size().y;
     let rows = lines.len() + if truncated { 2 } else { 0 };
@@ -454,20 +476,33 @@ fn long_text_view(
                     match lines.get(i) {
                         Some(line) => {
                             let line = if line.is_empty() { " " } else { line };
-                            if syntax.is_empty() {
-                                ui.add(
-                                    egui::Label::new(RichText::new(line).font(font.clone()).color(pal.text)).extend(),
+                            ui.horizontal_top(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                ui.add_sized(
+                                    vec2(gutter_w - 8.0, row_h),
+                                    egui::Label::new(
+                                        RichText::new(format!("{:>digits$}", i + 1))
+                                            .font(font.clone())
+                                            .color(pal.text_faint),
+                                    ),
                                 );
-                            } else {
-                                let job = egui_extras::syntax_highlighting::highlight(
-                                    ui.ctx(),
-                                    ui.style(),
-                                    &theme,
-                                    line,
-                                    syntax,
-                                );
-                                ui.add(egui::Label::new(job).extend());
-                            }
+                                ui.add_space(16.0);
+                                if syntax.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(line).font(font.clone()).color(pal.text))
+                                            .extend(),
+                                    );
+                                } else {
+                                    let job = egui_extras::syntax_highlighting::highlight(
+                                        ui.ctx(),
+                                        ui.style(),
+                                        &theme,
+                                        line,
+                                        syntax,
+                                    );
+                                    ui.add(egui::Label::new(job).extend());
+                                }
+                            });
                         }
                         None if i == lines.len() + 1 => {
                             ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));

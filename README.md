@@ -181,10 +181,16 @@ the same on every desktop environment.
 
 ## Previews
 
-Select a file and the preview panel on the right shows it, with an
-*Information* section below: kind, size, dates, permissions and type-specific
+Select a file and the preview panel shows it, with its rating, tags and an
+*Information* section: kind, size, dates, permissions and type-specific
 details such as camera and exposure, duration and codecs, page count, or
-author. Drag the panel's left edge to resize it. Scroll or pinch over a picture
+author. The panel sits on the right by default; its header's side button (or
+the command palette's *Preview panel on the left / at the bottom / at the
+top*) moves it to any edge. On the left or right it's a column; at the bottom
+or top it's a band with the preview beside the details. Drag its inner edge to
+resize it. Videos and music play right in the panel: press the play button,
+click the picture to pause, and use the seek bar below it. Text and code files
+show line numbers in a gutter. Scroll or pinch over a picture
 to zoom, drag to pan, and double-click to switch between fit and actual size.
 
 | Type | Preview |

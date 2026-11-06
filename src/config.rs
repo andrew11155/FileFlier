@@ -5,6 +5,23 @@ use std::path::PathBuf;
 use crate::fs_model::Sort;
 use crate::theme::ThemeId;
 
+/// Which side of the window the preview panel (inspector) is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum PanelSide {
+    #[default]
+    Right,
+    Left,
+    Bottom,
+    Top,
+}
+
+impl PanelSide {
+    /// On the left or right: a column (else a band across the bottom or top).
+    pub fn is_column(self) -> bool {
+        matches!(self, PanelSide::Left | PanelSide::Right)
+    }
+}
+
 /// How a folder's items are grouped (with a header above each group).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum GroupBy {
@@ -172,6 +189,9 @@ pub struct Config {
     pub extensions: std::collections::BTreeMap<String, bool>,
     pub collapsed: Vec<String>,
     pub inspector_width: f32,
+    /// The preview panel's side, and its height when it's at the bottom or top.
+    pub inspector_side: PanelSide,
+    pub inspector_height: f32,
     /// Render office documents as pages with LibreOffice when it's installed.
     pub office_previews: bool,
     /// Set once the preview panel has been turned on for existing users.
@@ -251,6 +271,8 @@ impl Default for Config {
             extensions: Default::default(),
             collapsed: vec!["Recents".into()],
             inspector_width: 340.0,
+            inspector_side: PanelSide::Right,
+            inspector_height: 280.0,
             office_previews: true,
             preview_panel_intro: false,
             check_updates: true,
