@@ -223,7 +223,8 @@ LibreOffice runs outside the sandbox.
   keys to move to the next item, `+` / `-` / `0` to zoom, `Enter` to open it,
   and `Space` or `Esc` to close the preview.
   Videos play right in Quick Look, with sound: click the picture or press `K`
-  to pause, `J` / `L` to jump 5 seconds, `M` to mute, and drag the bar to seek
+  to pause, `J` / `L` to jump 5 seconds, `E` / `F` for the next / previous
+  frame, `M` to mute, and drag the bar to seek
   (needs ffmpeg, which the Flatpak includes; sound goes through PulseAudio or
   PipeWire).
 - **Rename in place:** press `F2` to edit the name directly in the list. The

@@ -1512,11 +1512,17 @@ impl FileFlier {
                 self.open_entries();
                 return;
             }
-            // Video: K play/pause, J/L back/ahead 5 s, M mute.
+            // Video: K play/pause, J/L back/ahead 5 s, E/F next/previous frame, M mute.
             if let Some(p) = self.ql_player.as_mut() {
                 let pressed = |k| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k));
                 if pressed(Key::K) {
                     p.toggle_pause();
+                }
+                if pressed(Key::E) {
+                    p.step_frames(1);
+                }
+                if pressed(Key::F) {
+                    p.step_frames(-1);
                 }
                 if pressed(Key::J) {
                     p.seek(p.position() - 5.0);

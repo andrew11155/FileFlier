@@ -57,6 +57,9 @@ impl FileFlier {
         let size = vec2((screen.width() * 0.82).min(1040.0), (screen.height() * 0.84).min(740.0));
         let card = Rect::from_center_size(screen.center(), size);
         let shown = self.pv.shown_for(&e.path).map(|s| &*s);
+        // The card stays above the dimmed backdrop (clicking the backdrop would otherwise
+        // bring it to the front, dimming the card too).
+        ctx.move_to_top(egui::LayerId::new(Order::Foreground, Id::new("ql_card")));
         Area::new(Id::new("ql_card")).order(Order::Foreground).fixed_pos(card.min).show(ctx, |ui| {
             // Grow from 94% to full size while fading in.
             let s = 0.94 + 0.06 * t;
@@ -138,7 +141,7 @@ impl FileFlier {
                 pos2(footer.right() - 18.0, footer.center().y),
                 Align2::RIGHT_CENTER,
                 if player.is_some() {
-                    "K  play/pause   ·   J L  −5 s / +5 s   ·   M  mute   ·   ← →  browse   ·   Enter  open   ·   Space  close"
+                    "K  play/pause   ·   J L  −5 s / +5 s   ·   E F  next / previous frame   ·   M  mute   ·   ← →  browse   ·   Space  close"
                 } else {
                     "← →  browse   ·   scroll  zoom   ·   PgUp PgDn  pages   ·   Enter  open   ·   Space  close"
                 },

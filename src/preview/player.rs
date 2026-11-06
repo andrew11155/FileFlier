@@ -53,6 +53,9 @@ pub struct Player {
     paused_at: Option<f64>,
     shown_frames: u64,
     pending: Option<Vec<u8>>,
+    /// Paused after a seek: waiting for the one frame to show (the window must be
+    /// woken for it, since nothing else is moving).
+    awaiting_frame: bool,
 }
 
 /// Kills the process when dropped.
@@ -93,6 +96,7 @@ impl Player {
             paused_at: None,
             shown_frames: 0,
             pending: None,
+            awaiting_frame: false,
         };
         std::thread::Builder::new().name("video".into()).spawn(move || decode(path, info, at, tx, child_tx)).ok();
         p
@@ -150,7 +154,17 @@ impl Player {
         self.tex = tex;
         if paused {
             self.paused_at = Some(at);
+            self.awaiting_frame = true;
         }
+    }
+
+    /// Steps `frames` frames forward (or back, if negative) and stays paused there.
+    pub fn step_frames(&mut self, frames: i32) {
+        let fps = self.info.map_or(25.0, |i| i.fps.max(1.0));
+        let at = self.position() + frames as f64 / fps;
+        let at = self.info.map_or(at, |i| at.clamp(0.0, (i.duration - 0.5 / fps).max(0.0))).max(0.0);
+        self.ended = false;
+        self.restart(at, true);
     }
 
     /// Take in decoded frames and show the one that's due. Call every frame.
@@ -178,6 +192,7 @@ impl Player {
                     }
                     Ok(Msg::Failed(e)) => {
                         self.error = Some(e);
+                        self.awaiting_frame = false;
                         break;
                     }
                     Err(TryRecvError::Empty) => break,
@@ -207,11 +222,14 @@ impl Player {
             if self.paused_at.is_some() {
                 // Paused after a seek: show this one frame, then let the decoder go.
                 self.video = None;
+                self.awaiting_frame = false;
                 break;
             }
         }
         if !self.paused() && !self.ended && self.error.is_none() {
             ctx.request_repaint();
+        } else if self.awaiting_frame && self.error.is_none() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(15));
         }
     }
 }
@@ -307,6 +325,47 @@ fn play_audio(path: &Path, info: Option<Info>, at: f64) -> Option<ChildGuard> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pausing, then stepping frames, shows each frame (needs ffmpeg; skipped without).
+    #[test]
+    fn steps_frames_while_paused() {
+        if !available() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("file-flier-video-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("t.mp4");
+        let made = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "3"])
+            .arg(&video)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            return; // no encoder for it here
+        }
+        let ctx = egui::Context::default();
+        let wait = |p: &mut Player, done: &dyn Fn(&Player) -> bool| {
+            let start = Instant::now();
+            while !done(p) && start.elapsed().as_secs() < 10 {
+                p.update(&ctx);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        let mut p = Player::open(&video, true);
+        wait(&mut p, &|p| p.tex.is_some());
+        p.toggle_pause();
+        let at = p.position();
+        p.step_frames(3);
+        assert!(p.awaiting_frame);
+        wait(&mut p, &|p| !p.awaiting_frame);
+        assert!(!p.awaiting_frame, "the stepped-to frame never came");
+        assert!(p.paused());
+        assert!((p.position() - (at + 0.3)).abs() < 1e-6);
+        p.step_frames(-1);
+        wait(&mut p, &|p| !p.awaiting_frame);
+        assert!((p.position() - (at + 0.2)).abs() < 1e-6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn fits_and_keeps_sizes_even() {
