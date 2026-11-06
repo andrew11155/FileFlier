@@ -114,8 +114,8 @@ the same on every desktop environment.
     (`Ctrl+Alt+0` clears), from the right-click menu, in the preview panel,
     or by clicking the stars in the details view's *Rating* column. Sort by
     rating with `Ctrl+6`, from the sort menu, or by clicking the column's header
-    (best first). In the grid views the stars show on the tiles; hover a tile
-    and click a star to rate it.
+    (best first). In the grid views the stars show on rated tiles; hold `Alt`
+    over a tile and click a star to rate it.
   - **Tags.** Right-click → *Tags…* to tick tags for the selection or make a
     new one. Tags show as colored dots after the name (in the grid views, in the
     picture's corner) and as chips in the preview panel. The star and tag

@@ -1242,11 +1242,13 @@ impl FileFlier {
                                                 super::tags::paint_tag_dots(p, shown.right() - 1.0, cy, &defs, pal);
                                             }
                                         }
-                                        // Ratings extension: stars along the picture's bottom, shown once
-                                        // rated or while hovered (click one to rate).
+                                        // Ratings extension: stars along the picture's bottom once rated.
+                                        // Hold Alt over a tile to rate it (click a star); without Alt they
+                                        // are only shown, so clicking a tile never rates it by accident.
                                         if grid_rating {
                                             let rating = meta.rating(&e.path);
-                                            if rating > 0 || ui.rect_contains_pointer(item) {
+                                            let rate = ui.input(|i| i.modifiers.alt) && ui.rect_contains_pointer(item);
+                                            if rating > 0 || rate {
                                                 let size = if gs.icon > 64.0 { 15.0 } else { 11.0 };
                                                 let cx = shown.center().x;
                                                 let cy = shown.bottom().min(thumb.bottom()) - size / 2.0 - 2.0;
@@ -1261,10 +1263,24 @@ impl FileFlier {
                                                 );
                                                 let id = Id::new(("grid_stars", idx, &e.path));
                                                 let left = cx - size * 2.5;
-                                                if let Some(n) =
-                                                    super::tags::star_row(ui, id, left, cy, size, rating, pal)
-                                                {
-                                                    item_actions.push(ItemAction::Rate(e.path.clone(), n));
+                                                if rate {
+                                                    if let Some(n) =
+                                                        super::tags::star_row(ui, id, left, cy, size, rating, pal)
+                                                    {
+                                                        item_actions.push(ItemAction::Rate(e.path.clone(), n));
+                                                    }
+                                                } else {
+                                                    for i in 0..5u8 {
+                                                        let c = pos2(left + size * (i as f32 + 0.5), cy);
+                                                        let on = i < rating;
+                                                        super::tags::paint_star(
+                                                            ui.painter(),
+                                                            c,
+                                                            size * 0.42,
+                                                            on.then_some(super::tags::STAR),
+                                                            if on { super::tags::STAR } else { pal.text_faint },
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
