@@ -622,16 +622,21 @@ impl FileFlier {
     }
 
     fn view_ui(&mut self, ui: &mut Ui, idx: usize, rect: Rect) {
-        // The folder's remembered grouping (a tag view isn't a folder).
+        // Arriving in a folder: its remembered grouping (a tag view isn't a folder).
         {
             let show_hidden = self.cfg.show_hidden;
             let tab = self.panes[idx].tab_mut();
             let want = if tab.tag.is_some() {
-                crate::config::GroupBy::None
+                Some(crate::config::GroupBy::None)
+            } else if tab.group_for.as_deref() != Some(tab.path.as_path()) {
+                tab.group_for = Some(tab.path.clone());
+                Some(self.cfg.folder_groups.get(tab.path.to_string_lossy().as_ref()).copied().unwrap_or_default())
             } else {
-                self.cfg.folder_groups.get(tab.path.to_string_lossy().as_ref()).copied().unwrap_or_default()
+                None
             };
-            if tab.group != want {
+            if let Some(want) = want
+                && tab.group != want
+            {
                 tab.group = want;
                 tab.refilter(show_hidden);
             }

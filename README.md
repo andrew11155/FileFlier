@@ -58,7 +58,8 @@ the same on every desktop environment.
   items by name (first letter) or by date modified (*Today*, *Yesterday*,
   *This week*, *This month*, *This year*, then each year), with a header above
   each group, in every view but the tree. Each folder remembers its grouping,
-  so *Downloads* can stay grouped by date while the rest aren't.
+  so *Downloads* can stay grouped by date while the rest aren't. `Ctrl+G`
+  switches between no groups, by date and by name.
 - **Columns view** scrolls sideways (`Alt` or `Shift` + wheel, or a sideways
   swipe) to the folders above when they don't all fit.
 - **Tooltips** can be turned off in *Settings → Effects*.
@@ -339,6 +340,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Ctrl+B` | Toggle the sidebar |
 | `Ctrl+↑` / `Ctrl+↓` | Previous / next place in the sidebar |
 | `Ctrl+J` | Toggle the bottom bar |
+| `Ctrl+G` | Group: none → by date → by name (remembered per folder) |
 | `Alt`/`Shift`+scroll (columns view) | Scroll the columns sideways, back toward the root |
 | `Alt`+double-click | Properties of a file or folder (GNOME Files' Properties window) |
 | `Ctrl+Shift+R` | Show or hide ratings and tags on grid tiles |

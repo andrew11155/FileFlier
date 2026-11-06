@@ -1251,20 +1251,38 @@ impl FileFlier {
                 };
                 self.set_sort(key);
             }
-            GroupNone | GroupByName | GroupByDate => {
-                // Remembered for this folder (the view picks it up as it draws).
+            GroupNone | GroupByName | GroupByDate | GroupCycle => {
+                use crate::config::GroupBy;
                 let by = match cmd {
-                    GroupByName => crate::config::GroupBy::Name,
-                    GroupByDate => crate::config::GroupBy::Modified,
-                    _ => crate::config::GroupBy::None,
+                    GroupByName => GroupBy::Name,
+                    GroupByDate => GroupBy::Modified,
+                    GroupCycle => match self.tab().group {
+                        GroupBy::None => GroupBy::Modified,
+                        GroupBy::Modified => GroupBy::Name,
+                        GroupBy::Name => GroupBy::None,
+                    },
+                    _ => GroupBy::None,
                 };
+                // This tab now, and remembered for the folder (other tabs showing it
+                // take it up when they next arrive there).
+                let tab = self.tab_mut();
+                tab.group = by;
+                tab.group_for = Some(tab.path.clone());
+                tab.refilter(h);
                 let key = self.tab().path.to_string_lossy().into_owned();
-                if by == crate::config::GroupBy::None {
+                if by == GroupBy::None {
                     self.cfg.folder_groups.remove(&key);
                 } else {
                     self.cfg.folder_groups.insert(key, by);
                 }
                 self.cfg.save();
+                if cmd == GroupCycle {
+                    self.info(match by {
+                        GroupBy::None => "Not grouped",
+                        GroupBy::Modified => "Grouped by date modified",
+                        GroupBy::Name => "Grouped by name",
+                    });
+                }
             }
             ReverseSort => {
                 self.cfg.sort.descending = !self.cfg.sort.descending;

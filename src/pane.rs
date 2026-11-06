@@ -17,6 +17,9 @@ pub struct Tab {
     /// label); empty when they aren't grouped.
     pub group: GroupBy,
     pub groups: Vec<(usize, String)>,
+    /// The folder whose remembered grouping `group` was read for (read again on
+    /// arriving in another folder, so other tabs aren't changed meanwhile).
+    pub group_for: Option<PathBuf>,
     pub selected: HashSet<PathBuf>,
     /// Cursor position, as an index into `visible`.
     pub cursor: usize,
@@ -58,6 +61,7 @@ impl Tab {
             visible: Vec::new(),
             group: GroupBy::None,
             groups: Vec::new(),
+            group_for: None,
             selected: HashSet::new(),
             cursor: 0,
             anchor: 0,
