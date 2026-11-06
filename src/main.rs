@@ -13,6 +13,7 @@ mod ext;
 mod flat;
 mod fs_model;
 mod fuzzy;
+mod groups;
 mod icons;
 mod layout;
 mod meta;

@@ -54,6 +54,13 @@ the same on every desktop environment.
   selection. The list scrolls when you drag past its top or bottom.
 - **Columns.** Drag a column header (Type, Items, Size, Rating, Modified) to
   move the column; the order is remembered. Click a header to sort by it.
+- **Groups.** The sort menu (the button in the filter box) groups a folder's
+  items by name (first letter) or by date modified (*Today*, *Yesterday*,
+  *This week*, *This month*, *This year*, then each year), with a header above
+  each group, in every view but the tree. Each folder remembers its grouping,
+  so *Downloads* can stay grouped by date while the rest aren't.
+- **Columns view** scrolls sideways (`Alt` or `Shift` + wheel, or a sideways
+  swipe) to the folders above when they don't all fit.
 - **Tooltips** can be turned off in *Settings → Effects*.
 - **Bottom bar.** Each tab's bottom bar shows how many folders and files are
   listed (of how many) and how far down you've scrolled. *Settings → Bottom
@@ -332,7 +339,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Ctrl+B` | Toggle the sidebar |
 | `Ctrl+↑` / `Ctrl+↓` | Previous / next place in the sidebar |
 | `Ctrl+J` | Toggle the bottom bar |
-| `Alt`+scroll (columns view) | Slide the parent columns back toward the root |
+| `Alt`/`Shift`+scroll (columns view) | Scroll the columns sideways, back toward the root |
 | `Alt`+double-click | Properties of a file or folder (GNOME Files' Properties window) |
 | `Ctrl+Shift+R` | Show or hide ratings and tags on grid tiles |
 | `F3` or `Ctrl+I` | Toggle the preview panel |

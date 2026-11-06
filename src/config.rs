@@ -5,6 +5,17 @@ use std::path::PathBuf;
 use crate::fs_model::Sort;
 use crate::theme::ThemeId;
 
+/// How a folder's items are grouped (with a header above each group).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum GroupBy {
+    #[default]
+    None,
+    /// By first letter.
+    Name,
+    /// Today, Yesterday, This week, This month, This year, then each year.
+    Modified,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ViewMode {
     #[default]
@@ -132,6 +143,8 @@ pub struct Config {
     pub layout: Option<crate::layout::Layout>,
     /// Folder colors chosen by the user: folder path -> color slot (red, orange, …).
     pub folder_colors: std::collections::BTreeMap<String, u8>,
+    /// How each folder's items are grouped, by folder path (folders not listed aren't).
+    pub folder_groups: std::collections::BTreeMap<String, GroupBy>,
     /// Which scheme the folder color slots are drawn in (see `ui::tint::SCHEMES`).
     pub folder_scheme: u8,
     /// Draw folders and the sidebar with GNOME's icons (the installed Adwaita theme).
@@ -223,6 +236,7 @@ impl Default for Config {
             split_ratio: 0.5,
             layout: None,
             folder_colors: Default::default(),
+            folder_groups: Default::default(),
             folder_scheme: 0,
             gnome_icons: false,
             title_icon: TitleIcon::Logo,

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
-use crate::config::ViewMode;
+use crate::config::{GroupBy, ViewMode};
 use crate::fs_model::{self, Entry, Sort};
 use crate::fuzzy;
 
@@ -13,6 +13,10 @@ pub struct Tab {
     pub entries: Vec<Entry>,
     /// Indices into `entries` that pass the hidden-file and quick-filter checks.
     pub visible: Vec<usize>,
+    /// How the items are grouped, and where each group starts in `visible` (with its
+    /// label); empty when they aren't grouped.
+    pub group: GroupBy,
+    pub groups: Vec<(usize, String)>,
     pub selected: HashSet<PathBuf>,
     /// Cursor position, as an index into `visible`.
     pub cursor: usize,
@@ -52,6 +56,8 @@ impl Tab {
             path: fs_model::canonical(&path),
             entries: Vec::new(),
             visible: Vec::new(),
+            group: GroupBy::None,
+            groups: Vec::new(),
             selected: HashSet::new(),
             cursor: 0,
             anchor: 0,
@@ -327,10 +333,48 @@ impl Tab {
             scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
             self.visible = scored.into_iter().map(|(_, i)| i).collect();
         }
+        // The tree view keeps its folders' order.
+        let by = if self.view == ViewMode::Tree { GroupBy::None } else { self.group };
+        self.groups = crate::groups::group(by, &self.entries, &mut self.visible);
         let kept = keep.and_then(|p| self.visible.iter().position(|&i| self.entries[i].path == p));
         self.cursor = kept.unwrap_or(self.cursor).min(self.visible.len().saturating_sub(1));
         self.anchor = self.cursor;
         self.scroll_to_cursor = true;
+    }
+
+    /// The item a row up or down from `vi` (`down`), `cols` to a row, rows starting
+    /// afresh at each group: the same column where there is one, else the row's last item.
+    pub fn row_step(&self, vi: usize, cols: usize, down: bool) -> usize {
+        let n = self.visible.len();
+        if n == 0 {
+            return 0;
+        }
+        let cols = cols.max(1);
+        let mut starts: Vec<usize> = self.groups.iter().map(|g| g.0).collect();
+        if starts.first() != Some(&0) {
+            starts.insert(0, 0);
+        }
+        let g = starts.iter().rposition(|&s| s <= vi).unwrap_or(0);
+        let (s, e) = (starts[g], starts.get(g + 1).copied().unwrap_or(n));
+        let (row, col) = ((vi - s) / cols, (vi - s) % cols);
+        if down {
+            if s + (row + 1) * cols < e {
+                (s + (row + 1) * cols + col).min(e - 1)
+            } else if let Some(&ns) = starts.get(g + 1) {
+                let ne = starts.get(g + 2).copied().unwrap_or(n);
+                (ns + col).min(ne - 1)
+            } else {
+                n - 1
+            }
+        } else if row > 0 {
+            s + (row - 1) * cols + col
+        } else if g > 0 {
+            let ps = starts[g - 1];
+            let last_row = (s - 1 - ps) / cols;
+            (ps + last_row * cols + col).min(s - 1)
+        } else {
+            vi.saturating_sub(cols)
+        }
     }
 
     /// Tree view rows: in tree order, skipping hidden items and everything inside
@@ -546,6 +590,36 @@ impl Pane {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_steps_start_afresh_at_each_group() {
+        let root = std::env::temp_dir().join(format!("file-flier-groups-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // Two groups of 5 and 3 items, 3 to a row: [0 1 2][3 4] | [5 6 7].
+        for f in ["a1", "a2", "a3", "a4", "a5", "b1", "b2", "b3"] {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        let mut tab = Tab::new(root.clone(), false, Sort::default(), ViewMode::Grid);
+        tab.group = GroupBy::Name;
+        tab.refilter(false);
+        assert_eq!(tab.groups.iter().map(|g| g.0).collect::<Vec<_>>(), [0, 5]);
+        assert_eq!(tab.row_step(1, 3, true), 4);
+        assert_eq!(tab.row_step(2, 3, true), 4); // no item below: the row's last
+        assert_eq!(tab.row_step(4, 3, true), 6); // into the next group, same column
+        assert_eq!(tab.row_step(6, 3, false), 4);
+        assert_eq!(tab.row_step(7, 3, false), 4); // column 2 has nothing above: the row's last
+        assert_eq!(tab.row_step(3, 3, false), 0);
+        assert_eq!(tab.row_step(1, 3, false), 0);
+        assert_eq!(tab.row_step(6, 3, true), 7);
+        // Ungrouped, as before: down by a row, at most to the end.
+        tab.group = GroupBy::None;
+        tab.refilter(false);
+        assert_eq!(tab.row_step(4, 3, true), 7);
+        assert_eq!(tab.row_step(6, 3, true), 7);
+        assert_eq!(tab.row_step(4, 3, false), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn flat_lists_every_file() {

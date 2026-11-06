@@ -29,72 +29,68 @@ impl FileFlier {
         let tab = self.panes[idx].tab();
         let path = tab.path.clone();
         let cursor = tab.cursor_entry().cloned();
-        // ancestors[j] is the (j+1)th folder up; its highlighted item is the jth.
-        let ancestors: Vec<PathBuf> = path.ancestors().map(Path::to_path_buf).collect();
-        let n_left = (ancestors.len() - 1).min(fit - 2);
-        // Parent folders that don't fit; Alt+scroll slides the parent columns back to them.
-        let hidden = ancestors.len() - 1 - n_left;
-        let back = self.columns_back(ui, idx, rect, &path, hidden);
-        let w = rect.width() / (n_left + 2) as f32;
+        // Every folder from the root down, then this one (the middle column), then what's
+        // under the cursor. They make a strip that scrolls sideways (Alt or Shift + wheel,
+        // or a sideways swipe) when it doesn't fit; it starts scrolled to the end.
+        let mut parents: Vec<PathBuf> = path.ancestors().skip(1).map(Path::to_path_buf).collect();
+        parents.reverse();
+        let total = parents.len() + 2;
+        let w = rect.width() / total.min(fit) as f32;
+        let max_off = w * total as f32 - rect.width();
+        let from_end = self.columns_scroll(ui, idx, rect, &path, max_off);
+        let x0 = rect.left() - (max_off - from_end);
         let col = |k: usize| {
-            Rect::from_min_max(
-                pos2(rect.left() + k as f32 * w, rect.top()),
-                pos2(rect.left() + (k + 1) as f32 * w, rect.bottom()),
-            )
+            Rect::from_min_max(pos2(x0 + k as f32 * w, rect.top()), pos2(x0 + (k + 1) as f32 * w, rect.bottom()))
         };
         let pal = self.pal();
-        for k in 0..n_left {
-            let j = n_left - 1 - k + back;
+        let lines = ui.painter().with_clip_rect(rect);
+        for (k, dir) in parents.iter().enumerate() {
             let r = col(k);
-            self.side_column(ui, idx, ("parent", k), r, &ancestors[j + 1], Some(&ancestors[j]));
-            ui.painter().vline(r.right(), r.y_range(), Stroke::new(1.0, pal.border));
+            if !r.intersects(rect) {
+                continue;
+            }
+            let down = parents.get(k + 1).unwrap_or(&path);
+            self.side_column(ui, idx, ("parent", k), r, rect, dir, Some(down));
+            lines.vline(r.right(), r.y_range(), Stroke::new(1.0, pal.border));
         }
-        let middle = col(n_left);
-        // Slid back: a double line where folders in between are skipped.
-        if back > 0 {
-            let x = middle.left() - 3.0;
-            ui.painter().vline(x, middle.y_range(), Stroke::new(1.0, pal.border));
-        }
-        let right = col(n_left + 1);
-        ui.painter().vline(right.left(), right.y_range(), Stroke::new(1.0, pal.border));
-        match cursor {
-            Some(e) if e.is_dir => self.side_column(ui, idx, ("child", 0), right, &e.path, None),
-            Some(e) => self.file_column(ui, right, &e),
-            None => {}
+        let middle = col(parents.len());
+        let right = col(parents.len() + 1);
+        lines.vline(right.left(), right.y_range(), Stroke::new(1.0, pal.border));
+        if right.intersects(rect) {
+            match cursor {
+                Some(e) if e.is_dir => self.side_column(ui, idx, ("child", 0), right, rect, &e.path, None),
+                Some(e) => self.file_column(ui, right.intersect(rect), &e),
+                None => {}
+            }
         }
         middle
     }
 
-    /// How many folders the parent columns are slid back (toward the root) by Alt+scroll
-    /// over the columns, up to `hidden`. Back to 0 when the folder changes.
-    fn columns_back(&mut self, ui: &mut Ui, idx: usize, rect: Rect, path: &Path, hidden: usize) -> usize {
-        let id = Id::new(("miller_back", idx));
-        let (mut back, mut acc, at): (usize, f32, PathBuf) =
-            ui.ctx().data(|d| d.get_temp(id)).unwrap_or((0, 0.0, path.to_path_buf()));
+    /// How far the strip is scrolled back from its end (toward the root), in points, up to
+    /// `max_off`. Alt or Shift + wheel over the columns scrolls it, as does a sideways
+    /// swipe; it goes back to the end when the folder changes.
+    fn columns_scroll(&mut self, ui: &mut Ui, idx: usize, rect: Rect, path: &Path, max_off: f32) -> f32 {
+        let id = Id::new(("miller_scroll", idx));
+        let (mut from_end, at): (f32, PathBuf) = ui.ctx().data(|d| d.get_temp(id)).unwrap_or((0.0, path.to_path_buf()));
         if at != path {
-            (back, acc) = (0, 0.0);
+            from_end = 0.0;
         }
-        if ui.rect_contains_pointer(rect) && ui.input(|i| i.modifiers.alt) {
-            // Taken from the columns' own scrolling, which would move them up and down.
-            let d = ui.ctx().input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta));
-            // Wheel up (or left) goes toward the root, one folder per notch or so.
-            acc += d.x + d.y;
-            const STEP: f32 = 40.0;
-            while acc >= STEP {
-                back += 1;
-                acc -= STEP;
-            }
-            while acc <= -STEP {
-                back = back.saturating_sub(1);
-                acc += STEP;
-            }
+        if ui.rect_contains_pointer(rect) {
+            let m = ui.input(|i| i.modifiers);
+            // Taken from the columns' own (up and down) scrolling.
+            let d = ui.ctx().input_mut(|i| {
+                if m.alt || m.shift {
+                    std::mem::take(&mut i.smooth_scroll_delta)
+                } else {
+                    vec2(std::mem::take(&mut i.smooth_scroll_delta.x), 0.0)
+                }
+            });
+            // Wheel up (content moving down or right) goes toward the root.
+            from_end += d.x + d.y;
         }
-        if back >= hidden || back == 0 {
-            acc = 0.0;
-        }
-        let back = back.min(hidden);
-        ui.ctx().data_mut(|d| d.insert_temp(id, (back, acc, path.to_path_buf())));
-        back
+        let from_end = from_end.clamp(0.0, max_off.max(0.0));
+        ui.ctx().data_mut(|d| d.insert_temp(id, (from_end, path.to_path_buf())));
+        from_end
     }
 
     /// The contents of `dir`, for a side column (re-read every couple of seconds).
@@ -115,13 +111,16 @@ impl FileFlier {
         list
     }
 
-    /// One read-only column listing `dir`. Clicking an item goes to it.
+    /// One read-only column listing `dir`, drawn in `r` but only within `clip`. Clicking an
+    /// item goes to it.
+    #[allow(clippy::too_many_arguments)]
     fn side_column(
         &mut self,
         ui: &mut Ui,
         idx: usize,
         key: (&str, usize),
         r: Rect,
+        clip: Rect,
         dir: &Path,
         highlight: Option<&Path>,
     ) {
@@ -146,7 +145,7 @@ impl FileFlier {
         }
         let mut actions = Vec::new();
         ui.scope_builder(UiBuilder::new().max_rect(r.shrink2(vec2(0.0, 2.0))), |ui| {
-            ui.set_clip_rect(r);
+            ui.set_clip_rect(r.intersect(clip));
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             if list.is_empty() {
                 text(

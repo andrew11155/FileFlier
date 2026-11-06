@@ -55,6 +55,107 @@ enum ItemAction {
     ClearSelection,
 }
 
+/// Where each row of the list goes, top to bottom: group headers and rows of items.
+/// Without groups it's just the rows of items, all `pitch` high.
+struct RowMap {
+    rows: Vec<MapRow>,
+    /// Top of each row from the top of the list, and (last) the list's height.
+    tops: Vec<f32>,
+    height: f32,
+    /// Each item's row (by index into `visible`).
+    item_row: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+enum MapRow {
+    /// The header of `groups[_]`.
+    Header(usize),
+    /// Items `first..first + len` (indices into `visible`).
+    Items { first: usize, len: usize },
+}
+
+impl RowMap {
+    fn new(n: usize, ncols: usize, pitch: f32, header_h: f32, groups: &[(usize, String)]) -> Self {
+        let ncols = ncols.max(1);
+        let mut m = RowMap { rows: Vec::new(), tops: vec![0.0], height: 0.0, item_row: Vec::with_capacity(n) };
+        let push = |m: &mut RowMap, row: MapRow, h: f32| {
+            m.rows.push(row);
+            m.height += h;
+            m.tops.push(m.height);
+        };
+        let starts: Vec<usize> = groups.iter().map(|g| g.0).filter(|&s| s < n).collect();
+        let grouped = !starts.is_empty();
+        let starts = if grouped { starts } else { vec![0] };
+        for (g, &s) in starts.iter().enumerate() {
+            let e = starts.get(g + 1).copied().unwrap_or(n).min(n);
+            if grouped {
+                push(&mut m, MapRow::Header(g), header_h);
+            }
+            let mut i = s;
+            while i < e {
+                let len = (e - i).min(ncols);
+                for _ in 0..len {
+                    m.item_row.push(m.rows.len());
+                }
+                push(&mut m, MapRow::Items { first: i, len }, pitch);
+                i += len;
+            }
+        }
+        m
+    }
+
+    /// The rows between `y0` and `y1` (from the top of the list).
+    fn rows_in(&self, y0: f32, y1: f32) -> std::ops::Range<usize> {
+        let n = self.rows.len();
+        // tops[r + 1] is row r's bottom.
+        let first = self.tops[1..].partition_point(|&b| b <= y0);
+        let end = self.tops[..n].partition_point(|&t| t < y1);
+        first.min(n)..end.max(first.min(n))
+    }
+
+    /// The top of item `vi`'s row; with `header`, of its group's header if it's in the
+    /// group's first row.
+    fn item_top(&self, vi: usize, header: bool) -> f32 {
+        let Some(&r) = self.item_row.get(vi) else { return 0.0 };
+        if header && r > 0 && matches!(self.rows[r - 1], MapRow::Header(_)) {
+            return self.tops[r - 1];
+        }
+        self.tops[r]
+    }
+
+    /// Item `vi`'s column in its row.
+    fn item_col(&self, vi: usize) -> usize {
+        match self.item_row.get(vi).map(|&r| self.rows[r]) {
+            Some(MapRow::Items { first, .. }) => vi - first,
+            _ => 0,
+        }
+    }
+}
+
+/// A group's header: its name and how many items it has, then a line.
+fn group_header(
+    p: &egui::Painter,
+    r: Rect,
+    groups: &[(usize, String)],
+    g: usize,
+    n: usize,
+    row_gap: f32,
+    pal: &crate::theme::Palette,
+) {
+    let Some((start, label)) = groups.get(g) else { return };
+    let end = groups.get(g + 1).map_or(n, |x| x.0);
+    let cy = r.bottom() - 13.0;
+    let x = r.left() + 16.0;
+    let name = p.layout_no_wrap(label.clone(), super::bold(13.5), pal.text_strong);
+    let name_w = name.size().x;
+    p.galley(pos2(x, cy - name.size().y / 2.0), name, pal.text_strong);
+    let count = text(p, pos2(x + name_w + 8.0, cy), Align2::LEFT_CENTER, end - start, 12.5, pal.text_faint);
+    let line_r = r.right() - 12.0 - row_gap;
+    if count.right() + 10.0 < line_r {
+        p.hline(count.right() + 10.0..=line_r, cy, Stroke::new(1.0, pal.row_sep));
+    }
+}
+
 /// A price-tag shape (the bottom bar's "tags on tiles" switch).
 fn tag_glyph(p: &egui::Painter, r: Rect, c: Color32, filled: bool) {
     let (l, t, rt, b) = (r.left() + 1.0, r.top() + 3.0, r.right() - 1.0, r.bottom() - 3.0);
@@ -219,7 +320,11 @@ impl FileFlier {
         self.ctrl_wheel_views(ui, idx, content);
         if self.panes[idx].tab().view == ViewMode::Columns {
             let middle = self.columns_ui(ui, idx, content);
-            self.view_ui(ui, idx, middle);
+            // The middle column may be partly scrolled out of the pane.
+            ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(content));
+                self.view_ui(ui, idx, middle);
+            });
         } else {
             self.view_ui(ui, idx, content);
         }
@@ -517,6 +622,20 @@ impl FileFlier {
     }
 
     fn view_ui(&mut self, ui: &mut Ui, idx: usize, rect: Rect) {
+        // The folder's remembered grouping (a tag view isn't a folder).
+        {
+            let show_hidden = self.cfg.show_hidden;
+            let tab = self.panes[idx].tab_mut();
+            let want = if tab.tag.is_some() {
+                crate::config::GroupBy::None
+            } else {
+                self.cfg.folder_groups.get(tab.path.to_string_lossy().as_ref()).copied().unwrap_or_default()
+            };
+            if tab.group != want {
+                tab.group = want;
+                tab.refilter(show_hidden);
+            }
+        }
         let pal = self.pal();
         let is_active = idx == self.active;
         let sort = self.cfg.sort;
@@ -711,7 +830,9 @@ impl FileFlier {
                 (((inner_w / gs.tile_w).floor() as usize).max(1), gs.tile_h)
             }
         };
-        let rows = n.div_ceil(ncols);
+        // Group headers are shorter than the grids' rows.
+        let header_h = if view == ViewMode::Grid { 40.0 } else { pitch.max(30.0) };
+        let map = RowMap::new(n, ncols, pitch, header_h, &tab.groups);
 
         // Keep the cursor in view.
         let key = Id::new(("scroll", idx));
@@ -721,7 +842,8 @@ impl FileFlier {
         let anim_key = Id::new(("scroll_anim", idx));
         if tab.scroll_to_cursor {
             tab.scroll_to_cursor = false;
-            let y = (tab.cursor / ncols) as f32 * pitch;
+            // A group's first row shows with its header.
+            let y = map.item_top(tab.cursor, true);
             let target = if y < off {
                 Some(y)
             } else if y + pitch > off + view_h {
@@ -773,8 +895,8 @@ impl FileFlier {
             && tab.selected.len() == 1
             && tab.cursor_entry().is_some_and(|e| tab.selected.contains(&e.path));
         let sel_key = Id::new(("sel_anim", idx, tab.path.as_os_str()));
-        let (target_row, target_col) = ((tab.cursor / ncols) as f32, (tab.cursor % ncols) as f32);
-        let anim_row = ctx.animate_value_with_time(sel_key.with("r"), target_row, fx.dur(0.09));
+        let target_col = map.item_col(tab.cursor) as f32;
+        let anim_y = ctx.animate_value_with_time(sel_key.with("y"), map.item_top(tab.cursor, false), fx.dur(0.09));
         let anim_col = ctx.animate_value_with_time(sel_key.with("c"), target_col, fx.dur(0.09));
 
         let mut item_actions: Vec<ItemAction> = Vec::new();
@@ -807,10 +929,14 @@ impl FileFlier {
                     ui.set_clip_rect(list_rect);
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                     ui.multiply_opacity(nav_t);
-                    area.show_rows(ui, pitch, rows, |ui, range| {
+                    area.show_viewport(ui, |ui, viewport| {
+                        // Content-space origin of the first row, so things scroll with the rows.
+                        let origin = ui.max_rect().min;
+                        let full_w = ui.available_width();
+                        ui.set_min_height(map.height);
+                        let range = map.rows_in(viewport.top(), viewport.bottom());
                         super::dnd::drag_scroll(ui, list_rect);
                         // Rectangle selection, in content coordinates (it scrolls with the rows).
-                        let origin = pos2(ui.cursor().left(), ui.cursor().top() - range.start as f32 * pitch);
                         if bg.drag_started()
                             && let Some(press) = ui.input(|i| i.pointer.press_origin())
                         {
@@ -836,17 +962,16 @@ impl FileFlier {
                             lp.rect_stroke(shown, pal.round(2.0), Stroke::new(1.0, pal.accent), StrokeKind::Inside);
                             ui.ctx().data_mut(|d| d.insert_temp(band_key.with("last"), sel));
                             // The items it touches, from the layout (not just the rows on screen).
-                            let w = ui.available_width();
+                            let w = full_w;
                             let mut hits = Vec::new();
-                            let first = (((sel.top() - origin.y) / pitch).floor().max(0.0)) as usize;
-                            let last = (((sel.bottom() - origin.y) / pitch).floor().max(0.0)) as usize;
-                            for row in first..=last.min(rows.saturating_sub(1)) {
-                                for c in 0..ncols {
-                                    let vi = row * ncols + c;
+                            for row in map.rows_in(sel.top() - origin.y, sel.bottom() - origin.y) {
+                                let MapRow::Items { first, len } = map.rows[row] else { continue };
+                                for c in 0..len {
+                                    let vi = first + c;
                                     if vi >= tab.visible.len() {
                                         break;
                                     }
-                                    let top = origin.y + row as f32 * pitch;
+                                    let top = origin.y + map.tops[row];
                                     let r = match view {
                                         ViewMode::Details | ViewMode::Tree | ViewMode::Columns => Rect::from_min_max(
                                             pos2(origin.x + 8.0, top),
@@ -874,22 +999,27 @@ impl FileFlier {
                             band_hits = Some((hits, base));
                         }
                         if single_sel {
-                            // Content-space origin of row 0, so the highlight scrolls with the rows.
-                            let origin = ui.cursor().top() - range.start as f32 * pitch;
-                            let w = ui.available_width();
                             let cell_w =
-                                if view == ViewMode::List { inner_w / ncols as f32 } else { w - 16.0 - row_gap };
-                            let x = ui.cursor().left() + 8.0 + anim_col * cell_w;
+                                if view == ViewMode::List { inner_w / ncols as f32 } else { full_w - 16.0 - row_gap };
+                            let x = origin.x + 8.0 + anim_col * cell_w;
                             let width = if view == ViewMode::List { cell_w - 6.0 } else { cell_w };
-                            let r =
-                                Rect::from_min_size(pos2(x, origin + anim_row * pitch + 1.0), vec2(width, pitch - 2.0));
+                            let r = Rect::from_min_size(pos2(x, origin.y + anim_y + 1.0), vec2(width, pitch - 2.0));
                             ui.painter().rect_filled(r, pal.round(4.0), sel_fill);
                         }
                         for row in range {
-                            let (row_rect, _) =
-                                ui.allocate_exact_size(vec2(ui.available_width(), pitch), Sense::hover());
-                            for c in 0..ncols {
-                                let vi = row * ncols + c;
+                            let row_rect = Rect::from_min_size(
+                                pos2(origin.x, origin.y + map.tops[row]),
+                                vec2(full_w, map.tops[row + 1] - map.tops[row]),
+                            );
+                            let (first, len) = match map.rows[row] {
+                                MapRow::Header(g) => {
+                                    group_header(ui.painter(), row_rect, &tab.groups, g, n, row_gap, pal);
+                                    continue;
+                                }
+                                MapRow::Items { first, len } => (first, len),
+                            };
+                            for c in 0..len {
+                                let vi = first + c;
                                 let Some(&ei) = tab.visible.get(vi) else { break };
                                 let e = &tab.entries[ei];
                                 if show_rating || show_tags {
@@ -1378,7 +1508,7 @@ impl FileFlier {
         if let Some(commit) = rename_done {
             self.finish_rename(commit);
         }
-        let content_h = rows as f32 * pitch;
+        let content_h = map.height;
         let scroll_pct = if content_h <= out.inner_rect.height() {
             0.0
         } else {
@@ -1586,7 +1716,15 @@ impl FileFlier {
             if self.cfg.ext_on(crate::ext::Ext::Ratings) {
                 items.insert(items.len() - 1, MenuItem::Cmd(Command::SortByRating));
             }
-            self.actions.push(Action::OpenMenu(o.rect.left_top() - vec2(0.0, 250.0), items));
+            // Grouping, remembered for this folder.
+            let g = self.panes[idx].tab().group;
+            use crate::config::GroupBy;
+            items.push(MenuItem::Sep);
+            items.push(MenuItem::Choice(Command::GroupNone, g == GroupBy::None));
+            items.push(MenuItem::Choice(Command::GroupByName, g == GroupBy::Name));
+            items.push(MenuItem::Choice(Command::GroupByDate, g == GroupBy::Modified));
+            let h = 52.0 + 30.0 * items.len() as f32;
+            self.actions.push(Action::OpenMenu(o.rect.left_top() - vec2(0.0, h), items));
         }
 
         // Counters: folders shown/total, files shown/total, view toggle, scroll %.
@@ -1895,6 +2033,28 @@ mod tests {
         assert_eq!(c.items, Some((right - 400.0, right - 400.0 + 60.0)));
         assert_eq!(c.ty, Some((right - 550.0, right - 550.0 + 140.0)));
         assert_eq!(c.name, right - 550.0 - 12.0);
+    }
+
+    #[test]
+    fn row_map_lays_out_groups() {
+        // Ungrouped: plain rows.
+        let m = RowMap::new(7, 3, 100.0, 40.0, &[]);
+        assert_eq!(m.tops, [0.0, 100.0, 200.0, 300.0]);
+        assert_eq!(m.item_top(4, true), 100.0);
+        assert_eq!(m.item_col(4), 1);
+        assert_eq!(m.rows_in(150.0, 250.0), 1..3);
+        // Groups of 4 and 3: header, 2 rows, header, 1 row.
+        let groups = [(0, "A".to_string()), (4, "B".to_string())];
+        let m = RowMap::new(7, 3, 100.0, 40.0, &groups);
+        assert_eq!(m.tops, [0.0, 40.0, 140.0, 240.0, 280.0, 380.0]);
+        assert_eq!(m.height, 380.0);
+        assert_eq!(m.item_top(4, false), 280.0);
+        assert_eq!(m.item_top(4, true), 240.0); // with its header
+        assert_eq!(m.item_top(3, true), 140.0);
+        assert_eq!(m.item_col(3), 0);
+        assert_eq!(m.rows_in(0.0, 1.0), 0..1);
+        assert_eq!(m.rows_in(250.0, 1000.0), 3..5);
+        assert_eq!(RowMap::new(0, 3, 100.0, 40.0, &[]).rows_in(0.0, 500.0), 0..0);
     }
 
     #[test]

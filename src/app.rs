@@ -1251,6 +1251,21 @@ impl FileFlier {
                 };
                 self.set_sort(key);
             }
+            GroupNone | GroupByName | GroupByDate => {
+                // Remembered for this folder (the view picks it up as it draws).
+                let by = match cmd {
+                    GroupByName => crate::config::GroupBy::Name,
+                    GroupByDate => crate::config::GroupBy::Modified,
+                    _ => crate::config::GroupBy::None,
+                };
+                let key = self.tab().path.to_string_lossy().into_owned();
+                if by == crate::config::GroupBy::None {
+                    self.cfg.folder_groups.remove(&key);
+                } else {
+                    self.cfg.folder_groups.insert(key, by);
+                }
+                self.cfg.save();
+            }
             ReverseSort => {
                 self.cfg.sort.descending = !self.cfg.sort.descending;
                 self.cfg.save();
@@ -1611,8 +1626,8 @@ impl FileFlier {
         let n = tab.visible.len();
         let last = n.saturating_sub(1);
         let mut keys = vec![
-            (Key::ArrowDown, (tab.cursor + cols).min(last)),
-            (Key::ArrowUp, tab.cursor.saturating_sub(cols)),
+            (Key::ArrowDown, tab.row_step(tab.cursor, cols, true).min(last)),
+            (Key::ArrowUp, tab.row_step(tab.cursor, cols, false)),
             (Key::PageDown, (tab.cursor + page).min(last)),
             (Key::PageUp, tab.cursor.saturating_sub(page)),
             (Key::Home, 0),
