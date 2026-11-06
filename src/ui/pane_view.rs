@@ -49,6 +49,8 @@ enum ItemAction {
     ToggleOpen(PathBuf),
     /// Stars clicked in the Rating column.
     Rate(PathBuf, u8),
+    /// Alt+double-click: the item's Properties window.
+    Properties(usize),
     BackgroundContext(egui::Pos2),
     ClearSelection,
 }
@@ -1299,7 +1301,9 @@ impl FileFlier {
                                 if resp.double_clicked() {
                                     // Ctrl+double-click opens a folder in a new tab, like a middle-click.
                                     // (The two Ctrl+clicks toggle its selection twice, leaving it as it was.)
-                                    if mods.command && e.is_dir {
+                                    if mods.alt {
+                                        item_actions.push(ItemAction::Properties(vi));
+                                    } else if mods.command && e.is_dir {
                                         item_actions.push(ItemAction::NewTab(e.path.clone()));
                                     } else {
                                         item_actions.push(ItemAction::Open(vi));
@@ -1512,6 +1516,14 @@ impl FileFlier {
                 ItemAction::NewTab(p) => {
                     self.actions.push(Action::Activate(idx));
                     self.actions.push(Action::OpenInNewTab(p));
+                }
+                ItemAction::Properties(vi) => {
+                    tab.move_cursor(vi, false);
+                    tab.scroll_to_cursor = false;
+                    self.actions.push(Action::Activate(idx));
+                    if let Some(e) = tab.entry_at(vi) {
+                        crate::properties::show(e.path.clone(), &ctx);
+                    }
                 }
                 ItemAction::BackgroundContext(pos) => {
                     tab.selected.clear();

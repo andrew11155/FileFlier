@@ -23,6 +23,7 @@ mod openwith;
 mod ops;
 mod pane;
 mod preview;
+mod properties;
 mod search;
 mod system_icons;
 mod theme;

@@ -2049,6 +2049,11 @@ impl eframe::App for FileFlier {
                 crate::dropbox::Event::Error(m) => self.error(m),
             }
         }
+        // No Properties window to be had (no file manager answering): show our info panel.
+        if !crate::properties::failed().is_empty() {
+            self.cfg.show_preview = true;
+            self.info("No Properties window available; showing the info panel");
+        }
         if self.native.is_none() {
             self.native = Some(crate::native::Native::new(frame, &ctx));
         }
