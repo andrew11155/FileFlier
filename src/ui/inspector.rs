@@ -38,6 +38,9 @@ impl FileFlier {
         let fx = self.fx();
         let side = self.cfg.inspector_side;
         super::surface(ui.painter(), rect, pal.sidebar, &fx, pal);
+        self.inspector_resize(ui, rect, side);
+        self.inspector_body(ui, rect, side);
+        // The line between the panel and the panes, on top of everything in it.
         if !fx.glass {
             let s = Stroke::new(1.0, pal.border);
             let p = ui.painter();
@@ -48,7 +51,10 @@ impl FileFlier {
                 PanelSide::Top => p.hline(rect.x_range(), rect.bottom() - 0.5, s),
             };
         }
-        self.inspector_resize(ui, rect, side);
+    }
+
+    fn inspector_body(&mut self, ui: &mut Ui, rect: Rect, side: PanelSide) {
+        let pal = self.pal();
         // One player at a time: Quick Look has its own.
         if self.quicklook {
             self.insp_player = None;
@@ -394,135 +400,182 @@ impl FileFlier {
             ui.set_clip_rect(area.intersect(ui.clip_rect()));
             egui::ScrollArea::vertical().id_salt("insp_details").auto_shrink(false).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                let w = ui.available_width();
+                let full_w = ui.available_width();
                 ui.add_space(12.0);
-                if column {
-                    // The name, in full, and what it is.
-                    let g = super::wrapped_in(ui.painter(), &e.name, super::bold(16.0), pal.text_strong, w, 4);
-                    let (r, _) = ui.allocate_exact_size(vec2(w, g.size().y), Sense::hover());
-                    ui.painter().galley(pos2(r.center().x, r.top()), g, pal.text_strong);
-                    ui.add_space(3.0);
-                }
-                let sub = if e.is_dir {
-                    if column { String::new() } else { kind.clone() }
-                } else if column {
-                    human_size(e.size)
+                // A wide band puts the Information beside the rest instead of below it.
+                let two = !column && full_w >= 560.0;
+                let meta_w = if two { (full_w * 0.4).clamp(220.0, 320.0) } else { full_w };
+                let info_w = if two { (full_w - meta_w - 28.0).min(560.0) } else { full_w };
+                let layout = if two {
+                    egui::Layout::left_to_right(egui::Align::Min)
                 } else {
-                    format!("{kind} — {}", human_size(e.size))
+                    egui::Layout::top_down(egui::Align::Min)
                 };
-                if !sub.is_empty() {
-                    let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
-                    let g = elided(ui.painter(), &sub, 12.5, pal.text_dim, w);
-                    let x = if column { r.center().x - g.size().x / 2.0 } else { r.left() };
-                    ui.painter().galley(pos2(x, r.center().y - g.size().y / 2.0), g, pal.text_dim);
-                }
-                ui.add_space(8.0);
-                if ratings {
-                    let size = 18.0;
-                    let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
-                    let left = if column { r.center().x - size * 2.5 } else { r.left() };
-                    rate = super::tags::star_row(ui, Id::new("insp_stars"), left, r.center().y, size, rating, pal);
-                    ui.add_space(6.0);
-                }
-                if tags_on {
-                    // Chips, wrapping; click one to see everything with it, + to edit.
-                    let chip_h = 22.0;
-                    let labels: Vec<(Option<&crate::meta::TagDef>, std::sync::Arc<egui::Galley>)> = tags
-                        .iter()
-                        .map(Some)
-                        .chain(std::iter::once(None))
-                        .map(|t| {
-                            let label = t.map_or("+ Tag".to_string(), |t| t.name.clone());
-                            (t, ui.painter().layout_no_wrap(label, super::font(12.5), pal.text))
-                        })
-                        .collect();
-                    let mut spots = Vec::new();
-                    let (mut x, mut y) = (0.0f32, 0.0f32);
-                    for (t, g) in &labels {
-                        let cw = g.size().x + if t.is_some() { 28.0 } else { 16.0 };
-                        if x + cw > w && x > 0.0 {
-                            x = 0.0;
-                            y += chip_h + 6.0;
+                ui.with_layout(layout, |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(meta_w);
+                        let w = meta_w;
+                        if column {
+                            // The name, in full, and what it is.
+                            let g = super::wrapped_in(ui.painter(), &e.name, super::bold(16.0), pal.text_strong, w, 4);
+                            let (r, _) = ui.allocate_exact_size(vec2(w, g.size().y), Sense::hover());
+                            ui.painter().galley(pos2(r.center().x, r.top()), g, pal.text_strong);
+                            ui.add_space(3.0);
                         }
-                        spots.push(Rect::from_min_size(pos2(x, y), vec2(cw, chip_h)));
-                        x += cw + 6.0;
-                    }
-                    let (block, _) = ui.allocate_exact_size(vec2(w, y + chip_h), Sense::hover());
-                    // A column centers its rows of chips.
-                    for (i, ((t, g), spot)) in labels.into_iter().zip(&spots).enumerate() {
-                        let row_w =
-                            spots.iter().filter(|s| s.top() == spot.top()).map(|s| s.right()).fold(0.0, f32::max);
-                        let dx = if column { (w - row_w) / 2.0 } else { 0.0 };
-                        let r = spot.translate(block.min.to_vec2() + vec2(dx, 0.0));
-                        let resp = ui.interact(r, Id::new(("insp_tag", i)), Sense::click());
-                        let p = ui.painter();
-                        match t {
-                            Some(t) => {
-                                let c = t.color32();
-                                p.rect_filled(
-                                    r,
-                                    chip_h / 2.0,
-                                    c.gamma_multiply(if resp.hovered() { 0.35 } else { 0.22 }),
-                                );
-                                p.circle_filled(pos2(r.left() + 11.0, r.center().y), 4.5, c);
-                                p.galley(pos2(r.left() + 20.0, r.center().y - g.size().y / 2.0), g, pal.text);
-                                if resp.on_hover_text(format!("Show everything tagged “{}”", t.name)).clicked() {
-                                    show_tag = Some(t.name.clone());
+                        let sub = if e.is_dir {
+                            if column { String::new() } else { kind.clone() }
+                        } else if column {
+                            human_size(e.size)
+                        } else {
+                            format!("{kind} — {}", human_size(e.size))
+                        };
+                        if !sub.is_empty() {
+                            let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
+                            let g = elided(ui.painter(), &sub, 12.5, pal.text_dim, w);
+                            let x = if column { r.center().x - g.size().x / 2.0 } else { r.left() };
+                            ui.painter().galley(pos2(x, r.center().y - g.size().y / 2.0), g, pal.text_dim);
+                        }
+                        ui.add_space(8.0);
+                        if ratings {
+                            let size = 18.0;
+                            let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
+                            let left = if column { r.center().x - size * 2.5 } else { r.left() };
+                            rate =
+                                super::tags::star_row(ui, Id::new("insp_stars"), left, r.center().y, size, rating, pal);
+                            ui.add_space(6.0);
+                        }
+                        if tags_on {
+                            // Chips, wrapping; click one to see everything with it, + to edit.
+                            let chip_h = 22.0;
+                            let labels: Vec<(Option<&crate::meta::TagDef>, std::sync::Arc<egui::Galley>)> = tags
+                                .iter()
+                                .map(Some)
+                                .chain(std::iter::once(None))
+                                .map(|t| {
+                                    let label = t.map_or("+ Tag".to_string(), |t| t.name.clone());
+                                    (t, ui.painter().layout_no_wrap(label, super::font(12.5), pal.text))
+                                })
+                                .collect();
+                            let mut spots = Vec::new();
+                            let (mut x, mut y) = (0.0f32, 0.0f32);
+                            for (t, g) in &labels {
+                                let cw = g.size().x + if t.is_some() { 28.0 } else { 16.0 };
+                                if x + cw > w && x > 0.0 {
+                                    x = 0.0;
+                                    y += chip_h + 6.0;
+                                }
+                                spots.push(Rect::from_min_size(pos2(x, y), vec2(cw, chip_h)));
+                                x += cw + 6.0;
+                            }
+                            let (block, _) = ui.allocate_exact_size(vec2(w, y + chip_h), Sense::hover());
+                            // A column centers its rows of chips.
+                            for (i, ((t, g), spot)) in labels.into_iter().zip(&spots).enumerate() {
+                                let row_w = spots
+                                    .iter()
+                                    .filter(|s| s.top() == spot.top())
+                                    .map(|s| s.right())
+                                    .fold(0.0, f32::max);
+                                let dx = if column { (w - row_w) / 2.0 } else { 0.0 };
+                                let r = spot.translate(block.min.to_vec2() + vec2(dx, 0.0));
+                                let resp = ui.interact(r, Id::new(("insp_tag", i)), Sense::click());
+                                let p = ui.painter();
+                                match t {
+                                    Some(t) => {
+                                        let c = t.color32();
+                                        p.rect_filled(
+                                            r,
+                                            chip_h / 2.0,
+                                            c.gamma_multiply(if resp.hovered() { 0.35 } else { 0.22 }),
+                                        );
+                                        p.circle_filled(pos2(r.left() + 11.0, r.center().y), 4.5, c);
+                                        p.galley(pos2(r.left() + 20.0, r.center().y - g.size().y / 2.0), g, pal.text);
+                                        if resp.on_hover_text(format!("Show everything tagged “{}”", t.name)).clicked()
+                                        {
+                                            show_tag = Some(t.name.clone());
+                                        }
+                                    }
+                                    None => {
+                                        p.rect_filled(
+                                            r,
+                                            chip_h / 2.0,
+                                            if resp.hovered() { pal.hover } else { pal.tab_hover },
+                                        );
+                                        p.galley(
+                                            pos2(r.left() + 8.0, r.center().y - g.size().y / 2.0),
+                                            g,
+                                            pal.text_dim,
+                                        );
+                                        edit_tags = resp.on_hover_text("Add or remove tags").clicked();
+                                    }
                                 }
                             }
-                            None => {
-                                p.rect_filled(r, chip_h / 2.0, if resp.hovered() { pal.hover } else { pal.tab_hover });
-                                p.galley(pos2(r.left() + 8.0, r.center().y - g.size().y / 2.0), g, pal.text_dim);
-                                edit_tags = resp.on_hover_text("Add or remove tags").clicked();
-                            }
+                            ui.add_space(10.0);
                         }
+                    });
+                    if two {
+                        ui.add_space(28.0);
                     }
-                    ui.add_space(10.0);
-                }
-
-                // Information: a rounded list, a line between rows.
-                ui.add_space(4.0);
-                let (r, _) = ui.allocate_exact_size(vec2(w, 24.0), Sense::hover());
-                super::text_bold(
-                    ui.painter(),
-                    pos2(r.left() + 2.0, r.center().y),
-                    Align2::LEFT_CENTER,
-                    "Information",
-                    12.5,
-                    pal.text_strong,
-                );
-                ui.add_space(4.0);
-                let label_w = 100.0f32.min(w * 0.4);
-                let lay: Vec<(&str, std::sync::Arc<egui::Galley>, f32)> = rows
-                    .iter()
-                    .map(|(k, v)| {
-                        let g = right_aligned(ui.painter(), v, 12.5, pal.text, w - label_w - 28.0);
-                        let h = (g.size().y + 14.0).max(32.0);
-                        (k.as_str(), g, h)
-                    })
-                    .collect();
-                let total: f32 = lay.iter().map(|l| l.2).sum();
-                let (boxr, _) = ui.allocate_exact_size(vec2(w, total), Sense::hover());
-                let p = ui.painter();
-                p.rect_filled(boxr, pal.round(8.0), pal.bg);
-                p.rect_stroke(boxr, pal.round(8.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
-                let mut y = boxr.top();
-                for (i, (k, g, h)) in lay.into_iter().enumerate() {
-                    let row = Rect::from_min_size(pos2(boxr.left(), y), vec2(w, h));
-                    if i > 0 {
-                        ui.painter().hline(row.x_range().shrink(10.0), row.top(), Stroke::new(1.0, pal.row_sep));
-                    }
-                    let resp = ui.interact(row, Id::new(("insp_row", i)), Sense::hover());
-                    let p = ui.painter();
-                    text(p, pos2(row.left() + 12.0, row.center().y), Align2::LEFT_CENTER, k, 12.5, pal.text_dim);
-                    // Values right-aligned, like Finder.
-                    let value = rows[i].1.clone();
-                    p.galley(pos2(row.right() - 12.0, row.center().y - g.size().y / 2.0), g, pal.text);
-                    if value.len() > 30 {
-                        resp.on_hover_text(value);
-                    }
-                    y += h;
-                }
+                    ui.vertical(|ui| {
+                        ui.set_width(info_w);
+                        let w = info_w;
+                        // Information: a rounded list, a line between rows.
+                        if !two {
+                            ui.add_space(4.0);
+                        }
+                        let (r, _) = ui.allocate_exact_size(vec2(w, 24.0), Sense::hover());
+                        super::text_bold(
+                            ui.painter(),
+                            pos2(r.left() + 2.0, r.center().y),
+                            Align2::LEFT_CENTER,
+                            "Information",
+                            12.5,
+                            pal.text_strong,
+                        );
+                        ui.add_space(4.0);
+                        let label_w = 100.0f32.min(w * 0.4);
+                        let lay: Vec<(&str, std::sync::Arc<egui::Galley>, f32)> = rows
+                            .iter()
+                            .map(|(k, v)| {
+                                let g = right_aligned(ui.painter(), v, 12.5, pal.text, w - label_w - 28.0);
+                                let h = (g.size().y + 14.0).max(32.0);
+                                (k.as_str(), g, h)
+                            })
+                            .collect();
+                        let total: f32 = lay.iter().map(|l| l.2).sum();
+                        let (boxr, _) = ui.allocate_exact_size(vec2(w, total), Sense::hover());
+                        let p = ui.painter();
+                        p.rect_filled(boxr, pal.round(8.0), pal.bg);
+                        p.rect_stroke(boxr, pal.round(8.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
+                        let mut y = boxr.top();
+                        for (i, (k, g, h)) in lay.into_iter().enumerate() {
+                            let row = Rect::from_min_size(pos2(boxr.left(), y), vec2(w, h));
+                            if i > 0 {
+                                ui.painter().hline(
+                                    row.x_range().shrink(10.0),
+                                    row.top(),
+                                    Stroke::new(1.0, pal.row_sep),
+                                );
+                            }
+                            let resp = ui.interact(row, Id::new(("insp_row", i)), Sense::hover());
+                            let p = ui.painter();
+                            text(
+                                p,
+                                pos2(row.left() + 12.0, row.center().y),
+                                Align2::LEFT_CENTER,
+                                k,
+                                12.5,
+                                pal.text_dim,
+                            );
+                            // Values right-aligned, like Finder.
+                            let value = rows[i].1.clone();
+                            p.galley(pos2(row.right() - 12.0, row.center().y - g.size().y / 2.0), g, pal.text);
+                            if value.len() > 30 {
+                                resp.on_hover_text(value);
+                            }
+                            y += h;
+                        }
+                    });
+                });
                 ui.add_space(14.0);
             });
         });

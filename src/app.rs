@@ -1526,28 +1526,11 @@ impl FileFlier {
                 self.open_entries();
                 return;
             }
-            // Video: K play/pause, J/L back/ahead 5 s, E/F next/previous frame, M mute.
             if let Some(p) = self.ql_player.as_mut() {
-                let pressed = |k| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k));
-                if pressed(Key::K) {
-                    p.toggle_pause();
-                }
-                if pressed(Key::E) {
-                    p.step_frames(1);
-                }
-                if pressed(Key::F) {
-                    p.step_frames(-1);
-                }
-                if pressed(Key::J) {
-                    p.seek(p.position() - 5.0);
-                }
-                if pressed(Key::L) {
-                    p.seek(p.position() + 5.0);
-                }
-                if pressed(Key::M) {
-                    p.toggle_mute();
-                }
+                media_keys(ctx, p);
             }
+            // Typing doesn't filter the folder behind Quick Look.
+            ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Text(_))));
             let page = self.preview_page.1;
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::PageDown)) {
                 self.preview_page.1 = page + 1;
@@ -1742,6 +1725,15 @@ impl FileFlier {
             }
         }
 
+        // While the preview panel plays something, its keys go to the player
+        // (unless a filter is already being typed).
+        if !self.quicklook
+            && self.tab().filter.is_empty()
+            && let Some(p) = self.insp_player.as_mut()
+        {
+            media_keys(ctx, p);
+        }
+        let tab = self.panes[self.active].tab_mut();
         // Typing filters the current folder instantly.
         let typed: String = ctx.input(|i| {
             i.events
@@ -2462,6 +2454,33 @@ pub fn disk_space(path: &Path) -> Option<DiskSpace> {
     }
     let unit = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize } as u64;
     Some(DiskSpace { free: st.f_bavail as u64 * unit, total: st.f_blocks as u64 * unit })
+}
+
+/// A player's keys: K play/pause, J/L back/ahead 5 s, E/F next/previous frame, M mute.
+/// Their typed letters are dropped too, so they don't start a filter.
+fn media_keys(ctx: &egui::Context, p: &mut crate::preview::player::Player) {
+    let pressed = |k| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k));
+    if pressed(Key::K) {
+        p.toggle_pause();
+    }
+    if pressed(Key::E) {
+        p.step_frames(1);
+    }
+    if pressed(Key::F) {
+        p.step_frames(-1);
+    }
+    if pressed(Key::J) {
+        p.seek(p.position() - 5.0);
+    }
+    if pressed(Key::L) {
+        p.seek(p.position() + 5.0);
+    }
+    if pressed(Key::M) {
+        p.toggle_mute();
+    }
+    ctx.input_mut(|i| {
+        i.events.retain(|e| !matches!(e, egui::Event::Text(t) if t.chars().all(|c| "kefjlm".contains(c))))
+    });
 }
 
 #[cfg(test)]
