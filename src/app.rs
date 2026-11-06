@@ -308,6 +308,9 @@ pub struct FileFlier {
     /// A window move/resize was handed to the compositor, which swallows the
     /// button release; we synthesize it so egui doesn't think the button is stuck.
     pub release_after_grab: bool,
+    /// Where the title bar was right-clicked, to ask the desktop for its window menu
+    /// (Always on Top, Move, Resize, …) once the frame's window is at hand.
+    pub window_menu_at: Option<egui::Pos2>,
 }
 
 impl FileFlier {
@@ -409,6 +412,7 @@ impl FileFlier {
             drag_out: false,
             drop_target: None,
             release_after_grab: false,
+            window_menu_at: None,
         }
     }
 
@@ -2215,6 +2219,11 @@ impl eframe::App for FileFlier {
         }
         let title_rect = Rect::from_min_max(full.min, pos2(full.right(), full.top() + TITLE_H));
         self.title_bar(ui, title_rect, sb_w, &title_strips);
+        if let Some(p) = self.window_menu_at.take()
+            && let Some(w) = frame.winit_window()
+        {
+            w.show_window_menu(winit::dpi::LogicalPosition::new(p.x as f64, p.y as f64));
+        }
         self.tab_drag_ui(ui);
         if !cfg!(target_os = "macos") {
             self.resize_edges(ui, full); // macOS windows keep their native edges

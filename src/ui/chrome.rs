@@ -92,6 +92,16 @@ impl FileFlier {
         if drag.double_clicked() {
             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
         }
+        // Right-click: the desktop's own window menu, as GNOME apps have. Asked on the
+        // press (the compositor checks the request against it); tabs and buttons on top
+        // keep their own menus, since only the top-most widget is hovered.
+        if drag.hovered()
+            && let Some(pos) = ctx.input(|i| {
+                i.pointer.button_pressed(egui::PointerButton::Secondary).then(|| i.pointer.interact_pos()).flatten()
+            })
+        {
+            self.window_menu_at = Some(pos);
+        }
 
         // Window buttons: ours on the right, or GNOME's in the desktop's layout.
         let native = self.cfg.native_buttons && !cfg!(target_os = "macos");

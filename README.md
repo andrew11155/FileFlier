@@ -241,6 +241,8 @@ Open Settings with `Ctrl+,`, from the ⋮ menu, or from the command palette.
 - **Desktop look:** everything that makes File Flier look like your GNOME or
   Ubuntu desktop, in one place. *Native Ubuntu look → Apply* turns it all on
   at once (with the GNOME theme, dark or light as your desktop is set).
+  Right-clicking an empty part of the title bar opens the desktop's own window
+  menu (Always on Top, Take Screenshot, Move, Resize, …), as in GNOME apps.
   - **Icons:** File Flier's own, or **GNOME**: your desktop's icon theme
     (the one GNOME's settings name, e.g. Adwaita or Ubuntu's Yaru), looked up
     as GTK does, so folders and the sidebar look just like in GNOME Files.
