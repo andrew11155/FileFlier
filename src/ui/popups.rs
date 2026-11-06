@@ -204,6 +204,21 @@ impl FileFlier {
                         {
                             picked_rating = Some((paths.clone(), n));
                         }
+                        // Remove the stars.
+                        if *current > 0 {
+                            let xr = egui::Rect::from_center_size(
+                                pos2(r.left() + 74.0 + 22.0 * 5.0 + 22.0, r.center().y),
+                                vec2(26.0, 26.0),
+                            );
+                            let tip = if paths.len() > 1 { "Remove the ratings" } else { "Remove the rating" };
+                            if super::icon_button(ui, xr, Id::new("menu_rating_clear"), true, pal, tip, |p, ir, c| {
+                                crate::icons::close(p, ir.shrink(2.0), c)
+                            })
+                            .clicked()
+                            {
+                                picked_rating = Some((paths.clone(), 0));
+                            }
+                        }
                         continue;
                     }
                     let selected = selectable.get(menu.cursor) == Some(i);

@@ -332,6 +332,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Ctrl+B` | Toggle the sidebar |
 | `Ctrl+↑` / `Ctrl+↓` | Previous / next place in the sidebar |
 | `Ctrl+J` | Toggle the bottom bar |
+| `Alt`+scroll (columns view) | Slide the parent columns back toward the root |
 | `Alt`+double-click | Properties of a file or folder (GNOME Files' Properties window) |
 | `Ctrl+Shift+R` | Show or hide ratings and tags on grid tiles |
 | `F3` or `Ctrl+I` | Toggle the preview panel |

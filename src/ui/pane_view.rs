@@ -1499,7 +1499,8 @@ impl FileFlier {
                         items.insert(at, MenuItem::Cmd(Command::EditTags));
                     }
                     if self.cfg.ext_on(crate::ext::Ext::Ratings) {
-                        let current = targets.first().map_or(0, |p| self.meta.rating(p));
+                        // The highest in the selection, so "remove" shows if any is rated.
+                        let current = targets.iter().map(|p| self.meta.rating(p)).max().unwrap_or(0);
                         items.insert(at, MenuItem::Rating(targets.clone(), current));
                     }
                     if items.len() - 2 != at {

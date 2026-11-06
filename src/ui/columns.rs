@@ -32,6 +32,9 @@ impl FileFlier {
         // ancestors[j] is the (j+1)th folder up; its highlighted item is the jth.
         let ancestors: Vec<PathBuf> = path.ancestors().map(Path::to_path_buf).collect();
         let n_left = (ancestors.len() - 1).min(fit - 2);
+        // Parent folders that don't fit; Alt+scroll slides the parent columns back to them.
+        let hidden = ancestors.len() - 1 - n_left;
+        let back = self.columns_back(ui, idx, rect, &path, hidden);
         let w = rect.width() / (n_left + 2) as f32;
         let col = |k: usize| {
             Rect::from_min_max(
@@ -41,12 +44,17 @@ impl FileFlier {
         };
         let pal = self.pal();
         for k in 0..n_left {
-            let j = n_left - 1 - k;
+            let j = n_left - 1 - k + back;
             let r = col(k);
             self.side_column(ui, idx, ("parent", k), r, &ancestors[j + 1], Some(&ancestors[j]));
             ui.painter().vline(r.right(), r.y_range(), Stroke::new(1.0, pal.border));
         }
         let middle = col(n_left);
+        // Slid back: a double line where folders in between are skipped.
+        if back > 0 {
+            let x = middle.left() - 3.0;
+            ui.painter().vline(x, middle.y_range(), Stroke::new(1.0, pal.border));
+        }
         let right = col(n_left + 1);
         ui.painter().vline(right.left(), right.y_range(), Stroke::new(1.0, pal.border));
         match cursor {
@@ -55,6 +63,38 @@ impl FileFlier {
             None => {}
         }
         middle
+    }
+
+    /// How many folders the parent columns are slid back (toward the root) by Alt+scroll
+    /// over the columns, up to `hidden`. Back to 0 when the folder changes.
+    fn columns_back(&mut self, ui: &mut Ui, idx: usize, rect: Rect, path: &Path, hidden: usize) -> usize {
+        let id = Id::new(("miller_back", idx));
+        let (mut back, mut acc, at): (usize, f32, PathBuf) =
+            ui.ctx().data(|d| d.get_temp(id)).unwrap_or((0, 0.0, path.to_path_buf()));
+        if at != path {
+            (back, acc) = (0, 0.0);
+        }
+        if ui.rect_contains_pointer(rect) && ui.input(|i| i.modifiers.alt) {
+            // Taken from the columns' own scrolling, which would move them up and down.
+            let d = ui.ctx().input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta));
+            // Wheel up (or left) goes toward the root, one folder per notch or so.
+            acc += d.x + d.y;
+            const STEP: f32 = 40.0;
+            while acc >= STEP {
+                back += 1;
+                acc -= STEP;
+            }
+            while acc <= -STEP {
+                back = back.saturating_sub(1);
+                acc += STEP;
+            }
+        }
+        if back >= hidden || back == 0 {
+            acc = 0.0;
+        }
+        let back = back.min(hidden);
+        ui.ctx().data_mut(|d| d.insert_temp(id, (back, acc, path.to_path_buf())));
+        back
     }
 
     /// The contents of `dir`, for a side column (re-read every couple of seconds).
