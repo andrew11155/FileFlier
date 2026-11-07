@@ -15,6 +15,12 @@ impl FileFlier {
             self.ql_player = None; // stops the video and its sound
             return;
         }
+        // Several selected: all of them on a canvas.
+        if let Some(m) = self.multi_selection() {
+            self.ql_player = None;
+            self.quicklook_multi(ctx, m);
+            return;
+        }
         let Some(e) = self.request_preview() else {
             self.quicklook = false;
             self.ql_player = None;
@@ -299,4 +305,93 @@ pub(crate) fn video_controls(
     let shown_time =
         scrub.map_or(label, |f| format!("{} / {}", format_duration(f as f64 * duration), format_duration(duration)));
     text(&p, pos2(time_r.right(), cy), Align2::RIGHT_CENTER, shown_time, 12.5, pal.text);
+}
+
+impl FileFlier {
+    /// Quick Look with several items selected: all of them on a zoomable canvas.
+    fn quicklook_multi(&mut self, ctx: &egui::Context, m: crate::ui::canvas::Multi) {
+        let pal = self.pal();
+        let fx = self.fx();
+        let screen = ctx.content_rect();
+        let t = appear(ctx, Id::new("ql_appear"), fx.dur(0.18));
+        let mut close = false;
+        let mut open = false;
+        let mut alone = None;
+        let (title, sub) = m.summary();
+
+        Area::new(Id::new("ql_backdrop")).order(Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
+            let (r, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
+            ui.painter().rect_filled(r, 0.0, Color32::from_black_alpha((120.0 * t) as u8));
+            close |= resp.clicked();
+        });
+
+        let size = vec2((screen.width() * 0.88).min(1400.0), (screen.height() * 0.88).min(960.0));
+        let card = Rect::from_center_size(screen.center(), size);
+        ctx.move_to_top(egui::LayerId::new(Order::Foreground, Id::new("ql_card")));
+        Area::new(Id::new("ql_card")).order(Order::Foreground).fixed_pos(card.min).show(ctx, |ui| {
+            let s = 0.94 + 0.06 * t;
+            let c = card.center().to_vec2();
+            ui.ctx().set_transform_layer(ui.layer_id(), TSTransform::new(c * (1.0 - s), s));
+            ui.multiply_opacity(t);
+            let (r, _) = ui.allocate_exact_size(size, Sense::click());
+            let p = ui.painter().clone();
+            p.add(
+                egui::Shadow { offset: [0, 16], blur: 48, spread: 0, color: Color32::from_black_alpha(140) }
+                    .as_shape(r, 14),
+            );
+            let fill = if fx.glass { glass::with_alpha(pal.popup, 0.97) } else { pal.popup };
+            if fx.glass {
+                glass::panel(&p, r, fill, 14, pal);
+            } else {
+                p.rect_filled(r, pal.round(14.0), fill);
+                p.rect_stroke(r, pal.round(14.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            }
+
+            // Header: how many, what they are, Open and close.
+            let header = Rect::from_min_size(r.min, vec2(r.width(), 64.0));
+            let name_w = header.width() - 40.0 - 170.0;
+            let g = elided(&p, &title, 17.0, pal.text_strong, name_w);
+            p.galley(pos2(header.left() + 22.0, header.top() + 13.0), g, pal.text_strong);
+            let g = elided(&p, &sub, 12.5, pal.text_dim, name_w);
+            p.galley(pos2(header.left() + 22.0, header.top() + 37.0), g, pal.text_dim);
+            let close_r = Rect::from_center_size(pos2(header.right() - 30.0, header.center().y), vec2(30.0, 30.0));
+            close |= super::icon_button(ui, close_r, Id::new("ql_close"), true, pal, "Close (Space)", icons::close)
+                .clicked();
+            let open_r = Rect::from_min_size(pos2(close_r.left() - 96.0, header.center().y - 15.0), vec2(84.0, 30.0));
+            let open_resp = ui.interact(open_r, Id::new("ql_open"), Sense::click());
+            let fill = if open_resp.hovered() { pal.accent.gamma_multiply(1.15) } else { pal.accent };
+            p.rect_filled(open_r, pal.round(6.0), fill);
+            text(&p, open_r.center(), Align2::CENTER_CENTER, "Open", 13.5, pal.on_accent);
+            open |= open_resp.on_hover_text("Open them all (Enter)").clicked();
+            p.hline(r.x_range().shrink(1.0), header.bottom(), Stroke::new(1.0, pal.row_sep));
+
+            let footer = Rect::from_min_max(pos2(r.left(), r.bottom() - 34.0), r.max);
+            p.hline(r.x_range().shrink(1.0), footer.top(), Stroke::new(1.0, pal.row_sep));
+            text(
+                &p,
+                pos2(footer.right() - 18.0, footer.center().y),
+                Align2::RIGHT_CENTER,
+                "scroll  zoom   ·   drag  pan   ·   double-click  fit, or see one alone   ·   Enter  open   ·   Space  close",
+                12.0,
+                pal.text_dim,
+            );
+
+            // The canvas fills the space between the header and the footer.
+            let body =
+                Rect::from_min_max(pos2(r.left() + 1.0, header.bottom() + 1.0), pos2(r.right() - 1.0, footer.top()));
+            let mut view = std::mem::take(&mut self.ql_canvas);
+            alone = self.selection_canvas(ui, body, "ql_canvas", &mut view, &m.items);
+            self.ql_canvas = view;
+        });
+
+        if let Some(path) = alone {
+            // Quick Look stays open on that one item.
+            self.tab_mut().select_path(&path);
+        } else if open {
+            self.quicklook = false;
+            self.open_entries();
+        } else if close {
+            self.quicklook = false;
+        }
+    }
 }

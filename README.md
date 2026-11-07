@@ -190,7 +190,13 @@ top*) moves it to any edge. On the left or right it's a column; at the bottom
 or top it's a band with the preview beside the details. Drag its inner edge to
 resize it. Videos and music play right in the panel: press the play button,
 click the picture to pause, and use the seek bar below it. Text and code files
-show line numbers in a gutter. Scroll or pinch over a picture
+show line numbers in a gutter.
+
+Select several items and the panel (and Quick Look, with `Space`) lays them all
+out on a canvas: scroll or pinch to zoom around the pointer, drag to pan, and
+double-click empty space to fit everything again, or an item to see it alone.
+The star button in its corner shows each item's stars and tags; click the stars
+of the item under the pointer to rate it. Scroll or pinch over a picture
 to zoom, drag to pan, and double-click to switch between fit and actual size.
 
 | Type | Preview |

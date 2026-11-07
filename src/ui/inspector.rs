@@ -64,6 +64,13 @@ impl FileFlier {
             self.insp_player = None;
         }
 
+        // Several selected: all of them on a canvas.
+        if let Some(m) = self.multi_selection() {
+            self.insp_player = None;
+            self.inspector_multi(ui, rect, side, m);
+            return;
+        }
+
         if side.is_column() {
             let head = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEAD_H));
             let foot = Rect::from_min_max(pos2(rect.left(), rect.bottom() - FOOT_H), rect.max);
@@ -109,6 +116,46 @@ impl FileFlier {
             self.inspector_head(ui, head, Some(&e), true);
             let details = Rect::from_min_max(pos2(right.left(), head.bottom()), right.max);
             self.inspector_details(ui, details, &e, false);
+        }
+    }
+
+    /// Several items selected: a header saying how many, the canvas, and (in a
+    /// column) what they are above Open and Quick Look.
+    fn inspector_multi(&mut self, ui: &mut Ui, rect: Rect, side: PanelSide, m: crate::ui::canvas::Multi) {
+        let pal = self.pal();
+        let column = side.is_column();
+        let head = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEAD_H));
+        self.inspector_head(ui, head, None, !column);
+        let (title, sub) = m.summary();
+        let p = ui.painter();
+        let tw = (head.width() - 100.0).max(20.0);
+        let g = super::elided_in(p, &title, super::bold(if column { 13.0 } else { 14.5 }), pal.text_strong, tw);
+        let gw = g.size().x;
+        p.galley(pos2(head.left() + 16.0, head.center().y - g.size().y / 2.0), g, pal.text_strong);
+        if !column {
+            let g = elided(p, &sub, 12.5, pal.text_dim, (tw - gw - 16.0).max(0.0));
+            p.galley(pos2(head.left() + 32.0 + gw, head.center().y - g.size().y / 2.0), g, pal.text_dim);
+        }
+        p.hline(head.x_range(), head.bottom() - 0.5, Stroke::new(1.0, pal.row_sep));
+        let (canvas_r, foot) = if column {
+            let foot = Rect::from_min_max(pos2(rect.left(), rect.bottom() - FOOT_H), rect.max);
+            let info = Rect::from_min_max(pos2(rect.left(), foot.top() - 32.0), pos2(rect.right(), foot.top()));
+            let p = ui.painter();
+            p.hline(info.x_range(), info.top() + 0.5, Stroke::new(1.0, pal.row_sep));
+            let g = elided(p, &sub, 12.5, pal.text_dim, info.width() - 28.0);
+            p.galley(pos2(info.center().x - g.size().x / 2.0, info.center().y - g.size().y / 2.0), g, pal.text_dim);
+            (Rect::from_min_max(pos2(rect.left(), head.bottom()), pos2(rect.right(), info.top())), Some(foot))
+        } else {
+            (Rect::from_min_max(pos2(rect.left(), head.bottom()), rect.max), None)
+        };
+        let mut view = std::mem::take(&mut self.insp_canvas);
+        let alone = self.selection_canvas(ui, canvas_r, "insp_canvas", &mut view, &m.items);
+        self.insp_canvas = view;
+        if let Some(f) = foot {
+            self.inspector_foot(ui, f);
+        }
+        if let Some(path) = alone {
+            self.tab_mut().select_path(&path);
         }
     }
 

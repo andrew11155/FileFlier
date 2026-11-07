@@ -298,6 +298,9 @@ pub struct FileFlier {
     pub ql_player: Option<crate::preview::player::Player>,
     /// The preview panel's player (started with its play button).
     pub insp_player: Option<crate::preview::player::Player>,
+    /// Zoom and pan of the selection canvas in the preview panel and in Quick Look.
+    pub insp_canvas: crate::ui::canvas::CanvasView,
+    pub ql_canvas: crate::ui::canvas::CanvasView,
     pub renaming: Option<Renaming>,
     /// Where a drive mounted from the sidebar ended up (opened when the job finishes).
     mounted_at: Arc<Mutex<Option<PathBuf>>>,
@@ -408,6 +411,8 @@ impl FileFlier {
             quicklook: false,
             ql_player: None,
             insp_player: None,
+            insp_canvas: Default::default(),
+            ql_canvas: Default::default(),
             tint_anims: Default::default(),
             renaming: None,
             mounted_at: Default::default(),

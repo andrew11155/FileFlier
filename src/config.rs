@@ -192,6 +192,8 @@ pub struct Config {
     /// The preview panel's side, and its height when it's at the bottom or top.
     pub inspector_side: PanelSide,
     pub inspector_height: f32,
+    /// The selection canvas shows each item's stars and tags.
+    pub canvas_meta: bool,
     /// Render office documents as pages with LibreOffice when it's installed.
     pub office_previews: bool,
     /// Set once the preview panel has been turned on for existing users.
@@ -273,6 +275,7 @@ impl Default for Config {
             inspector_width: 340.0,
             inspector_side: PanelSide::Right,
             inspector_height: 280.0,
+            canvas_meta: true,
             office_previews: true,
             preview_panel_intro: false,
             check_updates: true,
