@@ -40,19 +40,33 @@ fn desktop_prefers_dark() -> bool {
 
 /// A settings row: label (and optional hint) on the left, the control on the right.
 fn row<R>(ui: &mut Ui, pal: &Palette, label: &str, hint: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
-    let h = if hint.is_empty() { 38.0 } else { 48.0 };
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+    let base = if hint.is_empty() { 38.0 } else { 48.0 };
+    let w = ui.available_width();
+    // The control first (on the right of the first lines), to know how much room the
+    // hint has beside it; a long hint wraps and makes the row taller.
+    let head = Rect::from_min_size(ui.available_rect_before_wrap().min, vec2(w, base));
+    let mut child =
+        ui.new_child(egui::UiBuilder::new().max_rect(head).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    let out = control(&mut child);
+    let used = child.min_rect();
+    let control_w = if used.width() > 0.0 { used.width() + 20.0 } else { 0.0 };
+    let wrap_w = (w - control_w).max(160.0);
+    let hint_g =
+        (!hint.is_empty()).then(|| ui.painter().layout(hint.to_string(), super::font(12.0), pal.text_dim, wrap_w));
+    let h = hint_g.as_ref().map_or(base, |g| base.max(27.0 + g.size().y + 8.0));
+    let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let p = ui.painter();
-    if hint.is_empty() {
-        text(p, pos2(r.left(), r.center().y), Align2::LEFT_CENTER, label, 14.0, pal.text);
-    } else {
-        text(p, pos2(r.left(), r.center().y - 9.0), Align2::LEFT_CENTER, label, 14.0, pal.text);
-        text(p, pos2(r.left(), r.center().y + 10.0), Align2::LEFT_CENTER, hint, 12.0, pal.text_dim);
+    match hint_g {
+        None => {
+            text(p, pos2(r.left(), r.center().y), Align2::LEFT_CENTER, label, 14.0, pal.text);
+        }
+        Some(g) => {
+            text(p, pos2(r.left(), r.top() + 15.0), Align2::LEFT_CENTER, label, 14.0, pal.text);
+            p.galley(pos2(r.left(), r.top() + 27.0), g, pal.text_dim);
+        }
     }
     p.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, pal.row_sep));
-    let mut child =
-        ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::right_to_left(egui::Align::Center)));
-    control(&mut child)
+    out
 }
 
 /// Segmented control; returns the newly picked index.

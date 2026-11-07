@@ -148,6 +148,8 @@ pub struct Menu {
     pub cursor: usize,
     pub items: Vec<MenuItem>,
     pub opened: Instant,
+    /// A search field at the top (left out of short menus of choices).
+    pub search: bool,
 }
 
 #[derive(Clone)]
@@ -1058,6 +1060,11 @@ impl FileFlier {
             }
             TogglePreview => {
                 self.cfg.show_preview = !self.cfg.show_preview;
+                self.cfg.save();
+            }
+            PreviewClockwise | PreviewCounterclockwise => {
+                self.cfg.inspector_side = self.cfg.inspector_side.turned(cmd == PreviewClockwise);
+                self.cfg.show_preview = true;
                 self.cfg.save();
             }
             PreviewRight | PreviewLeft | PreviewBottom | PreviewTop => {
@@ -1992,7 +1999,8 @@ impl FileFlier {
                     }
                 }
                 Action::OpenMenu(pos, items) => {
-                    self.menu = Some(Menu { pos, query: String::new(), cursor: 0, items, opened: Instant::now() })
+                    self.menu =
+                        Some(Menu { pos, query: String::new(), cursor: 0, items, opened: Instant::now(), search: true })
                 }
             }
         }

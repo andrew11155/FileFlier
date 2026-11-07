@@ -1846,6 +1846,7 @@ impl FileFlier {
                     cursor: views.iter().position(|&c| c == current).unwrap_or(0),
                     items,
                     opened: std::time::Instant::now(),
+                    search: true,
                 });
             }
         }

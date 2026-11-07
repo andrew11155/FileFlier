@@ -160,8 +160,8 @@ impl FileFlier {
         menu.cursor = step(menu.cursor, up, down, selectable.len());
 
         let width = 320.0;
-        let est_h =
-            52.0 + entries.iter().map(|(_, it)| if matches!(it, MenuItem::Sep) { 9.0 } else { 30.0 }).sum::<f32>();
+        let est_h = if menu.search { 52.0 } else { 14.0 }
+            + entries.iter().map(|(_, it)| if matches!(it, MenuItem::Sep) { 9.0 } else { 30.0 }).sum::<f32>();
         let screen = ctx.content_rect();
         let pos = pos2(
             menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left() + 4.0)),
@@ -171,16 +171,19 @@ impl FileFlier {
         let mut picked_color: Option<(Vec<PathBuf>, ColorPick)> = None;
         let mut picked_rating: Option<(Vec<PathBuf>, u8)> = None;
         let mut query = std::mem::take(&mut menu.query);
+        let with_search = menu.search;
         let area = egui::Area::new(Id::new("cmd_menu")).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
             super::animate_in(ui, Id::new("cmd_menu_appear"), &fx, -6.0);
             popup_frame(pal, &fx).show(ui, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
-                let (resp, _) =
-                    search_box(ui, r, pal, &mut query, Id::new("menu_search"), "Select a command...", false);
-                resp.request_focus();
-                ui.add_space(6.0);
+                if with_search {
+                    let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
+                    let (resp, _) =
+                        search_box(ui, r, pal, &mut query, Id::new("menu_search"), "Select a command...", false);
+                    resp.request_focus();
+                    ui.add_space(6.0);
+                }
                 let mut sel_i = 0;
                 for (i, item) in &entries {
                     if let MenuItem::Sep = item {

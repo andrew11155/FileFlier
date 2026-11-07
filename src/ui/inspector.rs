@@ -289,7 +289,7 @@ impl FileFlier {
                 MenuItem::Choice(Command::PreviewBottom, side == PanelSide::Bottom),
                 MenuItem::Choice(Command::PreviewTop, side == PanelSide::Top),
             ];
-            let h = 52.0 + 30.0 * items.len() as f32;
+            let h = 14.0 + 30.0 * items.len() as f32;
             let below = side != PanelSide::Bottom;
             let pos = if below {
                 pos2(side_r.right() - 300.0, side_r.bottom() + 4.0)
@@ -302,6 +302,7 @@ impl FileFlier {
                 cursor: 0,
                 items,
                 opened: std::time::Instant::now(),
+                search: false,
             });
         }
         let Some(e) = e else { return };

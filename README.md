@@ -361,6 +361,7 @@ everything. Changed keys are saved in File Flier's settings.
 | `Alt`+double-click | Properties of a file or folder (GNOME Files' Properties window) |
 | `Ctrl+Shift+R` | Show or hide ratings and tags on grid tiles |
 | `F3` or `Ctrl+I` | Toggle the preview panel |
+| `Ctrl+Shift+I` / `Ctrl+Alt+I` | Move the preview panel clockwise / counterclockwise |
 | `Ctrl+D` | Bookmark the current folder |
 | `Ctrl+Shift+T` | Open a terminal here |
 | `Ctrl+Shift+O` | Open with another app |

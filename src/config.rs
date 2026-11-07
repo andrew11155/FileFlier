@@ -20,6 +20,17 @@ impl PanelSide {
     pub fn is_column(self) -> bool {
         matches!(self, PanelSide::Left | PanelSide::Right)
     }
+
+    /// The next side going around the window: top, right, bottom, left (or back).
+    pub fn turned(self, clockwise: bool) -> Self {
+        use PanelSide::*;
+        match (self, clockwise) {
+            (Top, true) | (Bottom, false) => Right,
+            (Right, true) | (Left, false) => Bottom,
+            (Bottom, true) | (Top, false) => Left,
+            (Left, true) | (Right, false) => Top,
+        }
+    }
 }
 
 /// How a folder's items are grouped (with a header above each group).
@@ -360,6 +371,20 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preview_panel_goes_around() {
+        use PanelSide::*;
+        let mut s = Top;
+        for want in [Right, Bottom, Left, Top] {
+            s = s.turned(true);
+            assert_eq!(s, want);
+        }
+        for want in [Left, Bottom, Right, Top] {
+            s = s.turned(false);
+            assert_eq!(s, want);
+        }
+    }
+
     use super::*;
 
     #[test]
