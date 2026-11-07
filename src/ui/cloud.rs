@@ -124,7 +124,7 @@ impl FileFlier {
                 for p in Provider::ALL {
                     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
                     let painter = ui.painter();
-                    painter.rect_filled(r, 8.0, if resp.hovered() { pal.tab_hover } else { pal.input });
+                    painter.rect_filled(r, pal.round(8.0), if resp.hovered() { pal.tab_hover } else { pal.input });
                     painter.rect_stroke(
                         r,
                         8.0,
@@ -403,7 +403,7 @@ impl FileFlier {
     pub(crate) fn cloud_disconnect(&mut self, name: String, sign_out: bool) {
         let Some(a) = cloud::accounts().into_iter().find(|a| a.name == name) else { return };
         // Leave the drive first so it isn't busy.
-        for i in 0..2 {
+        for i in 0..self.panes.len() {
             if self.panes[i].tab().path.starts_with(&a.mount)
                 && let Some(home) = dirs::home_dir()
             {

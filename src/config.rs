@@ -5,12 +5,59 @@ use std::path::PathBuf;
 use crate::fs_model::Sort;
 use crate::theme::ThemeId;
 
+/// Which side of the window the preview panel (inspector) is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum PanelSide {
+    #[default]
+    Right,
+    Left,
+    Bottom,
+    Top,
+}
+
+impl PanelSide {
+    /// On the left or right: a column (else a band across the bottom or top).
+    pub fn is_column(self) -> bool {
+        matches!(self, PanelSide::Left | PanelSide::Right)
+    }
+
+    /// The next side going around the window: top, right, bottom, left (or back).
+    pub fn turned(self, clockwise: bool) -> Self {
+        use PanelSide::*;
+        match (self, clockwise) {
+            (Top, true) | (Bottom, false) => Right,
+            (Right, true) | (Left, false) => Bottom,
+            (Bottom, true) | (Top, false) => Left,
+            (Left, true) | (Right, false) => Top,
+        }
+    }
+}
+
+/// How a folder's items are grouped (with a header above each group).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum GroupBy {
+    #[default]
+    None,
+    /// By first letter.
+    Name,
+    /// Today, Yesterday, This week, This month, This year, then each year.
+    Modified,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ViewMode {
     #[default]
     Details,
     List,
     Grid,
+    /// Grids with bigger tiles and thumbnails.
+    MediumGrid,
+    LargeGrid,
+    ExtraLargeGrid,
+    /// Details with folders that expand in place (arrow keys open and close them).
+    Tree,
+    /// Miller columns: parent folders to the left, the folder under the cursor to the right.
+    Columns,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -29,6 +76,20 @@ impl Density {
             Density::Spacious => 38.0,
         }
     }
+}
+
+/// What the title bar shows in its top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum TitleIcon {
+    /// File Flier's paper plane.
+    #[default]
+    Logo,
+    /// The Files app's icon from the desktop's icon theme.
+    Files,
+    /// A folder.
+    Folder,
+    /// Nothing.
+    None,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -83,16 +144,73 @@ pub struct Config {
     pub bookmarks: Vec<PathBuf>,
     pub show_hidden: bool,
     pub dark_mode: bool,
+    /// Old two-pane split (read only to migrate to `layout`).
     pub split: bool,
     pub show_preview: bool,
     pub sort: Sort,
     pub recent: Vec<PathBuf>,
     pub view: ViewMode,
     pub show_sidebar: bool,
+    /// The details view's columns after Name, by id, in order (see `MetaCol`).
+    pub column_order: Vec<String>,
+    /// Tooltips on hover.
+    pub tooltips: bool,
+    /// The bar at the bottom of each tab (Ctrl+J), and which counters it shows.
+    pub show_bottom_bar: bool,
+    pub show_folder_count: bool,
+    pub show_file_count: bool,
+    pub show_scroll_pct: bool,
+    /// Grid views: stars and tag dots on the tiles (Ctrl+Shift+R, or the bottom bar).
+    pub grid_ratings: bool,
+    pub grid_tags: bool,
     pub sidebar_width: f32,
+    /// Old split position (read only to migrate to `layout`).
     pub split_ratio: f32,
+    /// How panes are tiled. Pane 0 is where a new window starts; the others open at home
+    /// unless the session is restored.
+    pub layout: Option<crate::layout::Layout>,
+    /// Folder colors chosen by the user: folder path -> color slot (red, orange, …).
+    pub folder_colors: std::collections::BTreeMap<String, u8>,
+    /// How each folder's items are grouped, by folder path (folders not listed aren't).
+    pub folder_groups: std::collections::BTreeMap<String, GroupBy>,
+    /// Which scheme the folder color slots are drawn in (see `ui::tint::SCHEMES`).
+    pub folder_scheme: u8,
+    /// Draw folders and the sidebar with GNOME's icons (the installed Adwaita theme).
+    pub gnome_icons: bool,
+    /// The icon in the title bar's top-left corner.
+    pub title_icon: TitleIcon,
+    /// Window buttons as GNOME and Ubuntu draw them, in the desktop's button layout.
+    pub native_buttons: bool,
+    /// Rounder corners; None follows the theme (on in the GNOME themes).
+    pub rounded: Option<bool>,
+    /// A GNOME Files-like sidebar; None follows the theme.
+    pub gnome_sidebar: Option<bool>,
+    /// Text drawn as GTK draws it; None follows the theme.
+    pub gtk_text: Option<bool>,
+    /// Sidebar folders have an arrow that expands them into a tree of their subfolders.
+    pub sidebar_trees: bool,
+    /// The order of the sidebar's groups, by title (dragged into place). Groups not
+    /// listed follow in their usual order.
+    pub sidebar_order: Vec<String>,
+    /// Sidebar groups turned off in Settings, by title.
+    pub sidebar_hidden: Vec<String>,
+    /// Shortcuts the user changed: command id -> keys ("Ctrl+Shift+P"). Others use the defaults.
+    pub keymap: std::collections::BTreeMap<String, Vec<String>>,
+    /// Extensions switched on or off, by id (see `ext::Ext`). Missing ones are on.
+    pub extensions: std::collections::BTreeMap<String, bool>,
     pub collapsed: Vec<String>,
     pub inspector_width: f32,
+    /// The preview panel's side, and its height when it's at the bottom or top.
+    pub inspector_side: PanelSide,
+    pub inspector_height: f32,
+    /// The selection canvas shows each item's stars and tags.
+    pub canvas_meta: bool,
+    /// The selection canvas shows names under the items.
+    pub canvas_names: bool,
+    /// The preview's share of the panel, set by dragging the line between it and the
+    /// details: of the height in a column, of the width in a band (None = automatic).
+    pub inspector_split: Option<f32>,
+    pub inspector_band_split: Option<f32>,
     /// Render office documents as pages with LibreOffice when it's installed.
     pub office_previews: bool,
     /// Set once the preview panel has been turned on for existing users.
@@ -103,6 +221,22 @@ pub struct Config {
     pub last_update_check: u64,
     /// A release the user chose not to be reminded about.
     pub skipped_version: Option<String>,
+}
+
+impl ViewMode {
+    /// The grids, smallest first.
+    pub const GRIDS: [ViewMode; 4] =
+        [ViewMode::Grid, ViewMode::MediumGrid, ViewMode::LargeGrid, ViewMode::ExtraLargeGrid];
+
+    pub fn is_grid(self) -> bool {
+        Self::GRIDS.contains(&self)
+    }
+}
+
+impl Config {
+    pub fn ext_on(&self, e: crate::ext::Ext) -> bool {
+        self.extensions.get(e.id()).copied().unwrap_or(true)
+    }
 }
 
 impl Default for Config {
@@ -129,10 +263,39 @@ impl Default for Config {
             recent: Vec::new(),
             view: ViewMode::Details,
             show_sidebar: true,
+            column_order: Vec::new(),
+            tooltips: true,
+            show_bottom_bar: true,
+            show_folder_count: true,
+            show_file_count: true,
+            show_scroll_pct: true,
+            grid_ratings: true,
+            grid_tags: true,
             sidebar_width: 230.0,
             split_ratio: 0.5,
+            layout: None,
+            folder_colors: Default::default(),
+            folder_groups: Default::default(),
+            folder_scheme: 0,
+            gnome_icons: false,
+            title_icon: TitleIcon::Logo,
+            native_buttons: false,
+            rounded: None,
+            gnome_sidebar: None,
+            gtk_text: None,
+            sidebar_trees: true,
+            sidebar_order: Vec::new(),
+            sidebar_hidden: Vec::new(),
+            keymap: Default::default(),
+            extensions: Default::default(),
             collapsed: vec!["Recents".into()],
             inspector_width: 340.0,
+            inspector_side: PanelSide::Right,
+            inspector_height: 280.0,
+            canvas_meta: true,
+            canvas_names: true,
+            inspector_split: None,
+            inspector_band_split: None,
             office_previews: true,
             preview_panel_intro: false,
             check_updates: true,
@@ -163,6 +326,12 @@ impl Config {
     }
 
     /// Whether the desktop should show through in glass mode.
+    /// Whether the window's own corners are rounded (needs a transparent window, made at
+    /// startup). macOS rounds its windows itself.
+    pub fn round_window(&self) -> bool {
+        !cfg!(target_os = "macos") && self.palette().rounded
+    }
+
     pub fn see_through(&self) -> bool {
         self.glass
             && self.glass_see_through.unwrap_or_else(|| {
@@ -174,7 +343,9 @@ impl Config {
     }
 
     pub fn palette(&self) -> &'static crate::theme::Palette {
-        crate::theme::palette(self.theme(), self.accent_color())
+        let look =
+            crate::theme::Look { rounded: self.rounded, gnome_sidebar: self.gnome_sidebar, gtk_text: self.gtk_text };
+        crate::theme::palette_with(self.theme(), self.accent_color(), look)
     }
 
     pub fn save(&self) {
@@ -200,6 +371,20 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preview_panel_goes_around() {
+        use PanelSide::*;
+        let mut s = Top;
+        for want in [Right, Bottom, Left, Top] {
+            s = s.turned(true);
+            assert_eq!(s, want);
+        }
+        for want in [Left, Bottom, Right, Top] {
+            s = s.turned(false);
+            assert_eq!(s, want);
+        }
+    }
+
     use super::*;
 
     #[test]

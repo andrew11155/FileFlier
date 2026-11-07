@@ -54,6 +54,10 @@ pub enum SortKey {
     Size,
     Modified,
     Kind,
+    /// The folder an item is in (for the flat view, where items come from many folders).
+    Folder,
+    /// Stars (Ratings extension).
+    Rating,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -119,20 +123,45 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 }
 
 pub fn sort_entries(entries: &mut [Entry], sort: Sort) {
-    entries.sort_by(|a, b| {
-        // Folders come first (if enabled), regardless of direction.
-        let dirs = b.is_dir.cmp(&a.is_dir);
-        if sort.folders_first && dirs != Ordering::Equal {
-            return dirs;
+    entries.sort_by(|a, b| compare(a, b, sort));
+}
+
+/// The order `sort_entries` puts `a` and `b` in.
+pub fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
+    // Folders come first (if enabled), regardless of direction.
+    let dirs = b.is_dir.cmp(&a.is_dir);
+    if sort.folders_first && dirs != Ordering::Equal {
+        return dirs;
+    }
+    let ord = match sort.key {
+        SortKey::Name => natural_cmp(&a.name, &b.name),
+        SortKey::Size => a.size.cmp(&b.size).then_with(|| natural_cmp(&a.name, &b.name)),
+        SortKey::Modified => a.modified.cmp(&b.modified),
+        SortKey::Kind => a.extension().cmp(&b.extension()).then_with(|| natural_cmp(&a.name, &b.name)),
+        SortKey::Rating => crate::meta::sort_rating(&a.path)
+            .cmp(&crate::meta::sort_rating(&b.path))
+            .then_with(|| natural_cmp(&a.name, &b.name)),
+        SortKey::Folder => {
+            let folder = |e: &Entry| e.path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            natural_cmp(&folder(a), &folder(b)).then_with(|| natural_cmp(&a.name, &b.name))
         }
-        let ord = match sort.key {
-            SortKey::Name => natural_cmp(&a.name, &b.name),
-            SortKey::Size => a.size.cmp(&b.size).then_with(|| natural_cmp(&a.name, &b.name)),
-            SortKey::Modified => a.modified.cmp(&b.modified),
-            SortKey::Kind => a.extension().cmp(&b.extension()).then_with(|| natural_cmp(&a.name, &b.name)),
+    };
+    if sort.descending { ord.reverse() } else { ord }
+}
+
+/// Merge two lists that are each sorted by `sort` into one sorted list.
+pub fn merge_sorted(a: Vec<Entry>, b: Vec<Entry>, sort: Sort) -> Vec<Entry> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    let (mut a, mut b) = (a.into_iter().peekable(), b.into_iter().peekable());
+    loop {
+        let take_a = match (a.peek(), b.peek()) {
+            (Some(x), Some(y)) => compare(x, y, sort) != Ordering::Greater,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => return out,
         };
-        if sort.descending { ord.reverse() } else { ord }
-    });
+        out.extend(if take_a { a.next() } else { b.next() });
+    }
 }
 
 /// Resolves `p` like `fs::canonicalize`, but keeps paths under the home folder

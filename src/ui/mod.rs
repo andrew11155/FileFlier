@@ -1,9 +1,14 @@
 //! Custom-drawn UI. Everything is laid out in explicit rects so the look can
 //! match File Pilot closely rather than following egui's default widget style.
 
-mod chrome;
+pub(crate) mod batch_rename;
+pub mod canvas;
+pub(crate) mod chrome;
 mod cloud;
+mod columns;
+pub(crate) mod corners;
 mod dnd;
+mod dropbox;
 pub mod glass;
 mod inspector;
 mod pane_view;
@@ -11,7 +16,10 @@ mod popups;
 mod preview_view;
 mod quicklook;
 mod settings;
+mod shortcuts;
 mod sidebar;
+pub(crate) mod tags;
+pub mod tint;
 mod update;
 
 use std::sync::Arc;
@@ -58,7 +66,12 @@ pub fn text(p: &Painter, pos: egui::Pos2, align: Align2, s: impl ToString, size:
 
 /// Single-line text truncated with an ellipsis to `max_w`.
 pub fn elided(p: &Painter, s: &str, size: f32, color: Color32, max_w: f32) -> Arc<Galley> {
-    let mut job = LayoutJob::simple_singleline(s.to_string(), font(size), color);
+    elided_in(p, s, font(size), color, max_w)
+}
+
+/// Like [`elided`], in any font.
+pub fn elided_in(p: &Painter, s: &str, font: FontId, color: Color32, max_w: f32) -> Arc<Galley> {
+    let mut job = LayoutJob::simple_singleline(s.to_string(), font, color);
     job.wrap = TextWrapping::truncate_at_width(max_w.max(8.0));
     p.layout_job(job)
 }
@@ -90,7 +103,7 @@ pub fn icon_button(
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let resp = ui.interact(rect, id, sense);
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 4.0, pal.tab_hover);
+        ui.painter().rect_filled(rect, pal.round(4.0), pal.tab_hover);
     }
     let color = if !enabled {
         pal.text_faint
@@ -117,9 +130,9 @@ pub fn search_box(
 ) -> (Response, Option<Response>) {
     let focused = ui.memory(|m| m.has_focus(id));
     let p = ui.painter();
-    p.rect_filled(rect, 5.0, pal.input);
+    p.rect_filled(rect, pal.round(5.0), pal.input);
     let border = if focused { pal.accent } else { pal.border };
-    p.rect_stroke(rect, 5.0, Stroke::new(1.0, border), StrokeKind::Inside);
+    p.rect_stroke(rect, pal.round(5.0), Stroke::new(1.0, border), StrokeKind::Inside);
     let icon = Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), vec2(15.0, 15.0));
     icons::search(p, icon, pal.text_dim);
     let right_pad = if with_options { 34.0 } else { 8.0 };
@@ -153,7 +166,7 @@ pub fn badge(p: &Painter, right: f32, cy: f32, s: &str, pal: &Palette, on_accent
     let w = g.size().x + 14.0;
     let r = Rect::from_min_max(pos2(right - w, cy - 10.0), pos2(right, cy + 10.0));
     let stroke = if on_accent { pal.on_accent.gamma_multiply(0.5) } else { pal.border };
-    p.rect_stroke(r, 4.0, Stroke::new(1.0, stroke), StrokeKind::Inside);
+    p.rect_stroke(r, pal.round(4.0), Stroke::new(1.0, stroke), StrokeKind::Inside);
     p.galley(r.center() - g.size() / 2.0, g, color);
     w
 }
@@ -164,6 +177,8 @@ pub enum RowIcon {
     Folder,
     File(FileKind),
     Trash,
+    /// A tick (the current choice), or the space for one.
+    Check(bool),
 }
 
 /// Red used for destructive commands (Move to Trash, Delete).
@@ -177,6 +192,17 @@ pub fn paint_row_icon(p: &Painter, r: Rect, icon: RowIcon, pal: &Palette) {
         RowIcon::Folder => icons::folder(p, r, pal),
         RowIcon::File(k) => icons::file(p, r, k, pal),
         RowIcon::Trash => icons::trash(p, r, danger_color(pal)),
+        RowIcon::Check(true) => {
+            let s = Stroke::new(2.0, pal.text_strong);
+            let (a, b, c) = (
+                r.left_center() + vec2(2.0, 0.5),
+                r.center_bottom() + vec2(-2.0, -4.0),
+                r.right_top() + vec2(-2.0, 4.0),
+            );
+            p.line_segment([a, b], s);
+            p.line_segment([b, c], s);
+        }
+        RowIcon::Check(false) => {}
     }
 }
 
@@ -200,9 +226,9 @@ pub fn menu_row_ex(
     let red = danger_color(pal);
     if selected {
         // A deeper red than the text color, so white text stays readable.
-        p.rect_filled(rect, 4.0, if danger { Color32::from_rgb(196, 48, 43) } else { pal.accent });
+        p.rect_filled(rect, pal.round(4.0), if danger { Color32::from_rgb(196, 48, 43) } else { pal.accent });
     } else if resp.hovered() {
-        p.rect_filled(rect, 4.0, if danger { red.gamma_multiply(0.18) } else { pal.tab_hover });
+        p.rect_filled(rect, pal.round(4.0), if danger { red.gamma_multiply(0.18) } else { pal.tab_hover });
     }
     let mut x = rect.left() + 10.0;
     if !matches!(icon, RowIcon::None) {
@@ -233,9 +259,9 @@ pub fn checkbox(p: &Painter, r: Rect, checked: bool, pal: &Palette, on_accent: b
     let r = Rect::from_center_size(r.center(), vec2(16.0, 16.0));
     let stroke = if on_accent { pal.on_accent } else { pal.text_dim };
     if checked {
-        p.rect_filled(r, 3.0, if on_accent { pal.on_accent.gamma_multiply(0.15) } else { pal.accent });
+        p.rect_filled(r, pal.round(3.0), if on_accent { pal.on_accent.gamma_multiply(0.15) } else { pal.accent });
     }
-    p.rect_stroke(r, 3.0, Stroke::new(1.3, stroke), StrokeKind::Inside);
+    p.rect_stroke(r, pal.round(3.0), Stroke::new(1.3, stroke), StrokeKind::Inside);
     if checked {
         let pts = vec![
             pos2(r.left() + 3.5, r.center().y),
@@ -312,7 +338,13 @@ pub fn popup_frame(pal: &Palette, fx: &Fx) -> egui::Frame {
     egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0, pal.border))
-        .corner_radius(8)
+        .corner_radius(pal.round(8.0) as u8)
         .inner_margin(6)
         .shadow(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(120) })
+}
+
+/// "large grid" -> "Large grid".
+pub fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
 }

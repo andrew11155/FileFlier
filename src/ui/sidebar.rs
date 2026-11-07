@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 
-use egui::{Align2, CursorIcon, Id, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::{Align2, CursorIcon, FontId, Id, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 
-use super::{elided, search_box, text};
+use super::{search_box, text};
 use crate::app::{Action, DragPaths, DropTarget, FileFlier, MenuItem, display_name};
 use crate::fuzzy;
 use crate::icons::{self, Place};
@@ -32,6 +32,8 @@ struct Item {
     offline: bool,
     /// The "Add cloud storage…" row.
     add_cloud: bool,
+    /// A tag (Tags extension): its name, color and how many files have it.
+    tag: Option<(String, egui::Color32, usize)>,
     /// Nesting level in a folder tree (0 = the section's own rows).
     depth: usize,
     /// A folder that can be expanded to show its subfolders.
@@ -56,6 +58,21 @@ impl Item {
     }
 }
 
+/// A disclosure arrow, pointing down when `open`. GNOME's in the GNOME icon set.
+fn chevron(p: &egui::Painter, r: Rect, open: bool, c: egui::Color32) {
+    let name = if open { "pan-down-symbolic" } else { "pan-end-symbolic" };
+    if crate::system_icons::symbolic(p, r, name, c) {
+        return;
+    }
+    // The hand-drawn arrows are drawn smaller than the 16 px symbolic ones.
+    let r = if r.width() > 16.0 { r.shrink(4.0) } else { r };
+    if open {
+        icons::chevron_down(p, r, c);
+    } else {
+        icons::chevron_right(p, r, c);
+    }
+}
+
 impl FileFlier {
     /// Adds `item` to `out`, followed by its subfolders (recursively) if it's open.
     fn push_tree(
@@ -67,6 +84,7 @@ impl FileFlier {
         out: &mut Vec<Item>,
     ) {
         item.tree_key = section.to_string();
+        item.tree &= self.cfg.sidebar_trees;
         let key = (section.to_string(), item.path.clone());
         if !item.tree || !self.sidebar_open.contains(&key) {
             if item.tree && self.dir_tree.known_empty(&item.path, self.cfg.show_hidden) {
@@ -257,12 +275,30 @@ impl FileFlier {
         let filt = |items: Vec<Item>| -> Vec<Item> {
             items.into_iter().filter(|i| q.is_empty() || fuzzy::score(&q, &i.label).is_some()).collect()
         };
-        let sections = [
+        let mut sections = vec![
             ("Bookmarks", Place::Bookmark, filt(bookmarks)),
             ("Places", Place::Folder, filt(places)),
             ("Storage", Place::Drive, filt(storage)),
             ("Recents", Place::Recent, filt(recents)),
         ];
+        let current_tag = self.tab().tag.clone();
+        if self.cfg.ext_on(crate::ext::Ext::Tags) {
+            let tags: Vec<Item> = self
+                .meta
+                .tags
+                .iter()
+                .map(|t| Item {
+                    label: t.name.clone(),
+                    tag: Some((t.name.clone(), t.color32(), self.meta.count(&t.name))),
+                    ..Default::default()
+                })
+                .collect();
+            sections.push(("Tags", Place::Bookmark, filt(tags)));
+        }
+        sections.retain(|(t, ..)| !self.cfg.sidebar_hidden.iter().any(|h| h == t));
+        let order = &self.cfg.sidebar_order;
+        sections.sort_by_key(|(t, ..)| order.iter().position(|o| o == t).unwrap_or(usize::MAX));
+        let mut reorder: Option<Vec<String>> = None;
 
         let list =
             Rect::from_min_max(pos2(rect.left(), filter_r.bottom() + 8.0), pos2(rect.right() - 1.0, rect.bottom()));
@@ -270,6 +306,8 @@ impl FileFlier {
         let mut tree_toggles: Vec<(String, PathBuf, bool)> = Vec::new();
         let mut new_bookmarks: Vec<PathBuf> = Vec::new();
         let mut actions: Vec<Action> = Vec::new();
+        let mut nav: Vec<crate::app::SidebarStop> = Vec::new();
+        let mut nav_cur: Option<usize> = None;
         let mut drop_target: Option<DropTarget> = None;
         let force_copy = ui.input(|i| i.modifiers.command);
         let dragging = egui::DragAndDrop::has_payload_of_type::<DragPaths>(&ctx);
@@ -279,51 +317,91 @@ impl FileFlier {
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 super::dnd::drag_scroll(ui, list);
                 let w = ui.available_width();
+                // Headers can be dragged to reorder the groups.
+                let mut headers: Vec<(&str, Rect)> = Vec::new();
+                let (mut moving, mut dropped) = (None, None);
                 for (title, icon, items) in sections {
                     let collapsed = self.cfg.collapsed.iter().any(|c| c == title) && q.is_empty();
                     // Section header.
-                    let (hr, hresp) = ui.allocate_exact_size(vec2(w, ITEM_H + 2.0), Sense::click());
+                    let (hr, _) = ui.allocate_exact_size(vec2(w, ITEM_H + 2.0), Sense::hover());
+                    let hresp = ui.interact(hr, Id::new(("sb_section", title)), Sense::click_and_drag());
                     let hr = hr.shrink2(vec2(6.0, 1.0));
+                    headers.push((title, hr));
+                    if hresp.dragged() {
+                        moving = Some(title);
+                        ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                    }
+                    if hresp.drag_stopped() {
+                        dropped = Some(title);
+                    }
                     let p = ui.painter();
                     if hresp.hovered() {
-                        p.rect_filled(hr, 4.0, pal.tab_hover);
+                        p.rect_filled(hr, pal.round(4.0), pal.tab_hover);
                     }
                     // Folders dropped on the Bookmarks header get bookmarked.
                     if title == "Bookmarks"
                         && let Some(pl) = hresp.dnd_hover_payload::<DragPaths>()
                         && pl.0.iter().any(|p| p.is_dir())
                     {
-                        p.rect_stroke(hr, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                        p.rect_stroke(hr, pal.round(4.0), Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
                         if let Some(pl) = hresp.dnd_release_payload::<DragPaths>() {
                             new_bookmarks.extend(pl.0.iter().filter(|p| p.is_dir()).cloned());
                         }
                     }
                     let ir = Rect::from_center_size(pos2(hr.left() + 16.0, hr.center().y), vec2(17.0, 17.0));
                     match icon {
+                        _ if title != "Tags"
+                            && crate::system_icons::symbolic(p, ir, icons::place_symbolic(icon), pal.text_dim) => {}
+                        _ if title == "Tags" => {
+                            // A luggage tag: a rounded tab with a hole.
+                            let r = ir.shrink(2.0);
+                            let s = Stroke::new(1.4, pal.text_dim);
+                            let pts = vec![
+                                pos2(r.left(), r.center().y),
+                                pos2(r.left() + 5.0, r.top()),
+                                pos2(r.right(), r.top()),
+                                pos2(r.right(), r.bottom()),
+                                pos2(r.left() + 5.0, r.bottom()),
+                            ];
+                            p.add(egui::Shape::closed_line(pts, s));
+                            p.circle_stroke(pos2(r.left() + 5.5, r.center().y), 1.6, s);
+                        }
                         Place::Folder => {
                             let r = ir.shrink(1.0);
-                            p.rect_stroke(r, 2.0, Stroke::new(1.4, pal.text_dim), egui::StrokeKind::Middle);
+                            p.rect_stroke(r, pal.round(2.0), Stroke::new(1.4, pal.text_dim), egui::StrokeKind::Middle);
                             p.hline(r.x_range(), r.top() + 4.0, Stroke::new(1.2, pal.text_dim));
                         }
                         other => icons::place(p, ir, other, pal),
                     }
                     let hc = if hresp.hovered() { pal.text_strong } else { pal.text_dim };
-                    super::text_bold(p, pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, title, 13.0, hc);
-                    let cr = Rect::from_center_size(pos2(hr.right() - 14.0, hr.center().y), vec2(16.0, 16.0));
-                    if collapsed {
-                        icons::chevron_right(p, cr, pal.text_dim);
+                    let hf = if pal.gnome_sidebar {
+                        FontId::new(13.0, egui::FontFamily::Name(crate::theme::GNOME_UI.into()))
                     } else {
-                        icons::chevron_down(p, cr, pal.text_dim);
-                    }
+                        super::bold(13.0)
+                    };
+                    p.text(pos2(hr.left() + 34.0, hr.center().y), Align2::LEFT_CENTER, title, hf, hc);
+                    let cr = Rect::from_center_size(pos2(hr.right() - 14.0, hr.center().y), vec2(16.0, 16.0));
+                    chevron(p, cr, !collapsed, pal.text_dim);
                     if hresp.clicked() {
                         toggles.push(title.to_string());
+                    }
+                    // Tags are managed from the Tags header's menu.
+                    if title == "Tags" && hresp.secondary_clicked() {
+                        let pos = hresp.interact_pointer_pos().unwrap_or(hr.center());
+                        actions.push(Action::OpenMenu(pos, vec![MenuItem::Cmd(crate::commands::Command::ManageTags)]));
                     }
                     if collapsed {
                         continue;
                     }
-                    if items.is_empty() && title == "Bookmarks" {
+                    if items.is_empty() && (title == "Bookmarks" || title == "Tags") && q.is_empty() {
                         let (r, _) = ui.allocate_exact_size(vec2(w, ITEM_H - 4.0), Sense::hover());
-                        let hint = if dragging { "Drop folders here" } else { "Ctrl+D to bookmark" };
+                        let hint = if title == "Tags" {
+                            "Right-click Tags to add tags"
+                        } else if dragging {
+                            "Drop folders here"
+                        } else {
+                            "Ctrl+D to bookmark"
+                        };
                         text(
                             ui.painter(),
                             pos2(r.left() + 40.0, r.center().y),
@@ -333,38 +411,58 @@ impl FileFlier {
                             pal.text_faint,
                         );
                     }
+                    // GNOME Files' sidebar rows are roomier, with a gap between highlights.
+                    let (item_h, child_h, gap) =
+                        if pal.gnome_sidebar { (38.0, 32.0, 2.0) } else { (ITEM_H, CHILD_H, 1.0) };
                     for item in &items {
                         let h = if item.space.is_some() {
-                            ITEM_H + 6.0
+                            item_h + 6.0
                         } else if item.depth > 0 {
-                            CHILD_H
+                            child_h
                         } else {
-                            ITEM_H
+                            item_h
                         };
                         let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
-                        let r = r.shrink2(vec2(6.0, 1.0));
-                        let is_current = item.path == current && !item.more;
+                        let r = r.shrink2(vec2(6.0, gap));
+                        let is_current = match &item.tag {
+                            Some((name, ..)) => current_tag.as_deref() == Some(name.as_str()),
+                            None => current_tag.is_none() && item.path == current && !item.more,
+                        };
                         let unmounted = item.volume.as_ref().is_some_and(|v| v.mount_points.is_empty())
                             || item.offline
                             || item.add_cloud;
-                        let droppable = !unmounted && !item.more;
+                        // A stop for Ctrl+Up / Ctrl+Down.
+                        if !unmounted && !item.more {
+                            let trash = matches!(item.icon, Place::Trash) && item.depth == 0 && !item.tree;
+                            nav.push(match &item.tag {
+                                Some((name, ..)) => crate::app::SidebarStop::Tag(name.clone()),
+                                None if trash => crate::app::SidebarStop::Trash,
+                                None => crate::app::SidebarStop::Folder(item.path.clone()),
+                            });
+                            if is_current && nav_cur.is_none() {
+                                nav_cur = Some(nav.len() - 1);
+                            }
+                        }
+                        let droppable = !unmounted && !item.more && item.tag.is_none();
                         let drop_hover = droppable && resp.dnd_hover_payload::<DragPaths>().is_some();
                         let indent = item.depth as f32 * INDENT;
                         let p = ui.painter();
                         if is_current {
-                            p.rect_filled(r, 4.0, pal.tab_hover);
+                            p.rect_filled(r, pal.round(4.0), pal.tab_hover);
                             // Accent marker for where you are.
                             let m = Rect::from_center_size(pos2(r.left() + 1.5, r.center().y), vec2(3.0, h * 0.5));
-                            p.rect_filled(m, 1.5, pal.accent);
+                            if !pal.gnome_sidebar {
+                                p.rect_filled(m, 1.5, pal.accent);
+                            }
                             if reveal {
                                 ui.scroll_to_rect(r, None);
                             }
                         } else if resp.hovered() {
-                            p.rect_filled(r, 4.0, pal.hover);
+                            p.rect_filled(r, pal.round(4.0), pal.hover);
                         }
                         let is_trash = matches!(item.icon, Place::Trash) && item.depth == 0 && !item.tree;
                         if drop_hover {
-                            p.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+                            p.rect_stroke(r, pal.round(4.0), Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
                             drop_target =
                                 Some(if is_trash { DropTarget::Trash } else { DropTarget::Folder(item.path.clone()) });
                             if !is_trash {
@@ -374,7 +472,7 @@ impl FileFlier {
                                     Id::new(("spring_sb", title, &item.tree_key, &item.path)),
                                     super::dnd::SPRING_DELAY,
                                 );
-                                p.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.30 * t));
+                                p.rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.30 * t));
                                 if fire {
                                     if item.tree && !item.open {
                                         tree_toggles.push((item.tree_key.clone(), item.path.clone(), true));
@@ -391,12 +489,7 @@ impl FileFlier {
                             let cresp =
                                 ui.interact(chev, Id::new(("sb_tree", &item.tree_key, &item.path)), Sense::click());
                             let c = if cresp.hovered() { pal.text_strong } else { pal.text_faint };
-                            let cr = chev.shrink(4.0);
-                            if item.open {
-                                icons::chevron_down(ui.painter(), cr, c);
-                            } else {
-                                icons::chevron_right(ui.painter(), cr, c);
-                            }
+                            chevron(ui.painter(), chev, item.open, c);
                             if cresp.clicked() {
                                 tree_toggles.push((item.tree_key.clone(), item.path.clone(), !item.open));
                                 chev_clicked = true;
@@ -405,9 +498,13 @@ impl FileFlier {
                         let p = ui.painter();
                         let isz = if item.depth > 0 { 16.0 } else { 18.0 };
                         let ir = Rect::from_center_size(pos2(r.left() + 32.0 + indent, text_y), vec2(isz, isz));
-                        if item.add_cloud {
+                        if let Some((_, c, _)) = &item.tag {
+                            p.circle_filled(ir.center(), 6.0, *c);
+                        } else if item.add_cloud {
                             let c = if resp.hovered() { pal.text_strong } else { pal.text_dim };
-                            icons::plus(p, ir.shrink(2.0), c);
+                            if !crate::system_icons::symbolic(p, ir, "list-add-symbolic", c) {
+                                icons::plus(p, ir.shrink(2.0), c);
+                            }
                         } else if !item.more {
                             icons::place(p, ir, item.icon, pal);
                         }
@@ -419,10 +516,21 @@ impl FileFlier {
                         } else {
                             pal.text
                         };
-                        let eject_w = if ejectable { 26.0 } else { 0.0 };
+                        let eject_w = if ejectable || item.tag.is_some() { 26.0 } else { 0.0 };
+                        if let Some((_, _, n)) = &item.tag {
+                            let c = pal.text_faint;
+                            text(p, pos2(r.right() - 10.0, text_y), Align2::RIGHT_CENTER, n.to_string(), 12.0, c);
+                        }
                         let label_x = r.left() + 48.0 + indent;
                         let size = if item.depth > 0 { 13.5 } else { 14.0 };
-                        let g = elided(p, &item.label, size, color, r.right() - label_x - 6.0 - eject_w);
+                        // The GNOME themes use the desktop's font, at its size, as GNOME Files does.
+                        let font = if pal.gnome_sidebar {
+                            let size = crate::theme::gnome_font_size() - if item.depth > 0 { 0.5 } else { 0.0 };
+                            FontId::new(size, egui::FontFamily::Name(crate::theme::GNOME_UI.into()))
+                        } else {
+                            super::font(size)
+                        };
+                        let g = super::elided_in(p, &item.label, font, color, r.right() - label_x - 6.0 - eject_w);
                         p.galley(pos2(label_x, text_y - g.size().y / 2.0), g, color);
                         if let Some(u) = item.space.map(|s| s.used()) {
                             let bar = Rect::from_min_size(
@@ -467,13 +575,43 @@ impl FileFlier {
                             let eresp = ui.interact(er, Id::new(("eject", &v.object)), Sense::click());
                             let c = if eresp.hovered() { pal.text_strong } else { pal.text_dim };
                             if eresp.hovered() {
-                                ui.painter().rect_filled(er, 4.0, pal.tab_hover);
+                                ui.painter().rect_filled(er, pal.round(4.0), pal.tab_hover);
                             }
-                            icons::eject(ui.painter(), er.shrink(4.0), c);
+                            let eject = "media-eject-symbolic";
+                            if !crate::system_icons::symbolic(ui.painter(), er, eject, c) {
+                                icons::eject(ui.painter(), er.shrink(4.0), c);
+                            }
                             if eresp.on_hover_text("Eject — safe to unplug afterwards").clicked() {
                                 actions.push(Action::EjectVolume(v.clone()));
                                 eject_clicked = true;
                             }
+                        }
+                        if let Some((name, ..)) = &item.tag {
+                            // Tags: click to list the files, drop files to tag them.
+                            let hover = resp.dnd_hover_payload::<DragPaths>().is_some();
+                            if hover {
+                                let p = ui.painter();
+                                p.rect_stroke(
+                                    r,
+                                    pal.round(4.0),
+                                    Stroke::new(1.5, pal.accent),
+                                    egui::StrokeKind::Inside,
+                                );
+                            }
+                            if let Some(pl) = resp.dnd_release_payload::<DragPaths>() {
+                                actions.push(Action::TagPaths(pl.0.clone(), name.clone()));
+                            }
+                            let resp =
+                                resp.on_hover_text(format!("Everything tagged “{name}” · drop files here to tag them"));
+                            if resp.clicked() {
+                                actions.push(Action::ShowTag(name.clone()));
+                            }
+                            if resp.secondary_clicked() {
+                                let pos = resp.interact_pointer_pos().unwrap_or(r.center());
+                                let m = vec![MenuItem::Cmd(crate::commands::Command::ManageTags)];
+                                actions.push(Action::OpenMenu(pos, m));
+                            }
+                            continue;
                         }
                         let resp = resp.on_hover_text(tip);
                         if resp.clicked() && (eject_clicked || chev_clicked) {
@@ -542,8 +680,42 @@ impl FileFlier {
                     }
                     ui.add_space(6.0);
                 }
+                // Where a dragged group would go: after the groups whose header is above the pointer.
+                if let Some(t) = moving.or(dropped)
+                    && let Some(y) = ui.ctx().pointer_latest_pos().map(|p| p.y)
+                {
+                    let others: Vec<&(&str, Rect)> = headers.iter().filter(|(h, _)| *h != t).collect();
+                    let at = others.iter().filter(|(_, r)| r.center().y < y).count();
+                    if dropped.is_some() {
+                        let mut v: Vec<String> = others.iter().map(|(h, _)| h.to_string()).collect();
+                        v.insert(at, t.to_string());
+                        reorder = Some(v);
+                    } else {
+                        let line_y = others.get(at).map_or(ui.cursor().top() - 3.0, |(_, r)| r.top() - 3.0);
+                        let x = list.x_range().shrink(8.0);
+                        ui.painter().hline(x, line_y, Stroke::new(2.0, pal.accent));
+                    }
+                }
             });
         });
+        if let Some(shown) = reorder {
+            // The shown groups take their new order; hidden ones keep their places.
+            let mut full = self.cfg.sidebar_order.clone();
+            for t in &shown {
+                if !full.contains(t) {
+                    full.push(t.clone());
+                }
+            }
+            let mut next = shown.iter();
+            let order: Vec<String> = full
+                .into_iter()
+                .map(|t| if shown.contains(&t) { next.next().cloned().unwrap_or(t) } else { t })
+                .collect();
+            if order != self.cfg.sidebar_order {
+                self.cfg.sidebar_order = order;
+                self.cfg.save();
+            }
+        }
         for t in toggles {
             if let Some(i) = self.cfg.collapsed.iter().position(|c| *c == t) {
                 self.cfg.collapsed.remove(i);
@@ -572,5 +744,7 @@ impl FileFlier {
             self.drop_target = drop_target;
         }
         self.actions.extend(actions);
+        self.sidebar_nav = nav;
+        self.sidebar_nav_cur = nav_cur;
     }
 }

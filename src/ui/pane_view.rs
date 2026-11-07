@@ -19,46 +19,263 @@ const BOTTOM_H: f32 = 40.0;
 const TILE_W: f32 = 132.0;
 const TILE_H: f32 = 136.0;
 const LIST_COL_W: f32 = 280.0;
+/// Tile and picture sizes of the grid views.
+#[derive(Clone, Copy)]
+struct GridSize {
+    tile_w: f32,
+    tile_h: f32,
+    thumb_h: f32,
+    icon: f32,
+    tier: crate::preview::thumbs::Tier,
+}
+
+fn grid_size(view: ViewMode) -> GridSize {
+    use crate::preview::thumbs::Tier;
+    let g = |tile_w, tile_h, thumb_h, icon, tier| GridSize { tile_w, tile_h, thumb_h, icon, tier };
+    match view {
+        ViewMode::MediumGrid => g(196.0, 216.0, 150.0, 96.0, Tier::XLarge),
+        ViewMode::LargeGrid => g(268.0, 292.0, 226.0, 128.0, Tier::XLarge),
+        ViewMode::ExtraLargeGrid => g(420.0, 446.0, 380.0, 176.0, Tier::XXLarge),
+        _ => g(TILE_W, TILE_H, 78.0, 64.0, Tier::Large),
+    }
+}
 
 enum ItemAction {
     Click(usize, Modifiers),
     Context(usize, egui::Pos2),
     Open(usize),
     NewTab(PathBuf),
+    /// Tree view: open or close a folder in place.
+    ToggleOpen(PathBuf),
+    /// Stars clicked in the Rating column.
+    Rate(PathBuf, u8),
+    /// Alt+double-click: the item's Properties window.
+    Properties(usize),
     BackgroundContext(egui::Pos2),
     ClearSelection,
+}
+
+/// Where each row of the list goes, top to bottom: group headers and rows of items.
+/// Without groups it's just the rows of items, all `pitch` high.
+struct RowMap {
+    rows: Vec<MapRow>,
+    /// Top of each row from the top of the list, and (last) the list's height.
+    tops: Vec<f32>,
+    height: f32,
+    /// Each item's row (by index into `visible`).
+    item_row: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+enum MapRow {
+    /// The header of `groups[_]`.
+    Header(usize),
+    /// Items `first..first + len` (indices into `visible`).
+    Items { first: usize, len: usize },
+}
+
+impl RowMap {
+    fn new(n: usize, ncols: usize, pitch: f32, header_h: f32, groups: &[(usize, String)]) -> Self {
+        let ncols = ncols.max(1);
+        let mut m = RowMap { rows: Vec::new(), tops: vec![0.0], height: 0.0, item_row: Vec::with_capacity(n) };
+        let push = |m: &mut RowMap, row: MapRow, h: f32| {
+            m.rows.push(row);
+            m.height += h;
+            m.tops.push(m.height);
+        };
+        let starts: Vec<usize> = groups.iter().map(|g| g.0).filter(|&s| s < n).collect();
+        let grouped = !starts.is_empty();
+        let starts = if grouped { starts } else { vec![0] };
+        for (g, &s) in starts.iter().enumerate() {
+            let e = starts.get(g + 1).copied().unwrap_or(n).min(n);
+            if grouped {
+                push(&mut m, MapRow::Header(g), header_h);
+            }
+            let mut i = s;
+            while i < e {
+                let len = (e - i).min(ncols);
+                for _ in 0..len {
+                    m.item_row.push(m.rows.len());
+                }
+                push(&mut m, MapRow::Items { first: i, len }, pitch);
+                i += len;
+            }
+        }
+        m
+    }
+
+    /// The rows between `y0` and `y1` (from the top of the list).
+    fn rows_in(&self, y0: f32, y1: f32) -> std::ops::Range<usize> {
+        let n = self.rows.len();
+        // tops[r + 1] is row r's bottom.
+        let first = self.tops[1..].partition_point(|&b| b <= y0);
+        let end = self.tops[..n].partition_point(|&t| t < y1);
+        first.min(n)..end.max(first.min(n))
+    }
+
+    /// The top of item `vi`'s row; with `header`, of its group's header if it's in the
+    /// group's first row.
+    fn item_top(&self, vi: usize, header: bool) -> f32 {
+        let Some(&r) = self.item_row.get(vi) else { return 0.0 };
+        if header && r > 0 && matches!(self.rows[r - 1], MapRow::Header(_)) {
+            return self.tops[r - 1];
+        }
+        self.tops[r]
+    }
+
+    /// Item `vi`'s column in its row.
+    fn item_col(&self, vi: usize) -> usize {
+        match self.item_row.get(vi).map(|&r| self.rows[r]) {
+            Some(MapRow::Items { first, .. }) => vi - first,
+            _ => 0,
+        }
+    }
+}
+
+/// A group's header: its name and how many items it has, then a line.
+fn group_header(
+    p: &egui::Painter,
+    r: Rect,
+    groups: &[(usize, String)],
+    g: usize,
+    n: usize,
+    row_gap: f32,
+    pal: &crate::theme::Palette,
+) {
+    let Some((start, label)) = groups.get(g) else { return };
+    let end = groups.get(g + 1).map_or(n, |x| x.0);
+    let cy = r.bottom() - 13.0;
+    let x = r.left() + 16.0;
+    let name = p.layout_no_wrap(label.clone(), super::bold(13.5), pal.text_strong);
+    let name_w = name.size().x;
+    p.galley(pos2(x, cy - name.size().y / 2.0), name, pal.text_strong);
+    let count = text(p, pos2(x + name_w + 8.0, cy), Align2::LEFT_CENTER, end - start, 12.5, pal.text_faint);
+    let line_r = r.right() - 12.0 - row_gap;
+    if count.right() + 10.0 < line_r {
+        p.hline(count.right() + 10.0..=line_r, cy, Stroke::new(1.0, pal.row_sep));
+    }
+}
+
+/// A price-tag shape (the bottom bar's "tags on tiles" switch).
+fn tag_glyph(p: &egui::Painter, r: Rect, c: Color32, filled: bool) {
+    let (l, t, rt, b) = (r.left() + 1.0, r.top() + 3.0, r.right() - 1.0, r.bottom() - 3.0);
+    let tip = l + (b - t) * 0.45;
+    let pts = vec![pos2(l, r.center().y), pos2(tip, t), pos2(rt, t), pos2(rt, b), pos2(tip, b)];
+    let hole = pos2(tip + 1.5, r.center().y);
+    if filled {
+        p.add(egui::Shape::convex_polygon(pts, c, Stroke::NONE));
+        p.circle_filled(hole, 1.8, Color32::from_black_alpha(160));
+    } else {
+        p.add(egui::Shape::closed_line(pts, Stroke::new(1.4, c)));
+        p.circle_stroke(hole, 1.6, Stroke::new(1.2, c));
+    }
+}
+
+/// Empty space at the end of each details row: right-click it for the folder's menu,
+/// or drag from it to select with a rectangle.
+const ROW_END_GAP: f32 = 40.0;
+
+/// The details view's columns after Name, which can be dragged into any order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetaCol {
+    Type,
+    Items,
+    Size,
+    Rating,
+    Modified,
+}
+
+impl MetaCol {
+    pub const ALL: [MetaCol; 5] = [MetaCol::Type, MetaCol::Items, MetaCol::Size, MetaCol::Rating, MetaCol::Modified];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            MetaCol::Type => "type",
+            MetaCol::Items => "items",
+            MetaCol::Size => "size",
+            MetaCol::Rating => "rating",
+            MetaCol::Modified => "modified",
+        }
+    }
+
+    /// The column's slot width, and where its contents sit inside the slot.
+    fn slot(self) -> (f32, f32, f32) {
+        match self {
+            MetaCol::Type => (150.0, 0.0, 140.0),
+            MetaCol::Items => (70.0, 0.0, 60.0),
+            MetaCol::Size => (110.0, 0.0, 86.0),
+            MetaCol::Rating => (88.0, 6.0, 76.0),
+            MetaCol::Modified => (132.0, 0.0, 132.0),
+        }
+    }
+
+    /// The saved order (by id), with unknown ids dropped and missing columns added in
+    /// their usual place.
+    pub fn order(saved: &[String]) -> Vec<MetaCol> {
+        let mut v: Vec<MetaCol> = Vec::new();
+        for c in saved.iter().filter_map(|s| MetaCol::ALL.into_iter().find(|c| c.id() == s.as_str())) {
+            if !v.contains(&c) {
+                v.push(c);
+            }
+        }
+        for c in MetaCol::ALL {
+            if !v.contains(&c) {
+                v.push(c);
+            }
+        }
+        v
+    }
 }
 
 /// Column layout for the details view.
 struct Cols {
     name: f32,
+    rating: Option<(f32, f32)>,
     ty: Option<(f32, f32)>,
     items: Option<(f32, f32)>,
     size: (f32, f32),
     modified: Option<(f32, f32)>,
+    /// The shown columns after Name, left to right, with their slots.
+    slots: Vec<(MetaCol, f32, f32)>,
 }
 
 impl Cols {
-    fn new(r: Rect, show_items: bool) -> Self {
+    fn new(r: Rect, show_items: bool, show_rating: bool, order: &[MetaCol]) -> Self {
         let w = r.width();
-        let mut right = r.right() - 12.0;
-        let modified = (w > 700.0).then(|| {
-            right -= 132.0;
-            (right, right + 132.0)
-        });
-        let size = {
-            right -= 110.0;
-            (right, right + 86.0)
+        let shown = |c: MetaCol| match c {
+            MetaCol::Modified => w > 700.0,
+            MetaCol::Rating => show_rating && w > 620.0,
+            MetaCol::Size => true,
+            MetaCol::Items => show_items && w > 560.0,
+            MetaCol::Type => w > 440.0,
         };
-        let items = (show_items && w > 560.0).then(|| {
-            right -= 70.0;
-            (right, right + 60.0)
-        });
-        let ty = (w > 440.0).then(|| {
-            right -= 150.0;
-            (right, right + 140.0)
-        });
-        Cols { name: right - 12.0, ty, items, size, modified }
+        let cols: Vec<MetaCol> = order.iter().copied().filter(|&c| shown(c)).collect();
+        let total: f32 = cols.iter().map(|c| c.slot().0).sum();
+        let start = r.right() - 12.0 - total;
+        let mut out = Cols {
+            name: start - 12.0,
+            rating: None,
+            ty: None,
+            items: None,
+            size: (0.0, 0.0),
+            modified: None,
+            slots: vec![],
+        };
+        let mut x = start;
+        for c in cols {
+            let (width, l, rr) = c.slot();
+            let span = (x + l, x + rr);
+            match c {
+                MetaCol::Type => out.ty = Some(span),
+                MetaCol::Items => out.items = Some(span),
+                MetaCol::Size => out.size = span,
+                MetaCol::Rating => out.rating = Some(span),
+                MetaCol::Modified => out.modified = Some(span),
+            }
+            out.slots.push((c, x, x + width));
+            x += width;
+        }
+        out
     }
 }
 
@@ -96,11 +313,90 @@ impl FileFlier {
             self.actions.push(Action::Activate(idx));
         }
         let toolbar = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + TOOLBAR_H));
-        let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - BOTTOM_H), rect.max);
+        let bottom_h = if self.cfg.show_bottom_bar { BOTTOM_H } else { 0.0 };
+        let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - bottom_h), rect.max);
         let content = Rect::from_min_max(pos2(rect.left(), toolbar.bottom()), pos2(rect.right(), bottom.top()));
         self.toolbar_ui(ui, idx, toolbar);
-        self.view_ui(ui, idx, content);
-        self.bottom_ui(ui, idx, bottom);
+        self.ctrl_wheel_views(ui, idx, content);
+        if self.panes[idx].tab().view == ViewMode::Columns {
+            let middle = self.columns_ui(ui, idx, content);
+            // The middle column may be partly scrolled out of the pane.
+            ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(content));
+                self.view_ui(ui, idx, middle);
+            });
+        } else {
+            self.view_ui(ui, idx, content);
+        }
+        if self.cfg.show_bottom_bar {
+            self.bottom_ui(ui, idx, bottom);
+        }
+    }
+
+    /// Ctrl + mouse wheel over the files steps through the views in Alt+1…8 order.
+    fn ctrl_wheel_views(&mut self, ui: &mut Ui, idx: usize, content: Rect) {
+        const ORDER: [ViewMode; 8] = [
+            ViewMode::Details,
+            ViewMode::List,
+            ViewMode::Tree,
+            ViewMode::Columns,
+            ViewMode::Grid,
+            ViewMode::MediumGrid,
+            ViewMode::LargeGrid,
+            ViewMode::ExtraLargeGrid,
+        ];
+        if self.quicklook || self.dialog.is_some() || self.menu.is_some() {
+            return;
+        }
+        let (zoom, ctrl, over) = ui.input(|i| {
+            (i.zoom_delta(), i.modifiers.command, i.pointer.hover_pos().is_some_and(|p| content.contains(p)))
+        });
+        let key = Id::new(("ctrl_wheel", idx));
+        if !(ctrl && over) || zoom == 1.0 {
+            return;
+        }
+        // Wheel notches and touchpad scrolling arrive in different-sized pieces (a
+        // notch is smoothed over several frames): add them up, switch once enough
+        // has come in, then ignore the rest of that notch for a moment.
+        let now = ui.input(|i| i.time);
+        let (mut acc, until): (f32, f64) = ui.ctx().data(|d| d.get_temp(key)).unwrap_or((0.0, 0.0));
+        if now < until {
+            return;
+        }
+        acc += zoom.ln();
+        // Same order as Alt+1…8: wheel up goes to the next number (in the grids,
+        // bigger pictures), wheel down to the one before.
+        let step = if acc > 0.15 {
+            1
+        } else if acc < -0.15 {
+            -1
+        } else {
+            0
+        };
+        let mut until = 0.0;
+        if step != 0 {
+            acc = 0.0;
+            until = now + 0.22;
+            let view = self.panes[idx].tab().view;
+            let at = ORDER.iter().position(|v| *v == view).unwrap_or(0) as i32;
+            let to = (at + step).clamp(0, ORDER.len() as i32 - 1) as usize;
+            if to as i32 != at {
+                let cmd = match ORDER[to] {
+                    ViewMode::Grid => Command::ViewGrid,
+                    ViewMode::MediumGrid => Command::ViewMediumGrid,
+                    ViewMode::LargeGrid => Command::ViewLargeGrid,
+                    ViewMode::ExtraLargeGrid => Command::ViewExtraLargeGrid,
+                    ViewMode::List => Command::ViewList,
+                    ViewMode::Details => Command::ViewDetails,
+                    ViewMode::Tree => Command::ViewTree,
+                    ViewMode::Columns => Command::ViewColumns,
+                };
+                self.actions.push(Action::Activate(idx));
+                self.actions.push(Action::Run(cmd));
+                self.actions.push(Action::Toast(cmd.label().to_string()));
+            }
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(key, (acc, until)));
     }
 
     fn toolbar_ui(&mut self, ui: &mut Ui, idx: usize, rect: Rect) {
@@ -293,13 +589,13 @@ impl FileFlier {
             let resp = ui.interact(r.intersect(rect), Id::new(("crumb", idx, i)), Sense::click());
             let drop_hover = resp.dnd_hover_payload::<DragPaths>().is_some();
             if resp.hovered() || drop_hover {
-                painter.rect_filled(r, 4.0, pal.tab_hover);
+                painter.rect_filled(r, pal.round(4.0), pal.tab_hover);
             }
             if drop_hover && !last {
                 // Resting on a parent crumb goes there.
                 let (t, fire) = super::dnd::spring(ui.ctx(), Id::new(("spring", target)), super::dnd::SPRING_DELAY);
-                painter.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.30 * t));
-                painter.rect_stroke(r, 4.0, Stroke::new(1.5, pal.accent), StrokeKind::Inside);
+                painter.rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.30 * t));
+                painter.rect_stroke(r, pal.round(4.0), Stroke::new(1.5, pal.accent), StrokeKind::Inside);
                 self.drop_target = Some(crate::app::DropTarget::Folder(target.clone()));
                 if fire {
                     self.actions.push(Action::Activate(idx));
@@ -326,25 +622,76 @@ impl FileFlier {
     }
 
     fn view_ui(&mut self, ui: &mut Ui, idx: usize, rect: Rect) {
+        // Arriving in a folder: its remembered grouping (a tag view isn't a folder).
+        {
+            let show_hidden = self.cfg.show_hidden;
+            let tab = self.panes[idx].tab_mut();
+            let want = if tab.tag.is_some() {
+                Some(crate::config::GroupBy::None)
+            } else if tab.group_for.as_deref() != Some(tab.path.as_path()) {
+                tab.group_for = Some(tab.path.clone());
+                Some(self.cfg.folder_groups.get(tab.path.to_string_lossy().as_ref()).copied().unwrap_or_default())
+            } else {
+                None
+            };
+            if let Some(want) = want
+                && tab.group != want
+            {
+                tab.group = want;
+                tab.refilter(show_hidden);
+            }
+        }
         let pal = self.pal();
         let is_active = idx == self.active;
         let sort = self.cfg.sort;
         let row_h = self.cfg.density.row_height();
         let fx = self.fx();
         let date_style = self.cfg.date_style;
+        let show_rating = self.cfg.ext_on(crate::ext::Ext::Ratings);
+        let show_tags = self.cfg.ext_on(crate::ext::Ext::Tags);
+        let show_dropbox = self.cfg.ext_on(crate::ext::Ext::Dropbox);
+        let grid_rating = show_rating && self.cfg.grid_ratings;
+        let grid_tags = show_tags && self.cfg.grid_tags;
         let ctx = ui.ctx().clone();
         let cut_paths: Vec<PathBuf> =
             self.clipboard.as_ref().filter(|c| c.cut).map(|c| c.paths.clone()).unwrap_or_default();
         let tab = self.panes[idx].tab_mut();
         let counts = &mut self.item_counts;
         let thumbs = &mut self.pv.thumbs;
-        let view = tab.view;
+        let tints = super::tint::Tints::new(
+            &self.cfg.folder_colors,
+            self.cfg.folder_scheme,
+            &self.tint_anims,
+            ctx.input(|i| i.time),
+        );
+        // The tree view is the details view with folders that open in place.
+        let tree = tab.view == ViewMode::Tree;
+        // The columns view's middle column is a one-column list.
+        let columns = tab.view == ViewMode::Columns;
+        // The bigger grids are the grid with bigger tiles and thumbnails.
+        let gs = grid_size(tab.view);
+        let view = match tab.view {
+            ViewMode::Tree => ViewMode::Details,
+            v if v.is_grid() => ViewMode::Grid,
+            ViewMode::Columns => ViewMode::List,
+            v => v,
+        };
+        let flat = tab.flat || tab.tag.is_some();
         let n = tab.visible.len();
         let multi = tab.selected.len() > 1;
 
         // ---- column header (details only)
         let mut list_rect = rect;
-        let cols = Cols::new(rect, self.cfg.show_item_counts);
+        // Details and tree rows end a little short, leaving empty space to click.
+        let row_gap = if matches!(view, ViewMode::Details | ViewMode::Tree) { ROW_END_GAP } else { 0.0 };
+        let col_order = MetaCol::order(&self.cfg.column_order);
+        let cols = Cols::new(
+            Rect::from_min_max(rect.min, pos2(rect.right() - row_gap, rect.bottom())),
+            self.cfg.show_item_counts,
+            show_rating,
+            &col_order,
+        );
+        let mut new_col_order: Option<Vec<MetaCol>> = None;
         let mut header_actions: Vec<Action> = Vec::new();
         if view == ViewMode::Details {
             let h = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER_H));
@@ -365,7 +712,8 @@ impl FileFlier {
             let mut header =
                 |ui: &mut Ui, key: Option<SortKey>, label: &str, l: f32, r: f32, right_align: bool, sep: bool| {
                     let hr = Rect::from_min_max(pos2(l, h.top()), pos2(r, h.bottom()));
-                    let resp = ui.interact(hr, Id::new(("hdr", idx, label)), Sense::click());
+                    let sense = if key == Some(SortKey::Name) { Sense::click() } else { Sense::click_and_drag() };
+                    let resp = ui.interact(hr, Id::new(("hdr", idx, label)), sense);
                     let p = ui.painter();
                     let active = key.is_some() && key == Some(sort.key);
                     let color = if resp.hovered() || active { pal.text_strong } else { pal.text_dim };
@@ -401,32 +749,95 @@ impl FileFlier {
                             SortKey::Size => Command::SortBySize,
                             SortKey::Modified => Command::SortByModified,
                             SortKey::Kind => Command::SortByKind,
+                            SortKey::Folder => Command::SortByFolder,
+                            SortKey::Rating => Command::SortByRating,
                         }));
                     }
+                    resp
                 };
             header(ui, Some(SortKey::Name), "Name", h.left() + 48.0, cols.name, false, false);
-            if let Some((l, r)) = cols.ty {
-                header(ui, Some(SortKey::Kind), "Type", l, r, false, true);
+            // The other columns, in their order; drag a header to move its column.
+            let mut dragged: Option<(MetaCol, egui::Response)> = None;
+            for &(c, ..) in &cols.slots {
+                let resp = match c {
+                    // The flat view shows where each file is instead of its type.
+                    MetaCol::Type => {
+                        let (l, r) = cols.ty.unwrap_or_default();
+                        if flat {
+                            header(ui, Some(SortKey::Folder), "Folder", l, r, false, true)
+                        } else {
+                            header(ui, Some(SortKey::Kind), "Type", l, r, false, true)
+                        }
+                    }
+                    MetaCol::Items => {
+                        let (l, r) = cols.items.unwrap_or_default();
+                        header(ui, None, "Items", l, r, false, true)
+                    }
+                    MetaCol::Size => header(ui, Some(SortKey::Size), "Size", cols.size.0, cols.size.1, true, true),
+                    MetaCol::Rating => {
+                        let (l, r) = cols.rating.unwrap_or_default();
+                        header(ui, Some(SortKey::Rating), "Rating", l, r, false, true)
+                    }
+                    MetaCol::Modified => {
+                        let (l, r) = cols.modified.unwrap_or_default();
+                        header(ui, Some(SortKey::Modified), "Modified", l, r, false, true)
+                    }
+                };
+                if resp.dragged() || resp.drag_stopped() {
+                    dragged = Some((c, resp));
+                }
             }
-            if let Some((l, r)) = cols.items {
-                header(ui, None, "Items", l, r, false, true);
-            }
-            header(ui, Some(SortKey::Size), "Size", cols.size.0, cols.size.1, true, true);
-            if let Some((l, r)) = cols.modified {
-                header(ui, Some(SortKey::Modified), "Modified", l, r, false, true);
+            if let Some((c, resp)) = dragged
+                && let Some(px) = ui.ctx().pointer_latest_pos().map(|p| p.x)
+            {
+                // Where it would go: before the first column whose middle is right of the pointer.
+                let others: Vec<(MetaCol, f32, f32)> = cols.slots.iter().copied().filter(|s| s.0 != c).collect();
+                let at = others.iter().position(|&(_, l, r)| px < (l + r) / 2.0).unwrap_or(others.len());
+                let line_x = match others.get(at) {
+                    Some(&(_, l, _)) => l - 4.0,
+                    None => others.last().map_or(cols.name + 8.0, |&(_, _, r)| r),
+                };
+                let p = ui.painter();
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                p.vline(line_x, h.top() + 4.0..=h.bottom() - 4.0, Stroke::new(2.0, pal.accent));
+                if resp.drag_stopped() {
+                    // Put the column there, keeping the hidden ones where they were.
+                    let mut order: Vec<MetaCol> = col_order.iter().copied().filter(|&x| x != c).collect();
+                    let pos = match others.get(at) {
+                        Some(&(next, ..)) => order.iter().position(|&x| x == next).unwrap_or(order.len()),
+                        None => others
+                            .last()
+                            .and_then(|&(prev, ..)| order.iter().position(|&x| x == prev))
+                            .map_or(order.len(), |i| i + 1),
+                    };
+                    order.insert(pos, c);
+                    if order != col_order {
+                        new_col_order = Some(order);
+                    }
+                }
             }
         }
         self.actions.extend(header_actions);
+        if let Some(order) = new_col_order {
+            self.cfg.column_order = order.iter().map(|c| c.id().to_string()).collect();
+            self.cfg.save();
+        }
         let tab = self.panes[idx].tab_mut();
+        let meta = &mut self.meta;
 
         // ---- geometry
         let inner_w = list_rect.width() - 16.0;
         let (ncols, pitch) = match view {
-            ViewMode::Details => (1, row_h),
+            ViewMode::Details | ViewMode::Tree | ViewMode::Columns => (1, row_h),
+            ViewMode::List if columns => (1, row_h),
             ViewMode::List => (((inner_w / LIST_COL_W).floor() as usize).max(1), row_h),
-            ViewMode::Grid => (((inner_w / TILE_W).floor() as usize).max(1), TILE_H),
+            ViewMode::Grid | ViewMode::MediumGrid | ViewMode::LargeGrid | ViewMode::ExtraLargeGrid => {
+                (((inner_w / gs.tile_w).floor() as usize).max(1), gs.tile_h)
+            }
         };
-        let rows = n.div_ceil(ncols);
+        // Group headers are shorter than the grids' rows.
+        let header_h = if view == ViewMode::Grid { 40.0 } else { pitch.max(30.0) };
+        let map = RowMap::new(n, ncols, pitch, header_h, &tab.groups);
 
         // Keep the cursor in view.
         let key = Id::new(("scroll", idx));
@@ -436,7 +847,8 @@ impl FileFlier {
         let anim_key = Id::new(("scroll_anim", idx));
         if tab.scroll_to_cursor {
             tab.scroll_to_cursor = false;
-            let y = (tab.cursor / ncols) as f32 * pitch;
+            // A group's first row shows with its header.
+            let y = map.item_top(tab.cursor, true);
             let target = if y < off {
                 Some(y)
             } else if y + pitch > off + view_h {
@@ -488,8 +900,8 @@ impl FileFlier {
             && tab.selected.len() == 1
             && tab.cursor_entry().is_some_and(|e| tab.selected.contains(&e.path));
         let sel_key = Id::new(("sel_anim", idx, tab.path.as_os_str()));
-        let (target_row, target_col) = ((tab.cursor / ncols) as f32, (tab.cursor % ncols) as f32);
-        let anim_row = ctx.animate_value_with_time(sel_key.with("r"), target_row, fx.dur(0.09));
+        let target_col = map.item_col(tab.cursor) as f32;
+        let anim_y = ctx.animate_value_with_time(sel_key.with("y"), map.item_top(tab.cursor, false), fx.dur(0.09));
         let anim_col = ctx.animate_value_with_time(sel_key.with("c"), target_col, fx.dur(0.09));
 
         let mut item_actions: Vec<ItemAction> = Vec::new();
@@ -501,16 +913,19 @@ impl FileFlier {
         let sel_fill = if is_active { pal.accent } else { pal.accent_dim };
 
         // Background (empty space) interaction sits behind the items, which win where they overlap.
-        let bg = ui.interact(list_rect, Id::new(("list_bg", idx)), Sense::click());
-        if bg.clicked() {
+        // Dragging on it selects with a rectangle.
+        let bg = ui.interact(list_rect, Id::new(("list_bg", idx)), Sense::click_and_drag());
+        let band_key = Id::new(("band", idx));
+        let band_add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+        let mut band_hits: Option<(Vec<usize>, Vec<PathBuf>)> = None;
+        if bg.clicked() && !band_add {
             item_actions.push(ItemAction::ClearSelection);
         }
         if bg.secondary_clicked() {
             item_actions.push(ItemAction::BackgroundContext(bg.interact_pointer_pos().unwrap_or(list_rect.center())));
         }
         // Inline rename state is taken out while drawing (avoids borrowing self twice).
-        let mut renaming =
-            self.renaming.take().filter(|r| r.pane != idx || r.path.parent() == Some(tab.path.as_path()));
+        let mut renaming = self.renaming.take().filter(|r| r.pane != idx || r.path.starts_with(&tab.path));
         let mut rename_done: Option<bool> = None; // Some(true) = commit, Some(false) = cancel
         let out = ui
             .scope_builder(
@@ -519,28 +934,107 @@ impl FileFlier {
                     ui.set_clip_rect(list_rect);
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                     ui.multiply_opacity(nav_t);
-                    area.show_rows(ui, pitch, rows, |ui, range| {
+                    area.show_viewport(ui, |ui, viewport| {
+                        // Content-space origin of the first row, so things scroll with the rows.
+                        let origin = ui.max_rect().min;
+                        let full_w = ui.available_width();
+                        ui.set_min_height(map.height);
+                        let range = map.rows_in(viewport.top(), viewport.bottom());
                         super::dnd::drag_scroll(ui, list_rect);
+                        // Rectangle selection, in content coordinates (it scrolls with the rows).
+                        if bg.drag_started()
+                            && let Some(press) = ui.input(|i| i.pointer.press_origin())
+                        {
+                            let base: Vec<PathBuf> =
+                                if band_add { tab.selected.iter().cloned().collect() } else { Vec::new() };
+                            ui.ctx().data_mut(|d| d.insert_temp(band_key, (press - origin.to_vec2(), base)));
+                        }
+                        // Read only while dragging: it holds a copy of the selection.
+                        let band: Option<(egui::Pos2, Vec<PathBuf>)> =
+                            if bg.dragged() { ui.ctx().data(|d| d.get_temp(band_key)) } else { None };
+                        if let Some((start, base)) = band
+                            && let Some(now) = ui.ctx().pointer_latest_pos()
+                        {
+                            super::dnd::edge_scroll(ui, list_rect);
+                            let sel = Rect::from_two_pos(start + origin.to_vec2(), now);
+                            let shown = sel.intersect(list_rect);
+                            let lp = ui.ctx().layer_painter(egui::LayerId::new(
+                                egui::Order::Foreground,
+                                Id::new(("band_paint", idx)),
+                            ));
+                            let lp = lp.with_clip_rect(list_rect);
+                            lp.rect_filled(shown, pal.round(2.0), pal.accent.gamma_multiply(0.14));
+                            lp.rect_stroke(shown, pal.round(2.0), Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                            ui.ctx().data_mut(|d| d.insert_temp(band_key.with("last"), sel));
+                            // The items it touches, from the layout (not just the rows on screen).
+                            let w = full_w;
+                            let mut hits = Vec::new();
+                            for row in map.rows_in(sel.top() - origin.y, sel.bottom() - origin.y) {
+                                let MapRow::Items { first, len } = map.rows[row] else { continue };
+                                for c in 0..len {
+                                    let vi = first + c;
+                                    if vi >= tab.visible.len() {
+                                        break;
+                                    }
+                                    let top = origin.y + map.tops[row];
+                                    let r = match view {
+                                        ViewMode::Details | ViewMode::Tree | ViewMode::Columns => Rect::from_min_max(
+                                            pos2(origin.x + 8.0, top),
+                                            pos2(origin.x + w - 8.0 - row_gap, top + pitch),
+                                        ),
+                                        // As the list view lays its items out.
+                                        ViewMode::List => {
+                                            let cw = inner_w / ncols as f32;
+                                            Rect::from_min_size(
+                                                pos2(origin.x + 8.0 + c as f32 * cw, top),
+                                                vec2(cw - 6.0, pitch),
+                                            )
+                                        }
+                                        _ => {
+                                            let cw = inner_w / ncols as f32;
+                                            let x = origin.x + 8.0 + c as f32 * cw;
+                                            Rect::from_min_size(pos2(x, top), vec2(cw, pitch)).shrink(4.0)
+                                        }
+                                    };
+                                    if r.intersects(sel) {
+                                        hits.push(vi);
+                                    }
+                                }
+                            }
+                            band_hits = Some((hits, base));
+                        }
                         if single_sel {
-                            // Content-space origin of row 0, so the highlight scrolls with the rows.
-                            let origin = ui.cursor().top() - range.start as f32 * pitch;
-                            let w = ui.available_width();
-                            let cell_w = if view == ViewMode::List { inner_w / ncols as f32 } else { w - 16.0 };
-                            let x = ui.cursor().left() + 8.0 + anim_col * cell_w;
+                            let cell_w =
+                                if view == ViewMode::List { inner_w / ncols as f32 } else { full_w - 16.0 - row_gap };
+                            let x = origin.x + 8.0 + anim_col * cell_w;
                             let width = if view == ViewMode::List { cell_w - 6.0 } else { cell_w };
-                            let r =
-                                Rect::from_min_size(pos2(x, origin + anim_row * pitch + 1.0), vec2(width, pitch - 2.0));
-                            ui.painter().rect_filled(r, 4.0, sel_fill);
+                            let r = Rect::from_min_size(pos2(x, origin.y + anim_y + 1.0), vec2(width, pitch - 2.0));
+                            ui.painter().rect_filled(r, pal.round(4.0), sel_fill);
                         }
                         for row in range {
-                            let (row_rect, _) =
-                                ui.allocate_exact_size(vec2(ui.available_width(), pitch), Sense::hover());
-                            for c in 0..ncols {
-                                let vi = row * ncols + c;
+                            let row_rect = Rect::from_min_size(
+                                pos2(origin.x, origin.y + map.tops[row]),
+                                vec2(full_w, map.tops[row + 1] - map.tops[row]),
+                            );
+                            let (first, len) = match map.rows[row] {
+                                MapRow::Header(g) => {
+                                    group_header(ui.painter(), row_rect, &tab.groups, g, n, row_gap, pal);
+                                    continue;
+                                }
+                                MapRow::Items { first, len } => (first, len),
+                            };
+                            for c in 0..len {
+                                let vi = first + c;
                                 let Some(&ei) = tab.visible.get(vi) else { break };
                                 let e = &tab.entries[ei];
+                                if show_rating || show_tags {
+                                    meta.observe(&e.path);
+                                }
                                 let item = match view {
-                                    ViewMode::Details => row_rect.shrink2(vec2(8.0, 0.0)),
+                                    ViewMode::Details | ViewMode::Tree | ViewMode::Columns => {
+                                        let r = row_rect.shrink2(vec2(8.0, 0.0));
+                                        Rect::from_min_max(r.min, pos2(r.right() - row_gap, r.bottom()))
+                                    }
                                     ViewMode::List => {
                                         let w = inner_w / ncols as f32;
                                         Rect::from_min_size(
@@ -548,7 +1042,10 @@ impl FileFlier {
                                             vec2(w - 6.0, pitch),
                                         )
                                     }
-                                    ViewMode::Grid => {
+                                    ViewMode::Grid
+                                    | ViewMode::MediumGrid
+                                    | ViewMode::LargeGrid
+                                    | ViewMode::ExtraLargeGrid => {
                                         let w = inner_w / ncols as f32;
                                         Rect::from_min_size(
                                             pos2(row_rect.left() + 8.0 + c as f32 * w, row_rect.top()),
@@ -571,14 +1068,19 @@ impl FileFlier {
                                     if view == ViewMode::Details { item.shrink2(vec2(0.0, 1.0)) } else { item };
                                 if view == ViewMode::Grid {
                                     if selected {
-                                        p.rect_filled(bg_rect, 5.0, pal.grid_sel);
-                                        p.rect_stroke(bg_rect, 5.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                                        p.rect_filled(bg_rect, pal.round(5.0), pal.grid_sel);
+                                        p.rect_stroke(
+                                            bg_rect,
+                                            pal.round(5.0),
+                                            Stroke::new(1.0, pal.accent),
+                                            StrokeKind::Inside,
+                                        );
                                     } else if resp.hovered() {
-                                        p.rect_filled(bg_rect, 5.0, pal.hover);
+                                        p.rect_filled(bg_rect, pal.round(5.0), pal.hover);
                                     }
                                 } else if selected {
                                     if !single_sel {
-                                        p.rect_filled(bg_rect, 4.0, sel_fill); // single selection glides (drawn above)
+                                        p.rect_filled(bg_rect, pal.round(4.0), sel_fill); // single selection glides (drawn above)
                                     }
                                 } else {
                                     let h = ui.ctx().animate_bool_with_time(
@@ -587,11 +1089,16 @@ impl FileFlier {
                                         fx.dur(0.1),
                                     );
                                     if h > 0.0 {
-                                        p.rect_filled(bg_rect, 4.0, pal.hover.gamma_multiply(h));
+                                        p.rect_filled(bg_rect, pal.round(4.0), pal.hover.gamma_multiply(h));
                                     }
                                 }
                                 if is_cursor && !(selected && view != ViewMode::Grid) {
-                                    p.rect_stroke(bg_rect, 4.0, Stroke::new(1.0, pal.accent), StrokeKind::Inside);
+                                    p.rect_stroke(
+                                        bg_rect,
+                                        pal.round(4.0),
+                                        Stroke::new(1.0, pal.accent),
+                                        StrokeKind::Inside,
+                                    );
                                 }
                                 if drop_target {
                                     // Resting on a folder opens it; the fill builds up until it does.
@@ -600,8 +1107,13 @@ impl FileFlier {
                                         Id::new(("spring", &e.path)),
                                         super::dnd::SPRING_DELAY,
                                     );
-                                    p.rect_filled(bg_rect, 4.0, pal.accent.gamma_multiply(0.10 + 0.30 * t));
-                                    p.rect_stroke(bg_rect, 4.0, Stroke::new(2.0, pal.accent), StrokeKind::Inside);
+                                    p.rect_filled(bg_rect, pal.round(4.0), pal.accent.gamma_multiply(0.10 + 0.30 * t));
+                                    p.rect_stroke(
+                                        bg_rect,
+                                        pal.round(4.0),
+                                        Stroke::new(2.0, pal.accent),
+                                        StrokeKind::Inside,
+                                    );
                                     drop_folder = Some(e.path.clone());
                                     if fire {
                                         spring_open = Some(e.path.clone());
@@ -620,23 +1132,69 @@ impl FileFlier {
                                     dim_color = dim_color.gamma_multiply(0.6);
                                 }
 
+                                // Tree view: indent by depth, with an arrow for folders.
+                                let ind = if tree { 4.0 + tab.depth_of(ei) as f32 * 18.0 + 14.0 } else { 0.0 };
+                                if tree && e.is_dir {
+                                    let chev = Rect::from_center_size(
+                                        pos2(item.left() + ind - 6.0, item.center().y),
+                                        vec2(18.0, 18.0),
+                                    );
+                                    let cresp = ui.interact(chev, Id::new(("tree_chev", idx, &e.path)), Sense::click());
+                                    let c = if cresp.hovered() { color } else { dim_color };
+                                    if tab.expanded.contains(&e.path) {
+                                        icons::chevron_down(p, chev.shrink(4.0), c);
+                                    } else {
+                                        icons::chevron_right(p, chev.shrink(4.0), c);
+                                    }
+                                    if cresp.clicked() {
+                                        item_actions.push(ItemAction::ToggleOpen(e.path.clone()));
+                                    }
+                                }
+                                let item = Rect::from_min_max(pos2(item.left() + ind, item.top()), item.max);
                                 match view {
-                                    ViewMode::Details | ViewMode::List => {
+                                    ViewMode::Details | ViewMode::List | ViewMode::Tree | ViewMode::Columns => {
                                         let icon = Rect::from_center_size(
                                             pos2(item.left() + 18.0, item.center().y),
                                             vec2(20.0, 20.0),
                                         );
                                         if multi && selected {
                                             checkbox(p, icon, true, pal, on_accent);
-                                        } else if e.is_dir {
-                                            icons::folder(p, icon, pal);
                                         } else {
-                                            icons::file(p, icon, file_kind(e), pal);
+                                            if e.is_dir {
+                                                tints.folder(p, icon, pal, &e.path);
+                                            } else {
+                                                icons::file(p, icon, file_kind(e), pal);
+                                            }
+                                            if show_dropbox && let Some(s) = crate::dropbox::status(&e.path, &ctx) {
+                                                crate::dropbox::badge(p, icon, s, pal.bg);
+                                            }
                                         }
                                         let name_right = if view == ViewMode::Details {
                                             cols.name - 8.0
+                                        } else if columns && e.is_dir {
+                                            // Folders get a › on the right, like Finder.
+                                            let cr = Rect::from_center_size(
+                                                pos2(item.right() - 12.0, item.center().y),
+                                                vec2(12.0, 12.0),
+                                            );
+                                            icons::chevron_right(p, cr, dim_color);
+                                            item.right() - 24.0
                                         } else {
                                             item.right() - 6.0
+                                        };
+                                        // Tags extension: a dot per tag at the end of the name.
+                                        let tag_defs: Vec<&crate::meta::TagDef> = if show_tags {
+                                            meta.tags_of(&e.path).iter().filter_map(|t| meta.tag(t)).collect()
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        let name_right = if tag_defs.is_empty() {
+                                            name_right
+                                        } else {
+                                            let cy = item.center().y;
+                                            name_right
+                                                - super::tags::paint_tag_dots(p, name_right, cy, &tag_defs, pal)
+                                                - 4.0
                                         };
                                         let editing = renaming.as_mut().filter(|r| r.pane == idx && r.path == e.path);
                                         if let Some(rn) = editing {
@@ -695,7 +1253,8 @@ impl FileFlier {
                                         if view == ViewMode::Details {
                                             let cy = item.center().y;
                                             if let Some((l, r)) = cols.ty {
-                                                let g = elided(p, &type_label(e), 13.0, dim_color, r - l);
+                                                let label = if flat { tab.rel_folder(e) } else { type_label(e) };
+                                                let g = elided(p, &label, 13.0, dim_color, r - l);
                                                 p.galley(pos2(l, cy - g.size().y / 2.0), g, dim_color);
                                             }
                                             // Placeholders are drawn fainter than real values.
@@ -717,6 +1276,18 @@ impl FileFlier {
                                                 (human_size(e.size), dim_color)
                                             };
                                             text(p, pos2(cols.size.1, cy), Align2::RIGHT_CENTER, size, 13.0, c);
+                                            // Ratings extension: stars, shown once rated or while hovered.
+                                            if let Some((l, _)) = cols.rating {
+                                                let rating = meta.rating(&e.path);
+                                                if rating > 0 || ui.rect_contains_pointer(item) {
+                                                    let id = Id::new(("row_stars", idx, &e.path));
+                                                    if let Some(n) =
+                                                        super::tags::star_row(ui, id, l, cy, 14.0, rating, pal)
+                                                    {
+                                                        item_actions.push(ItemAction::Rate(e.path.clone(), n));
+                                                    }
+                                                }
+                                            }
                                             if let Some((l, r)) = cols.modified {
                                                 let d =
                                                     e.modified.map(|m| format_time(m, date_style)).unwrap_or_default();
@@ -725,19 +1296,29 @@ impl FileFlier {
                                             }
                                         }
                                     }
-                                    ViewMode::Grid => {
+                                    ViewMode::Grid
+                                    | ViewMode::MediumGrid
+                                    | ViewMode::LargeGrid
+                                    | ViewMode::ExtraLargeGrid => {
                                         let thumb = Rect::from_min_size(
                                             item.min + vec2(10.0, 8.0),
-                                            vec2(item.width() - 20.0, 78.0),
+                                            vec2(item.width() - 20.0, gs.thumb_h),
                                         );
                                         let mut drew = false;
+                                        // Where the picture (or icon) is, for the stars and tag dots.
+                                        let mut shown = Rect::from_center_size(thumb.center(), vec2(gs.icon, gs.icon));
                                         if e.is_file
                                             && crate::preview::classify(&e.path).has_thumbnail()
-                                            && let Some(tex) = thumbs.get(&e.path, e.modified)
+                                            && let Some(tex) = thumbs.get(&e.path, e.modified, gs.tier)
                                         {
                                             let sz = tex.size_vec2() / ui.ctx().pixels_per_point();
-                                            let scale = (thumb.width() / sz.x).min(thumb.height() / sz.y).min(1.0);
+                                            // Pictures aren't enlarged, except up to 2× in the bigger grids,
+                                            // where a smaller thumbnail stands in until the right one is ready.
+                                            let max_scale = if gs.icon > 64.0 { 2.0 } else { 1.0 };
+                                            let scale =
+                                                (thumb.width() / sz.x).min(thumb.height() / sz.y).min(max_scale);
                                             let fit = Rect::from_center_size(thumb.center(), sz * scale);
+                                            shown = fit;
                                             let p = ui.painter();
                                             // 3D renders have a transparent background: no photo shadow.
                                             let model =
@@ -760,27 +1341,86 @@ impl FileFlier {
                                             drew = true;
                                         }
                                         let p = ui.painter();
+                                        let icon = Rect::from_center_size(thumb.center(), vec2(gs.icon, gs.icon));
                                         if !drew {
-                                            let icon = Rect::from_center_size(thumb.center(), vec2(64.0, 64.0));
                                             if e.is_dir {
-                                                icons::folder(p, icon, pal);
+                                                tints.folder(p, icon, pal, &e.path);
                                             } else {
                                                 icons::file(p, icon, file_kind(e), pal);
                                             }
+                                        }
+                                        if show_dropbox && let Some(s) = crate::dropbox::status(&e.path, &ctx) {
+                                            crate::dropbox::badge(
+                                                p,
+                                                if drew { thumb.shrink(4.0) } else { icon },
+                                                s,
+                                                pal.bg,
+                                            );
                                         }
                                         let g = wrapped(p, &e.name, 13.0, color, item.width() - 8.0, 2);
                                         let ty = thumb.bottom() + 6.0;
                                         // Center-aligned galleys are laid out around x = 0.
                                         p.galley(pos2(item.center().x, ty), g.clone(), color);
-                                        let meta = if e.is_dir { String::new() } else { human_size(e.size) };
+                                        let size_text = if e.is_dir { String::new() } else { human_size(e.size) };
                                         text(
                                             p,
                                             pos2(item.center().x, ty + g.size().y + 2.0),
                                             Align2::CENTER_TOP,
-                                            meta,
+                                            size_text,
                                             12.0,
                                             pal.text_dim,
                                         );
+                                        // Tags extension: dots in the picture's top right corner.
+                                        if grid_tags {
+                                            let defs: Vec<&crate::meta::TagDef> =
+                                                meta.tags_of(&e.path).iter().filter_map(|t| meta.tag(t)).collect();
+                                            if !defs.is_empty() {
+                                                let cy = shown.top() + 6.0;
+                                                super::tags::paint_tag_dots(p, shown.right() - 1.0, cy, &defs, pal);
+                                            }
+                                        }
+                                        // Ratings extension: stars along the picture's bottom once rated.
+                                        // Hold Alt over a tile to rate it (click a star); without Alt they
+                                        // are only shown, so clicking a tile never rates it by accident.
+                                        if grid_rating {
+                                            let rating = meta.rating(&e.path);
+                                            let rate = ui.input(|i| i.modifiers.alt) && ui.rect_contains_pointer(item);
+                                            if rating > 0 || rate {
+                                                let size = if gs.icon > 64.0 { 15.0 } else { 11.0 };
+                                                let cx = shown.center().x;
+                                                let cy = shown.bottom().min(thumb.bottom()) - size / 2.0 - 2.0;
+                                                let pill = Rect::from_center_size(
+                                                    pos2(cx, cy),
+                                                    vec2(size * 5.0 + 8.0, size + 4.0),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    pill,
+                                                    pal.round(size / 2.0 + 2.0),
+                                                    pal.bg.gamma_multiply(0.82),
+                                                );
+                                                let id = Id::new(("grid_stars", idx, &e.path));
+                                                let left = cx - size * 2.5;
+                                                if rate {
+                                                    if let Some(n) =
+                                                        super::tags::star_row(ui, id, left, cy, size, rating, pal)
+                                                    {
+                                                        item_actions.push(ItemAction::Rate(e.path.clone(), n));
+                                                    }
+                                                } else {
+                                                    for i in 0..5u8 {
+                                                        let c = pos2(left + size * (i as f32 + 0.5), cy);
+                                                        let on = i < rating;
+                                                        super::tags::paint_star(
+                                                            ui.painter(),
+                                                            c,
+                                                            size * 0.42,
+                                                            on.then_some(super::tags::STAR),
+                                                            if on { super::tags::STAR } else { pal.text_faint },
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
@@ -794,7 +1434,15 @@ impl FileFlier {
                                     item_actions.push(ItemAction::Context(vi, pos));
                                 }
                                 if resp.double_clicked() {
-                                    item_actions.push(ItemAction::Open(vi));
+                                    // Ctrl+double-click opens a folder in a new tab, like a middle-click.
+                                    // (The two Ctrl+clicks toggle its selection twice, leaving it as it was.)
+                                    if mods.alt {
+                                        item_actions.push(ItemAction::Properties(vi));
+                                    } else if mods.command && e.is_dir {
+                                        item_actions.push(ItemAction::NewTab(e.path.clone()));
+                                    } else {
+                                        item_actions.push(ItemAction::Open(vi));
+                                    }
                                 }
                                 if resp.middle_clicked() && e.is_dir {
                                     item_actions.push(ItemAction::NewTab(e.path.clone()));
@@ -815,11 +1463,57 @@ impl FileFlier {
             )
             .inner;
         ctx.data_mut(|d| d.insert_temp(key, (out.state.offset.y, out.inner_rect.height())));
+        if let Some((hits, base)) = band_hits {
+            let tab = self.panes[idx].tab_mut();
+            let mut sel: std::collections::HashSet<PathBuf> = base.into_iter().collect();
+            for &vi in &hits {
+                if let Some(e) = tab.entry_at(vi) {
+                    sel.insert(e.path.clone());
+                }
+            }
+            tab.selected = sel;
+            if let Some(&vi) = hits.last() {
+                tab.cursor = vi;
+                // Shift+arrows and Shift+click go on from the rectangle's selection.
+                tab.anchor = hits[0];
+            }
+            self.actions.push(Action::Activate(idx));
+        }
+        // Let go: the rectangle fades out.
+        if bg.drag_stopped() {
+            let now = ctx.input(|i| i.time);
+            ctx.data_mut(|d| {
+                d.insert_temp(band_key.with("fade"), now);
+                d.remove::<(egui::Pos2, Vec<PathBuf>)>(band_key);
+            });
+        }
+        let faded: Option<(Rect, f64)> =
+            ctx.data(|d| Some((d.get_temp::<Rect>(band_key.with("last"))?, d.get_temp::<f64>(band_key.with("fade"))?)));
+        if let Some((r, at)) = faded {
+            let t = ((ctx.input(|i| i.time) - at) / fx.dur(0.18).max(0.001) as f64) as f32;
+            if t < 1.0 && !bg.dragged() {
+                let lp = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new(("band_paint", idx))));
+                let lp = lp.with_clip_rect(list_rect);
+                let a = 1.0 - t;
+                let r = r.intersect(list_rect);
+                lp.rect_filled(r, pal.round(2.0), pal.accent.gamma_multiply(0.14 * a));
+                lp.rect_stroke(r, pal.round(2.0), Stroke::new(1.0, pal.accent.gamma_multiply(a)), StrokeKind::Inside);
+                ctx.request_repaint();
+            } else if t >= 1.0 {
+                ctx.data_mut(|d| {
+                    d.remove::<f64>(band_key.with("fade"));
+                    d.remove::<Rect>(band_key.with("last"));
+                });
+            }
+        }
+        if tints.animating.get() {
+            ctx.request_repaint();
+        }
         self.renaming = renaming;
         if let Some(commit) = rename_done {
             self.finish_rename(commit);
         }
-        let content_h = rows as f32 * pitch;
+        let content_h = map.height;
         let scroll_pct = if content_h <= out.inner_rect.height() {
             0.0
         } else {
@@ -876,6 +1570,7 @@ impl FileFlier {
             text(ui.painter(), list_rect.center(), Align2::CENTER_CENTER, msg, 14.0, pal.text_dim);
         }
 
+        let ctrl_menu = ui.input(|i| i.modifiers.command);
         for a in item_actions {
             let tab = self.panes[idx].tab_mut();
             match a {
@@ -900,7 +1595,53 @@ impl FileFlier {
                     }
                     tab.scroll_to_cursor = false;
                     self.actions.push(Action::Activate(idx));
-                    self.actions.push(Action::OpenMenu(pos, entry_menu(is_dir, archive)));
+                    // Ctrl+right-click in a Dropbox folder: Dropbox's own menu instead.
+                    let targets = tab.targets();
+                    if ctrl_menu && self.cfg.ext_on(crate::ext::Ext::Dropbox) && dropbox_all_inside(&targets) {
+                        let folders = targets.iter().all(|p| p.is_dir() && !crate::dropbox::roots().contains(p));
+                        self.open_dropbox_menu(pos, &targets, folders, false);
+                        continue;
+                    }
+                    let flat = tab.flat || tab.tag.is_some();
+                    let mut items = entry_menu(is_dir, archive, flat);
+                    if is_dir {
+                        // Color every selected folder (files in the selection are left alone).
+                        let folders: Vec<PathBuf> = tab
+                            .visible
+                            .iter()
+                            .map(|&i| &tab.entries[i])
+                            .filter(|e| e.is_dir && tab.selected.contains(&e.path))
+                            .map(|e| e.path.clone())
+                            .collect();
+                        let folders = if folders.is_empty() {
+                            tab.entry_at(vi).map(|e| vec![e.path.clone()]).unwrap_or_default()
+                        } else {
+                            folders
+                        };
+                        let current = folders
+                            .first()
+                            .and_then(|p| p.to_str())
+                            .and_then(|k| self.cfg.folder_colors.get(k).copied());
+                        // Between Compress and the preview toggle, in a section of its own.
+                        let at = items.len() - 2;
+                        items.insert(at, MenuItem::Colors(folders, current));
+                        items.insert(at, MenuItem::Sep);
+                    }
+                    // Extensions: rate and tag what the menu is for.
+                    let targets = tab.targets();
+                    let at = items.len() - 2;
+                    if self.cfg.ext_on(crate::ext::Ext::Tags) {
+                        items.insert(at, MenuItem::Cmd(Command::EditTags));
+                    }
+                    if self.cfg.ext_on(crate::ext::Ext::Ratings) {
+                        // The highest in the selection, so "remove" shows if any is rated.
+                        let current = targets.iter().map(|p| self.meta.rating(p)).max().unwrap_or(0);
+                        items.insert(at, MenuItem::Rating(targets.clone(), current));
+                    }
+                    if items.len() - 2 != at {
+                        items.insert(at, MenuItem::Sep);
+                    }
+                    self.actions.push(Action::OpenMenu(pos, items));
                 }
                 ItemAction::Open(vi) => {
                     tab.move_cursor(vi, false);
@@ -912,12 +1653,31 @@ impl FileFlier {
                     self.actions.push(Action::Activate(idx));
                     self.actions.push(Action::OpenInNewTab(p));
                 }
+                ItemAction::Properties(vi) => {
+                    tab.move_cursor(vi, false);
+                    tab.scroll_to_cursor = false;
+                    self.actions.push(Action::Activate(idx));
+                    if let Some(e) = tab.entry_at(vi) {
+                        crate::properties::show(e.path.clone(), &ctx);
+                    }
+                }
                 ItemAction::BackgroundContext(pos) => {
                     tab.selected.clear();
                     self.actions.push(Action::Activate(idx));
+                    let here = tab.path.clone();
+                    if ctrl_menu && self.cfg.ext_on(crate::ext::Ext::Dropbox) && crate::dropbox::inside(&here) {
+                        self.open_dropbox_menu(pos, &[here], false, true);
+                        continue;
+                    }
                     self.actions.push(Action::OpenMenu(pos, background_menu()));
                 }
                 ItemAction::ClearSelection => tab.selected.clear(),
+                ItemAction::Rate(p, n) => self.actions.push(Action::Rate(vec![p], n)),
+                ItemAction::ToggleOpen(p) => {
+                    let open = !tab.expanded.contains(&p);
+                    tab.set_expanded(&p, open, self.cfg.show_hidden, self.cfg.sort);
+                    self.actions.push(Action::Activate(idx));
+                }
             }
         }
     }
@@ -948,16 +1708,28 @@ impl FileFlier {
             && o.clicked()
         {
             self.actions.push(Action::Activate(idx));
-            let items = vec![
+            let mut items = vec![
                 MenuItem::Cmd(Command::ToggleHidden),
                 MenuItem::Sep,
                 MenuItem::Cmd(Command::SortByName),
                 MenuItem::Cmd(Command::SortByKind),
+                MenuItem::Cmd(Command::SortByFolder),
                 MenuItem::Cmd(Command::SortBySize),
                 MenuItem::Cmd(Command::SortByModified),
                 MenuItem::Cmd(Command::ReverseSort),
             ];
-            self.actions.push(Action::OpenMenu(o.rect.left_top() - vec2(0.0, 250.0), items));
+            if self.cfg.ext_on(crate::ext::Ext::Ratings) {
+                items.insert(items.len() - 1, MenuItem::Cmd(Command::SortByRating));
+            }
+            // Grouping, remembered for this folder.
+            let g = self.panes[idx].tab().group;
+            use crate::config::GroupBy;
+            items.push(MenuItem::Sep);
+            items.push(MenuItem::Choice(Command::GroupNone, g == GroupBy::None));
+            items.push(MenuItem::Choice(Command::GroupByName, g == GroupBy::Name));
+            items.push(MenuItem::Choice(Command::GroupByDate, g == GroupBy::Modified));
+            let h = 52.0 + 30.0 * items.len() as f32;
+            self.actions.push(Action::OpenMenu(o.rect.left_top() - vec2(0.0, h), items));
         }
 
         // Counters: folders shown/total, files shown/total, view toggle, scroll %.
@@ -973,57 +1745,236 @@ impl FileFlier {
 
         let p = ui.painter();
         let cy = rect.center().y;
-        let pct_r = Rect::from_min_max(
-            pos2(rect.right() - 54.0, rect.top() + 7.0),
-            pos2(rect.right() - 8.0, rect.bottom() - 7.0),
-        );
-        p.rect_filled(pct_r, 4.0, pal.input);
-        let fill_w = (pct_r.width() * pct).max(4.0);
-        p.rect_filled(Rect::from_min_size(pct_r.min, vec2(fill_w, pct_r.height())), 4.0, pal.accent);
-        p.rect_stroke(pct_r, 4.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
-        text(p, pct_r.center(), Align2::CENTER_CENTER, format!("{}%", (pct * 100.0).round() as i32), 12.5, pal.text);
+        let (show_dirs, show_files) = (self.cfg.show_folder_count, self.cfg.show_file_count);
+        let pct_r = if self.cfg.show_scroll_pct {
+            Rect::from_min_max(
+                pos2(rect.right() - 54.0, rect.top() + 7.0),
+                pos2(rect.right() - 8.0, rect.bottom() - 7.0),
+            )
+        } else {
+            Rect::from_min_max(
+                pos2(rect.right() - 2.0, rect.top() + 7.0),
+                pos2(rect.right() - 2.0, rect.bottom() - 7.0),
+            )
+        };
+        if self.cfg.show_scroll_pct {
+            let rad = pal.round(2.0);
+            p.rect_filled(pct_r, rad, pal.input);
+            let fill_w = (pct_r.width() * pct).max(2.0);
+            p.rect_filled(Rect::from_min_size(pct_r.min, vec2(fill_w, pct_r.height())), rad, pal.accent);
+            p.rect_stroke(pct_r, rad, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            text(
+                p,
+                pct_r.center(),
+                Align2::CENTER_CENTER,
+                format!("{}%", (pct * 100.0).round() as i32),
+                12.5,
+                pal.text,
+            );
+            ui.interact(pct_r, Id::new(("scroll_pct_tip", idx)), Sense::hover())
+                .on_hover_text("How far down the list you've scrolled");
+        }
 
         let d = format!("{dirs_shown}/{dirs_total}");
         let f = format!("{files_shown}/{files_total}");
         let dw = p.layout_no_wrap(d.clone(), super::font(13.5), pal.text).size().x;
         let fw2 = p.layout_no_wrap(f.clone(), super::font(13.5), pal.text).size().x;
-        let group_w = 12.0 + 20.0 + dw + 14.0 + 20.0 + fw2 + 12.0 + 26.0 + 6.0;
+        let mut group_w = 10.0 + 26.0 + 6.0;
+        if show_dirs {
+            group_w += 22.0 + dw + 12.0;
+        }
+        if show_files {
+            group_w += 22.0 + fw2 + 12.0;
+        }
+        if show_dirs || show_files {
+            group_w -= 4.0;
+        }
         let g = Rect::from_min_max(
             pos2(pct_r.left() - 6.0 - group_w, pct_r.top()),
             pos2(pct_r.left() - 6.0, pct_r.bottom()),
         );
         if g.left() > fr.right() + 8.0 {
-            p.rect_stroke(g, 4.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            p.rect_stroke(g, pal.round(4.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
             let mut x = g.left() + 10.0;
-            icons::folder_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(17.0, 17.0)), pal.text);
-            x += 22.0;
-            text(p, pos2(x, cy), Align2::LEFT_CENTER, &d, 13.5, pal.text);
-            x += dw + 12.0;
-            icons::file_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0)), pal.text);
-            x += 22.0;
-            text(p, pos2(x, cy), Align2::LEFT_CENTER, &f, 13.5, pal.text);
-            x += fw2 + 8.0;
+            if show_dirs {
+                icons::folder_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(17.0, 17.0)), pal.text);
+                x += 22.0;
+                text(p, pos2(x, cy), Align2::LEFT_CENTER, &d, 13.5, pal.text);
+                x += dw + 12.0;
+            }
+            if show_files {
+                icons::file_outline(p, Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0)), pal.text);
+                x += 22.0;
+                text(p, pos2(x, cy), Align2::LEFT_CENTER, &f, 13.5, pal.text);
+                x += fw2 + 12.0;
+            }
+            if show_dirs || show_files {
+                x -= 4.0;
+            } else {
+                x -= 8.0;
+            }
             let lr = Rect::from_min_size(pos2(x, g.top() + 1.0), vec2(26.0, g.height() - 2.0));
-            let tip = match view {
-                ViewMode::Details => "View: details (click to switch)",
-                ViewMode::List => "View: list (click to switch)",
-                ViewMode::Grid => "View: grid (click to switch)",
+            let current = match view {
+                ViewMode::Details => Command::ViewDetails,
+                ViewMode::List => Command::ViewList,
+                ViewMode::Grid => Command::ViewGrid,
+                ViewMode::MediumGrid => Command::ViewMediumGrid,
+                ViewMode::LargeGrid => Command::ViewLargeGrid,
+                ViewMode::ExtraLargeGrid => Command::ViewExtraLargeGrid,
+                ViewMode::Tree => Command::ViewTree,
+                ViewMode::Columns => Command::ViewColumns,
             };
-            if icon_button(ui, lr, Id::new(("viewtoggle", idx)), true, pal, tip, icons::layout_list).clicked() {
+            let tip = format!("{} (click to choose · Alt+1…8)", current.label());
+            if icon_button(ui, lr, Id::new(("viewtoggle", idx)), true, pal, &tip, icons::layout_list).clicked() {
+                // A menu of every view, opening upward, with the current one ticked and highlighted.
+                let views = [
+                    Command::ViewDetails,
+                    Command::ViewList,
+                    Command::ViewTree,
+                    Command::ViewColumns,
+                    Command::ViewGrid,
+                    Command::ViewMediumGrid,
+                    Command::ViewLargeGrid,
+                    Command::ViewExtraLargeGrid,
+                ];
+                let items: Vec<MenuItem> = views.iter().map(|&c| MenuItem::Choice(c, c == current)).collect();
+                let height = 52.0 + 30.0 * items.len() as f32;
                 self.actions.push(Action::Activate(idx));
-                self.actions.push(Action::Run(match view {
-                    ViewMode::Details => Command::ViewList,
-                    ViewMode::List => Command::ViewGrid,
-                    ViewMode::Grid => Command::ViewDetails,
-                }));
+                self.menu = Some(crate::app::Menu {
+                    pos: pos2(lr.right() - 320.0, lr.top() - height - 10.0),
+                    query: String::new(),
+                    cursor: views.iter().position(|&c| c == current).unwrap_or(0),
+                    items,
+                    opened: std::time::Instant::now(),
+                    search: true,
+                });
+            }
+        }
+
+        // Grid views: switches for the stars and tag dots on the tiles.
+        let counters_left = if g.left() > fr.right() + 8.0 { g.left() } else { pct_r.left() };
+        let mut left_edge = counters_left;
+        if view.is_grid() {
+            let mut toggles: Vec<(bool, &str, u8)> = Vec::new();
+            if self.cfg.ext_on(crate::ext::Ext::Tags) {
+                toggles.push((self.cfg.grid_tags, "Tags on tiles (Ctrl+Shift+R: ratings and tags)", 1));
+            }
+            if self.cfg.ext_on(crate::ext::Ext::Ratings) {
+                toggles.push((self.cfg.grid_ratings, "Ratings on tiles (Ctrl+Shift+R: ratings and tags)", 0));
+            }
+            let room = left_edge - 6.0 - (fr.right() + 8.0);
+            if room >= 28.0 * toggles.len() as f32 {
+                for (on, tip, which) in toggles {
+                    let r = Rect::from_min_size(
+                        pos2(left_edge - 6.0 - 26.0, pct_r.top() + 1.0),
+                        vec2(26.0, pct_r.height() - 2.0),
+                    );
+                    left_edge = r.left() - 2.0;
+                    if on {
+                        ui.painter().rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.22));
+                    }
+                    let accent = pal.accent;
+                    let draw = move |p: &egui::Painter, ir: Rect, c: Color32| {
+                        let c = if on { accent } else { c };
+                        if which == 0 {
+                            super::tags::paint_star(p, ir.center(), ir.width() * 0.48, on.then_some(c), c);
+                        } else {
+                            tag_glyph(p, ir, c, on);
+                        }
+                    };
+                    if icon_button(ui, r, Id::new(("grid_meta", idx, which)), true, pal, tip, draw).clicked() {
+                        if which == 0 {
+                            self.cfg.grid_ratings = !self.cfg.grid_ratings;
+                        } else {
+                            self.cfg.grid_tags = !self.cfg.grid_tags;
+                        }
+                        self.cfg.save();
+                    }
+                }
+            }
+        }
+
+        // Flat view badge: shows scan progress; click to leave the flat view.
+        let tab = self.panes[idx].tab();
+        if tab.flat {
+            let n = tab.entries.len();
+            let label = if tab.flat_scan.is_some() {
+                format!("Flat · scanning {}…", group_digits(n))
+            } else if tab.flat_truncated {
+                format!("Flat · first {} files", group_digits(n))
+            } else {
+                "Flat view".to_string()
+            };
+            let right = left_edge - 6.0;
+            let full_w = ui.painter().layout_no_wrap(label.clone(), super::font(13.0), pal.on_accent).size().x + 20.0;
+            let label = if fr.right() + 8.0 + full_w <= right { label } else { "Flat".to_string() };
+            let w = ui.painter().layout_no_wrap(label.clone(), super::font(13.0), pal.on_accent).size().x + 20.0;
+            let r = Rect::from_min_size(pos2(fr.right() + 8.0, pct_r.top()), vec2(w, pct_r.height()));
+            if r.right() <= right {
+                let resp = ui.interact(r, Id::new(("flat_badge", idx)), Sense::click());
+                let fill = if resp.hovered() { pal.accent.gamma_multiply(1.2) } else { pal.accent };
+                ui.painter().rect_filled(r, pal.round(4.0), fill);
+                text(ui.painter(), r.center(), Align2::CENTER_CENTER, label, 13.0, pal.on_accent);
+                if resp
+                    .on_hover_text("Every file in this folder and its subfolders. Click to turn off (Ctrl+Shift+F)")
+                    .clicked()
+                {
+                    self.actions.push(Action::Activate(idx));
+                    self.actions.push(Action::Run(Command::ToggleFlat));
+                }
             }
         }
     }
 }
 
-pub fn entry_menu(is_dir: bool, archive: bool) -> Vec<MenuItem> {
+/// 12400 -> "12,400".
+fn group_digits(n: usize) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn dropbox_all_inside(paths: &[PathBuf]) -> bool {
+    !paths.is_empty() && paths.iter().all(|p| crate::dropbox::inside(p))
+}
+
+impl FileFlier {
+    /// The Ctrl+right-click menu in a Dropbox folder: Dropbox's own items for `paths`,
+    /// "Keep online only" for `folders`, and on the folder's background the list of
+    /// folders not synced here.
+    fn open_dropbox_menu(&mut self, pos: egui::Pos2, paths: &[PathBuf], folders: bool, background: bool) {
+        let mut items: Vec<MenuItem> = crate::dropbox::options(paths)
+            .into_iter()
+            .map(|o| MenuItem::Dropbox(o.label, o.verb, paths.to_vec()))
+            .collect();
+        if items.is_empty() {
+            self.error("Dropbox didn't answer. Is the Dropbox app running?");
+            return;
+        }
+        if folders {
+            items.push(MenuItem::Sep);
+            items.push(MenuItem::DropboxUnsync(paths.to_vec()));
+        }
+        if background {
+            items.push(MenuItem::Sep);
+            items.push(MenuItem::DropboxExcluded);
+        }
+        self.actions.push(Action::OpenMenu(pos, items));
+    }
+}
+
+pub fn entry_menu(is_dir: bool, archive: bool, flat: bool) -> Vec<MenuItem> {
     use Command::*;
     let mut v = vec![MenuItem::Cmd(Open)];
+    if flat {
+        v.push(MenuItem::Cmd(OpenContainingFolder));
+    }
     if is_dir {
         v.push(MenuItem::Cmd(OpenInNewTab));
     } else {
@@ -1069,4 +2020,60 @@ pub fn background_menu() -> Vec<MenuItem> {
         MenuItem::Cmd(ToggleHidden),
         MenuItem::Cmd(Refresh),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_column_layout_is_unchanged() {
+        // The layout before columns could be reordered, from the right: Modified 132,
+        // Rating 88, Size 110, Items 70, Type 150.
+        let r = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 500.0));
+        let c = Cols::new(r, true, true, &MetaCol::order(&[]));
+        let right = 1000.0 - 12.0;
+        assert_eq!(c.modified, Some((right - 132.0, right)));
+        assert_eq!(c.rating, Some((right - 132.0 - 88.0 + 6.0, right - 132.0 - 88.0 + 76.0)));
+        assert_eq!(c.size, (right - 330.0, right - 330.0 + 86.0));
+        assert_eq!(c.items, Some((right - 400.0, right - 400.0 + 60.0)));
+        assert_eq!(c.ty, Some((right - 550.0, right - 550.0 + 140.0)));
+        assert_eq!(c.name, right - 550.0 - 12.0);
+    }
+
+    #[test]
+    fn row_map_lays_out_groups() {
+        // Ungrouped: plain rows.
+        let m = RowMap::new(7, 3, 100.0, 40.0, &[]);
+        assert_eq!(m.tops, [0.0, 100.0, 200.0, 300.0]);
+        assert_eq!(m.item_top(4, true), 100.0);
+        assert_eq!(m.item_col(4), 1);
+        assert_eq!(m.rows_in(150.0, 250.0), 1..3);
+        // Groups of 4 and 3: header, 2 rows, header, 1 row.
+        let groups = [(0, "A".to_string()), (4, "B".to_string())];
+        let m = RowMap::new(7, 3, 100.0, 40.0, &groups);
+        assert_eq!(m.tops, [0.0, 40.0, 140.0, 240.0, 280.0, 380.0]);
+        assert_eq!(m.height, 380.0);
+        assert_eq!(m.item_top(4, false), 280.0);
+        assert_eq!(m.item_top(4, true), 240.0); // with its header
+        assert_eq!(m.item_top(3, true), 140.0);
+        assert_eq!(m.item_col(3), 0);
+        assert_eq!(m.rows_in(0.0, 1.0), 0..1);
+        assert_eq!(m.rows_in(250.0, 1000.0), 3..5);
+        assert_eq!(RowMap::new(0, 3, 100.0, 40.0, &[]).rows_in(0.0, 500.0), 0..0);
+    }
+
+    #[test]
+    fn column_order_is_read_and_completed() {
+        let saved: Vec<String> = ["modified", "bogus", "size", "modified"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            MetaCol::order(&saved),
+            [MetaCol::Modified, MetaCol::Size, MetaCol::Type, MetaCol::Items, MetaCol::Rating]
+        );
+        // Modified first: it now sits right after Name.
+        let r = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 500.0));
+        let c = Cols::new(r, true, true, &MetaCol::order(&saved));
+        assert_eq!(c.slots.first().map(|s| s.0), Some(MetaCol::Modified));
+        assert!(c.modified.unwrap().0 < c.size.0);
+    }
 }

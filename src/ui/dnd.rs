@@ -36,7 +36,13 @@ pub fn drag_scroll(ui: &Ui, rect: Rect) {
     if !egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) {
         return;
     }
-    let Some(pos) = ctx.pointer_hover_pos() else { return };
+    edge_scroll(ui, rect);
+}
+
+/// Scrolls while the pointer is held near (or past) the top or bottom of `rect`.
+pub fn edge_scroll(ui: &Ui, rect: Rect) {
+    let ctx = ui.ctx();
+    let Some(pos) = ctx.pointer_latest_pos() else { return };
     if !rect.x_range().contains(pos.x) {
         return;
     }

@@ -8,9 +8,70 @@ use egui::{
 
 use super::{elided, icon_button};
 use crate::app::{Action, CONTROLS_W, DragPaths, DropTarget, FileFlier, TRAFFIC_LIGHTS_W, plural};
+use crate::config::TitleIcon;
 use crate::icons;
 
-const TAB_H: f32 = 32.0;
+pub(crate) const TAB_H: f32 = 32.0;
+
+/// A window button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum WinButton {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// File Flier's own buttons, on the right.
+const OWN_BUTTONS: [WinButton; 3] = [WinButton::Minimize, WinButton::Maximize, WinButton::Close];
+
+/// Room for one native button: a 24 point circle and the gap to the next.
+const NATIVE_SLOT: f32 = 34.0;
+
+fn native_w(n: usize) -> f32 {
+    if n == 0 { 0.0 } else { n as f32 * NATIVE_SLOT + 6.0 }
+}
+
+/// GNOME's window button layout (`button-layout`, e.g. "appmenu:minimize,close"):
+/// the buttons on the left and on the right.
+fn button_layout() -> &'static (Vec<WinButton>, Vec<WinButton>) {
+    static LAYOUT: std::sync::OnceLock<(Vec<WinButton>, Vec<WinButton>)> = std::sync::OnceLock::new();
+    LAYOUT.get_or_init(|| {
+        let s = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.wm.preferences", "button-layout"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok());
+        with_all_buttons(parse_layout(s.as_deref().unwrap_or(":minimize,maximize,close")))
+    })
+}
+
+/// Always all three buttons, on the side the layout puts close (or on the right), in
+/// GNOME's order for that side: Ubuntu's layout leaves out maximize, but it's wanted.
+fn with_all_buttons((left, right): (Vec<WinButton>, Vec<WinButton>)) -> (Vec<WinButton>, Vec<WinButton>) {
+    use WinButton::*;
+    if left.contains(&Close) && !right.contains(&Close) {
+        (vec![Close, Minimize, Maximize], vec![])
+    } else {
+        (vec![], vec![Minimize, Maximize, Close])
+    }
+}
+
+fn parse_layout(s: &str) -> (Vec<WinButton>, Vec<WinButton>) {
+    let s = s.trim().trim_matches('\'');
+    let (left, right) = s.split_once(':').unwrap_or(("", s));
+    let side = |x: &str| {
+        x.split(',')
+            .filter_map(|b| match b.trim() {
+                "minimize" => Some(WinButton::Minimize),
+                "maximize" => Some(WinButton::Maximize),
+                "close" => Some(WinButton::Close),
+                _ => None,
+            })
+            .collect()
+    };
+    (side(left), side(right))
+}
 
 impl FileFlier {
     /// `strips` holds (pane index, left, right) for each visible pane column.
@@ -31,14 +92,49 @@ impl FileFlier {
         if drag.double_clicked() {
             ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
         }
+        // Right-click: the desktop's own window menu, as GNOME apps have. Asked on the
+        // press (the compositor checks the request against it); tabs and buttons on top
+        // keep their own menus, since only the top-most widget is hovered.
+        if drag.hovered()
+            && let Some(pos) = ctx.input(|i| {
+                i.pointer.button_pressed(egui::PointerButton::Secondary).then(|| i.pointer.interact_pos()).flatten()
+            })
+        {
+            self.window_menu_at = Some(pos);
+        }
+
+        // Window buttons: ours on the right, or GNOME's in the desktop's layout.
+        let native = self.cfg.native_buttons && !cfg!(target_os = "macos");
+        let (left_btns, right_btns): (&[WinButton], &[WinButton]) = if native {
+            let l = button_layout();
+            (&l.0, &l.1)
+        } else {
+            (&[], &OWN_BUTTONS)
+        };
+        let left_w = if native { native_w(left_btns.len()) } else { 0.0 };
+        let right_w = if native { native_w(right_btns.len()) } else { CONTROLS_W };
 
         // Logo + sidebar toggle. On macOS the native window buttons sit where the logo would.
         let logo_end = if cfg!(target_os = "macos") {
             rect.left() + TRAFFIC_LIGHTS_W
         } else {
-            let logo = Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(20.0, 20.0));
-            icons::logo(ui.painter(), logo, pal);
-            rect.left() + 44.0
+            let x = rect.left() + left_w;
+            let logo = Rect::from_center_size(pos2(x + 22.0, rect.center().y), vec2(20.0, 20.0));
+            let p = ui.painter();
+            match self.cfg.title_icon {
+                TitleIcon::Logo => icons::logo(p, logo, pal),
+                TitleIcon::Files => {
+                    let r = logo.expand(2.0);
+                    if !crate::system_icons::icon(p, r, "org.gnome.Nautilus")
+                        && !crate::system_icons::icon(p, r, "system-file-manager")
+                    {
+                        icons::logo(p, logo, pal);
+                    }
+                }
+                TitleIcon::Folder => icons::folder(p, logo, pal),
+                TitleIcon::None => {}
+            }
+            if self.cfg.title_icon == TitleIcon::None { x + 8.0 } else { x + 44.0 }
         };
         if sidebar_w > 90.0 {
             let r = Rect::from_center_size(pos2(rect.left() + sidebar_w - 22.0, rect.center().y), vec2(28.0, 28.0));
@@ -49,7 +145,7 @@ impl FileFlier {
             }
         }
 
-        let controls_left = rect.right() - CONTROLS_W;
+        let controls_left = rect.right() - right_w;
         let tabs_right = self.update_pill(ui, rect, controls_left).unwrap_or(controls_left);
         for &(idx, left, right) in strips {
             let left = left.max(logo_end) + 6.0;
@@ -58,8 +154,55 @@ impl FileFlier {
                 self.tab_strip(ui, idx, Rect::from_min_max(pos2(left, rect.top()), pos2(right, rect.bottom())));
             }
         }
-        if CONTROLS_W > 0.0 {
+        if native {
+            let left = Rect::from_min_max(rect.min, pos2(rect.left() + left_w, rect.bottom()));
+            self.native_controls(ui, left, left_btns, maximized);
+            let right = Rect::from_min_max(pos2(controls_left, rect.top()), rect.max);
+            self.native_controls(ui, right, right_btns, maximized);
+        } else if CONTROLS_W > 0.0 {
             self.window_controls(ui, Rect::from_min_max(pos2(controls_left, rect.top()), rect.max), maximized);
+        }
+    }
+
+    /// GNOME's (and Ubuntu's) window buttons: round, with the icon theme's symbols.
+    fn native_controls(&mut self, ui: &mut Ui, rect: Rect, buttons: &[WinButton], maximized: bool) {
+        let pal = self.pal();
+        let ctx = ui.ctx().clone();
+        for (i, &b) in buttons.iter().enumerate() {
+            let c = pos2(rect.left() + 3.0 + NATIVE_SLOT * (i as f32 + 0.5), rect.center().y);
+            let hit = Rect::from_center_size(c, vec2(NATIVE_SLOT, rect.height()));
+            let resp = ui.interact(hit, Id::new(("winctl_native", b)), Sense::click());
+            let alpha = if resp.is_pointer_button_down_on() {
+                0.3
+            } else if resp.hovered() {
+                0.15
+            } else {
+                0.1
+            };
+            let p = ui.painter();
+            p.circle_filled(c, 12.0, pal.text.gamma_multiply(alpha));
+            let name = match b {
+                WinButton::Minimize => "window-minimize-symbolic",
+                WinButton::Maximize if maximized => "window-restore-symbolic",
+                WinButton::Maximize => "window-maximize-symbolic",
+                WinButton::Close => "window-close-symbolic",
+            };
+            let ir = Rect::from_center_size(c, vec2(16.0, 16.0));
+            if !crate::system_icons::symbolic_always(p, ir, name, pal.text) {
+                let ir = ir.shrink(3.0);
+                match b {
+                    WinButton::Minimize => icons::minimize(p, ir, pal.text),
+                    WinButton::Maximize => icons::maximize(p, ir, pal.text, maximized),
+                    WinButton::Close => icons::close(p, ir, pal.text),
+                }
+            }
+            if resp.clicked() {
+                ctx.send_viewport_cmd(match b {
+                    WinButton::Minimize => ViewportCommand::Minimized(true),
+                    WinButton::Maximize => ViewportCommand::Maximized(!maximized),
+                    WinButton::Close => ViewportCommand::Close,
+                });
+            }
         }
     }
 
@@ -81,7 +224,7 @@ impl FileFlier {
         let r = Rect::from_min_size(pos2(controls_left - 8.0 - w, rect.center().y - 12.0), vec2(w, 24.0));
         let resp = ui.interact(r, Id::new("update_pill"), Sense::click());
         let fill = if resp.hovered() { pal.accent.gamma_multiply(1.2) } else { pal.accent };
-        ui.painter().rect_filled(r, 12.0, fill);
+        ui.painter().rect_filled(r, pal.round(12.0), fill);
         super::text_bold(ui.painter(), r.center(), egui::Align2::CENTER_CENTER, label, 12.5, pal.on_accent);
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             self.dialog = Some(crate::app::Dialog::Update);
@@ -89,7 +232,7 @@ impl FileFlier {
         Some(r.left())
     }
 
-    fn tab_strip(&mut self, ui: &mut Ui, idx: usize, strip: Rect) {
+    pub(crate) fn tab_strip(&mut self, ui: &mut Ui, idx: usize, strip: Rect) {
         let pal = self.pal();
         let pane_active = idx == self.active;
         let pane = &self.panes[idx];
@@ -97,7 +240,9 @@ impl FileFlier {
         let tab_w = ((strip.width() - 40.0) / n as f32).clamp(64.0, 220.0);
         let top = strip.bottom() - TAB_H;
         let painter = ui.painter().with_clip_rect(strip);
-        let pointer = ui.input(|i| i.pointer.hover_pos());
+        let can_close = n > 1 || self.panes.len() > 1;
+        let dragging = self.tab_drag;
+        self.strips.push((idx, strip, tab_w));
 
         for (ti, tab) in pane.tabs.iter().enumerate() {
             let r = Rect::from_min_size(pos2(strip.left() + ti as f32 * tab_w, top), vec2(tab_w, TAB_H));
@@ -121,8 +266,8 @@ impl FileFlier {
                         pal.accent,
                     );
                 }
-            } else if hovered {
-                painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), 6.0, pal.tab_hover);
+            } else if hovered && dragging.is_none() {
+                painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), pal.round(6.0), pal.tab_hover);
             } else if ti + 1 < n && ti + 1 != pane.active {
                 painter.line_segment(
                     [pos2(r.right(), r.top() + 9.0), pos2(r.right(), r.bottom() - 9.0)],
@@ -131,13 +276,19 @@ impl FileFlier {
             }
 
             let icon = Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), vec2(18.0, 18.0));
-            icons::folder(&painter, icon, pal);
+            super::tint::Tints::new(
+                &self.cfg.folder_colors,
+                self.cfg.folder_scheme,
+                &self.tint_anims,
+                ui.input(|i| i.time),
+            )
+            .folder(&painter, icon, pal, &tab.path);
             if tab.locked {
                 let lr = Rect::from_center_size(pos2(r.left() + 27.0, r.center().y + 5.0), vec2(10.0, 10.0));
                 painter.circle_filled(lr.center(), 6.0, if is_active { pal.bg } else { pal.titlebar });
                 icons::lock(&painter, lr, pal.text, true);
             }
-            let show_close = n > 1 && (is_active || hovered);
+            let show_close = can_close && (is_active || hovered) && dragging.is_none();
             let text_right = if show_close { r.right() - 30.0 } else { r.right() - 10.0 };
             let color = if is_active { pal.text_strong } else { pal.text_dim };
             let g = elided(&painter, &tab.title(), 14.0, color, text_right - (r.left() + 36.0));
@@ -147,7 +298,7 @@ impl FileFlier {
                 let cr = Rect::from_center_size(pos2(r.right() - 17.0, r.center().y), vec2(20.0, 20.0));
                 let close = ui.interact(cr, id.with("close"), Sense::click());
                 if close.hovered() {
-                    painter.rect_filled(cr, 4.0, pal.border);
+                    painter.rect_filled(cr, pal.round(4.0), pal.border);
                 }
                 icons::close(&painter, cr.shrink(3.0), if close.hovered() { pal.text_strong } else { pal.text_dim });
                 if close.clicked() {
@@ -161,7 +312,7 @@ impl FileFlier {
                 self.drop_target = Some(DropTarget::Folder(tab.path.clone()));
                 if !(is_active && pane_active) {
                     let (t, fire) = super::dnd::spring(ui.ctx(), Id::new(("spring_tab", idx, ti)), 0.45);
-                    painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), 6.0, pal.accent.gamma_multiply(0.25 * t));
+                    painter.rect_filled(r.shrink2(vec2(2.0, 3.0)), pal.round(6.0), pal.accent.gamma_multiply(0.25 * t));
                     if fire {
                         self.actions.push(Action::SelectTab(idx, ti));
                     }
@@ -174,17 +325,12 @@ impl FileFlier {
             if resp.clicked() || resp.drag_started() {
                 self.actions.push(Action::SelectTab(idx, ti));
             }
-            if resp.middle_clicked() && n > 1 {
-                self.actions.push(Action::CloseTab(idx, ti));
+            // Dragging reorders, moves the tab to another pane, or tiles it (see `tab_drag_ui`).
+            if resp.drag_started() {
+                self.tab_drag = Some((idx, ti));
             }
-            // Drag to reorder.
-            if resp.dragged()
-                && let Some(p) = pointer
-            {
-                let target = (((p.x - strip.left()) / tab_w).floor().max(0.0) as usize).min(n - 1);
-                if target != ti {
-                    self.actions.push(Action::MoveTab(idx, ti, target));
-                }
+            if resp.middle_clicked() && can_close {
+                self.actions.push(Action::CloseTab(idx, ti));
             }
             resp.on_hover_text(tab.path.to_string_lossy());
         }
@@ -276,24 +422,104 @@ impl FileFlier {
         }
     }
 
-    pub(crate) fn split_divider(&mut self, ui: &mut Ui, area: Rect, x: f32, draw_line: bool) {
+    pub(crate) fn split_divider(&mut self, ui: &mut Ui, k: usize, d: &crate::layout::Divider, draw_line: bool) {
         let pal = self.pal();
-        let line = Rect::from_min_max(pos2(x, area.top()), pos2(x + 1.0, area.bottom()));
+        let line = if d.row {
+            Rect::from_min_max(pos2(d.at, d.area.top()), pos2(d.at + 1.0, d.area.bottom()))
+        } else {
+            Rect::from_min_max(pos2(d.area.left(), d.at), pos2(d.area.right(), d.at + 1.0))
+        };
         if draw_line {
             ui.painter().rect_filled(line, 0.0, pal.border);
         }
-        let handle = line.expand2(vec2(3.0, 0.0));
-        let resp = ui.interact(handle, Id::new("split_divider"), Sense::drag());
+        let handle = if d.row { line.expand2(vec2(3.0, 0.0)) } else { line.expand2(vec2(0.0, 3.0)) };
+        let resp = ui.interact(handle, Id::new(("split_divider", k)), Sense::drag());
         if resp.hovered() || resp.dragged() {
-            ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+            ui.ctx().set_cursor_icon(if d.row { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical });
         }
         if resp.dragged()
             && let Some(p) = resp.interact_pointer_pos()
+            && let Some(ratio) = self.layout.ratio_mut(&d.path)
         {
-            self.cfg.split_ratio = ((p.x - area.left()) / area.width()).clamp(0.2, 0.8);
+            let r = if d.row { (p.x - d.area.left()) / d.area.width() } else { (p.y - d.area.top()) / d.area.height() };
+            *ratio = r.clamp(crate::layout::MIN_RATIO, 1.0 - crate::layout::MIN_RATIO);
         }
-        if resp.drag_stopped() {
-            self.cfg.save();
+    }
+
+    /// A tab being dragged: reorder it within its strip as it moves, and on release
+    /// move it to another pane's strip, into another pane (middle), or into a new
+    /// pane split off one edge of a pane, like Vivaldi's tab tiling.
+    pub(crate) fn tab_drag_ui(&mut self, ui: &mut Ui) {
+        let Some((src, ti)) = self.tab_drag else { return };
+        let ctx = ui.ctx().clone();
+        let (pos, down) = ctx.input(|i| (i.pointer.latest_pos(), i.pointer.primary_down()));
+        let (Some(pos), true) = (pos, src < self.panes.len() && ti < self.panes[src].tabs.len()) else {
+            self.tab_drag = None;
+            return;
+        };
+        enum Target {
+            Strip(usize, usize),
+            Pane(usize, Option<crate::layout::Side>),
+        }
+        let pal = self.pal();
+        let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("tab_drag")));
+        let mut target = None;
+        if let Some(&(p, strip, tab_w)) = self.strips.iter().find(|s| s.1.contains(pos)) {
+            let n = self.panes[p].tabs.len();
+            if p == src {
+                // Live reorder within the strip.
+                let to = (((pos.x - strip.left()) / tab_w).floor().max(0.0) as usize).min(n - 1);
+                if to != ti {
+                    let pane = &mut self.panes[src];
+                    let t = pane.tabs.remove(ti);
+                    pane.tabs.insert(to, t);
+                    pane.active = to;
+                    self.tab_drag = Some((src, to));
+                }
+            } else {
+                let at = (((pos.x - strip.left()) / tab_w).round().max(0.0) as usize).min(n);
+                let x = (strip.left() + at as f32 * tab_w).min(strip.right() - 2.0);
+                let top = strip.bottom() - TAB_H;
+                painter.rect_filled(
+                    Rect::from_min_max(pos2(x - 1.0, top + 4.0), pos2(x + 1.0, strip.bottom() - 4.0)),
+                    1.0,
+                    pal.accent,
+                );
+                target = Some(Target::Strip(p, at));
+            }
+        } else if let Some(p) = self.pane_rects.iter().position(|r| r.contains(pos)) {
+            let rect = self.pane_rects[p];
+            let side = crate::layout::zone(rect, pos);
+            let alone = self.panes[src].tabs.len() == 1;
+            if !(p == src && (side.is_none() || alone)) {
+                let area = crate::layout::preview(rect, side).shrink(4.0);
+                painter.rect_filled(area, pal.round(8.0), pal.accent.gamma_multiply(0.18));
+                painter.rect_stroke(area, pal.round(8.0), Stroke::new(2.0, pal.accent), StrokeKind::Inside);
+                target = Some(Target::Pane(p, side));
+            }
+        }
+        // The tab's name follows the pointer once it leaves its strip.
+        let in_own_strip = self.strips.iter().any(|s| s.0 == src && s.1.contains(pos));
+        if !in_own_strip {
+            let (_, ti) = self.tab_drag.unwrap_or((src, ti));
+            let title = self.panes[src].tabs[ti].title();
+            let g = painter.layout_no_wrap(title, super::font(13.0), pal.text_strong);
+            let at = pos + vec2(14.0, 10.0);
+            let r = Rect::from_min_size(at, g.size()).expand2(vec2(10.0, 6.0));
+            painter.rect_filled(r, pal.round(6.0), pal.tab_hover);
+            painter.rect_stroke(r, pal.round(6.0), Stroke::new(1.0, pal.border), StrokeKind::Inside);
+            painter.galley(at, g, pal.text_strong);
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+        }
+        if down {
+            return;
+        }
+        let (src, ti) = self.tab_drag.take().unwrap_or((src, ti));
+        match target {
+            Some(Target::Strip(p, at)) => self.move_tab_to(src, ti, p, Some(at)),
+            Some(Target::Pane(p, None)) => self.move_tab_to(src, ti, p, None),
+            Some(Target::Pane(p, Some(side))) => self.split_with_tab(src, ti, p, side),
+            None => {}
         }
     }
 
@@ -391,5 +617,21 @@ impl FileFlier {
         let at = pos + vec2(18.0, 14.0);
         painter.rect_filled(Rect::from_min_size(at, g.size()).expand2(vec2(8.0, 4.0)), 4.0, fill);
         painter.galley(at, g, fg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_button_layouts() {
+        use WinButton::*;
+        assert_eq!(parse_layout("':minimize,close'\n"), (vec![], vec![Minimize, Close]));
+        assert_eq!(parse_layout("'close,minimize,maximize:appmenu'"), (vec![Close, Minimize, Maximize], vec![]));
+        assert_eq!(parse_layout("'appmenu:close'"), (vec![], vec![Close]));
+        // Every button is shown, on close's side.
+        assert_eq!(with_all_buttons(parse_layout("':minimize,close'")), (vec![], vec![Minimize, Maximize, Close]));
+        assert_eq!(with_all_buttons(parse_layout("'close:'")), (vec![Close, Minimize, Maximize], vec![]));
     }
 }

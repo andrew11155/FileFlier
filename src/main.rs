@@ -8,9 +8,15 @@ mod commands;
 mod config;
 mod counts;
 mod dirtree;
+mod dropbox;
+mod ext;
+mod flat;
 mod fs_model;
 mod fuzzy;
+mod groups;
 mod icons;
+mod layout;
+mod meta;
 mod mounts;
 mod native;
 mod net;
@@ -18,7 +24,9 @@ mod openwith;
 mod ops;
 mod pane;
 mod preview;
+mod properties;
 mod search;
+mod system_icons;
 mod theme;
 mod trashview;
 mod udisks;
@@ -59,7 +67,9 @@ fn main() -> eframe::Result {
     let start = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     // Only ask for a transparent window when "see-through" glass is actually on:
     // some drivers (e.g. certain NVIDIA/X11 setups) misbehave with transparent windows.
-    let transparent = config::Config::load().see_through();
+    // Rounded window corners need one too (the corners are cut out of it).
+    let cfg = config::Config::load();
+    let transparent = cfg.see_through() || cfg.round_window();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("File Flier")

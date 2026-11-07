@@ -17,6 +17,8 @@ image = { version = "0.25.10", default-features = false, features = [
     "png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "tga", "qoi", "pnm", "hdr", "exr", "dds",
 ] }
 libc = "0.2.189"
+# The version eframe uses; only for the desktop's window menu (`show_window_menu`).
+winit = { version = "0.30", default-features = false }
 ab_glyph = "0.2"
 cfb = "0.15"
 csv = "1.4"
@@ -61,3 +63,8 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Image decoders and other dependencies are many times slower unoptimized;
+# optimize them even in debug builds (our own code stays quick to compile).
+[profile.dev.package."*"]
+opt-level = 3

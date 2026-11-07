@@ -136,7 +136,7 @@ fn big_icon(ui: &Ui, rect: Rect, e: &Entry, note: Option<&str>, note_color: Colo
     let ir =
         Rect::from_center_size(rect.center() - vec2(0.0, if note.is_some() { 16.0 } else { 0.0 }), vec2(size, size));
     if e.is_dir {
-        icons::folder(p, ir, pal);
+        icons::folder_icon(p, ir, pal, None, crate::system_icons::special_folder(&e.path));
     } else {
         icons::file(p, ir, file_kind(e), pal);
     }
@@ -399,22 +399,121 @@ fn scroll_area(ui: &mut Ui, rect: Rect, id: impl std::hash::Hash + std::fmt::Deb
 
 #[allow(clippy::too_many_arguments)]
 fn text_view(ui: &mut Ui, rect: Rect, e: &Entry, t: &str, syntax: &str, truncated: bool, pal: &Palette, style: &Style) {
-    let p = ui.painter();
-    p.rect_filled(rect, 6.0, pal.bg);
     let size = if style.big { 13.0 } else { 12.0 };
-    scroll_area(ui, rect.shrink(8.0), ("pv_text", &e.path), |ui| {
-        if syntax.is_empty() || t.len() > 300_000 {
-            ui.add(egui::Label::new(RichText::new(t).monospace().size(size).color(pal.text)).extend());
-        } else {
-            let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
-            theme = theme.with_font_size(size);
-            let job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, t, syntax);
-            ui.add(egui::Label::new(job).extend());
-        }
-        if truncated {
-            ui.add_space(6.0);
-            ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));
-        }
+    // An editor's look: the code on the window's background, line numbers in a gutter.
+    let lines = t.lines().count().max(1);
+    let digits = lines.to_string().len().max(2);
+    let gutter_w =
+        ui.painter().layout_no_wrap("0".repeat(digits), egui::FontId::monospace(size), pal.text).size().x + 16.0;
+    let p = ui.painter();
+    p.rect_filled(rect, pal.round(3.0), pal.bg);
+    let gutter = Rect::from_min_max(rect.min, pos2(rect.left() + gutter_w, rect.bottom()));
+    p.rect_filled(gutter, 0.0, pal.sidebar.gamma_multiply(0.6));
+    p.vline(gutter.right(), rect.y_range(), Stroke::new(1.0, pal.row_sep));
+    let body = Rect::from_min_max(pos2(rect.left(), rect.top() + 6.0), pos2(rect.right() - 4.0, rect.bottom() - 4.0));
+    if t.len() > 40_000 {
+        return long_text_view(ui, body, e, t, syntax, truncated, size, pal, gutter_w);
+    }
+    scroll_area(ui, body, ("pv_text", &e.path), |ui| {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let nums: String = (1..=lines).map(|n| format!("{n:>digits$}\n")).collect();
+            ui.add_sized(
+                vec2(gutter_w - 8.0, 0.0),
+                egui::Label::new(RichText::new(nums.trim_end()).monospace().size(size).color(pal.text_faint)).extend(),
+            );
+            ui.add_space(16.0);
+            ui.vertical(|ui| {
+                if syntax.is_empty() || t.len() > 300_000 {
+                    ui.add(egui::Label::new(RichText::new(t).monospace().size(size).color(pal.text)).extend());
+                } else {
+                    let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
+                    theme = theme.with_font_size(size);
+                    let job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, t, syntax);
+                    ui.add(egui::Label::new(job).extend());
+                }
+                if truncated {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));
+                }
+            });
+        });
+    });
+}
+
+/// Big text: lay out and highlight only the lines in view. (One label for the
+/// whole text would be laid out, highlighted and drawn in full every frame.)
+/// Lines are highlighted one at a time, which can miss a comment or string that
+/// spans lines; small files keep whole-file highlighting.
+#[allow(clippy::too_many_arguments)]
+fn long_text_view(
+    ui: &mut Ui,
+    rect: Rect,
+    e: &Entry,
+    t: &str,
+    syntax: &str,
+    truncated: bool,
+    size: f32,
+    pal: &Palette,
+    gutter_w: f32,
+) {
+    let lines: Vec<&str> = t.lines().collect();
+    let digits = lines.len().to_string().len().max(2);
+    let font = egui::FontId::monospace(size);
+    let row_h = ui.painter().layout_no_wrap("Mg".into(), font.clone(), pal.text).size().y;
+    let rows = lines.len() + if truncated { 2 } else { 0 };
+    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+        ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+        egui::ScrollArea::both().id_salt(("pv_text", &e.path)).auto_shrink(false).show_rows(
+            ui,
+            row_h,
+            rows,
+            |ui, range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
+                theme = theme.with_font_size(size);
+                for i in range {
+                    match lines.get(i) {
+                        Some(line) => {
+                            let line = if line.is_empty() { " " } else { line };
+                            ui.horizontal_top(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                ui.add_sized(
+                                    vec2(gutter_w - 8.0, row_h),
+                                    egui::Label::new(
+                                        RichText::new(format!("{:>digits$}", i + 1))
+                                            .font(font.clone())
+                                            .color(pal.text_faint),
+                                    ),
+                                );
+                                ui.add_space(16.0);
+                                if syntax.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(line).font(font.clone()).color(pal.text))
+                                            .extend(),
+                                    );
+                                } else {
+                                    let job = egui_extras::syntax_highlighting::highlight(
+                                        ui.ctx(),
+                                        ui.style(),
+                                        &theme,
+                                        line,
+                                        syntax,
+                                    );
+                                    ui.add(egui::Label::new(job).extend());
+                                }
+                            });
+                        }
+                        None if i == lines.len() + 1 => {
+                            ui.label(RichText::new("… preview shortened").size(12.0).italics().color(pal.text_dim));
+                        }
+                        None => {
+                            ui.add_space(row_h);
+                        }
+                    }
+                }
+            },
+        );
     });
 }
 
@@ -436,7 +535,7 @@ fn document_view(
     ui.painter().add(
         egui::Shadow { offset: [0, 2], blur: 10, spread: 0, color: Color32::from_black_alpha(50) }.as_shape(paper, 4),
     );
-    ui.painter().rect_filled(paper, 4.0, PAPER);
+    ui.painter().rect_filled(paper, pal.round(4.0), PAPER);
     let scale = if style.big { 1.0 } else { 0.86 };
     scroll_area(ui, paper.shrink2(vec2(if style.big { 36.0 } else { 16.0 }, 14.0)), ("pv_doc", &e.path), |ui| {
         ui.spacing_mut().item_spacing.y = 6.0 * scale;
@@ -499,7 +598,7 @@ fn document_view(
 
 fn table_view(ui: &mut Ui, rect: Rect, e: &Entry, rows: &[Vec<String>], truncated: bool, pal: &Palette) {
     let p = ui.painter();
-    p.rect_filled(rect, 6.0, pal.bg);
+    p.rect_filled(rect, pal.round(3.0), pal.bg);
     if rows.is_empty() {
         text(p, rect.center(), Align2::CENTER_CENTER, "Empty sheet", 13.5, pal.text_dim);
         return;
@@ -624,7 +723,7 @@ fn dir_tiles(ui: &mut Ui, rect: Rect, e: &Entry, entries: &[Entry], pal: &Palett
 }
 
 fn listing_view(ui: &mut Ui, rect: Rect, e: &Entry, items: &[crate::preview::ListItem], pal: &Palette) {
-    ui.painter().rect_filled(rect, 6.0, pal.bg);
+    ui.painter().rect_filled(rect, pal.round(3.0), pal.bg);
     if items.is_empty() {
         text(ui.painter(), rect.center(), Align2::CENTER_CENTER, "Empty archive", 13.5, pal.text_dim);
         return;

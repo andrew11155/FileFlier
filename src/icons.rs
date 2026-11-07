@@ -22,6 +22,27 @@ fn square(r: Rect) -> Rect {
 // --------------------------------------------------------------- files
 
 pub fn folder(p: &Painter, r: Rect, pal: &Palette) {
+    folder_tinted(p, r, pal, None);
+}
+
+/// A folder in the theme's color, or in `tint` (a folder color the user chose).
+pub fn folder_tinted(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>) {
+    folder_icon(p, r, pal, tint, None);
+}
+
+/// A folder, with the GNOME icons' emblem for special folders (`adwaita::special_folder`).
+pub fn folder_icon(p: &Painter, r: Rect, pal: &Palette, tint: Option<Color32>, special: Option<&'static str>) {
+    // The back sheet is a shade darker than the front, as with the theme colors.
+    let (front_c, back_c) = match tint {
+        Some(c) => (c, mix(c, Color32::BLACK, 0.18)),
+        None => (pal.folder, pal.folder_back),
+    };
+    // System folder icons follow the accent picked in Settings (see
+    // `system_icons::folder`); without one they keep the icon theme's colors, which
+    // match the desktop's accent, as in GNOME Files.
+    if crate::system_icons::folder(p, r, tint, pal.custom_accent, special) {
+        return;
+    }
     let r = snap(p, square(r));
     let lighter = |c: Color32, t: f32| mix(c, Color32::WHITE, t);
     // Back sheet with its tab.
@@ -33,14 +54,16 @@ pub fn folder(p: &Painter, r: Rect, pal: &Palette) {
             Stroke::NONE,
         )
         .into(),
-        lighter(pal.folder_back, 0.08),
-        pal.folder_back,
+        lighter(back_c, 0.08),
+        back_c,
     );
+    // The GNOME look draws Adwaita's folder: rounder, and flatter in front.
+    let (rad, top, shine) = if pal.gnome { ((r.width() * 0.09).max(2.0), 0.36, 0.10) } else { (2.0, 0.32, 0.22) };
     let back = Rect::from_min_max(at(r, 0.06, 0.21), at(r, 0.94, 0.86));
-    p.rect_filled(back, 2.0, pal.folder_back);
+    p.rect_filled(back, rad, back_c);
     // Front sheet: a soft top-to-bottom gradient gives it some depth.
-    let front = Rect::from_min_max(at(r, 0.06, 0.32), at(r, 0.94, 0.86));
-    gradient(p, egui::Shape::rect_filled(front, 2.0, Color32::WHITE), lighter(pal.folder, 0.22), pal.folder);
+    let front = Rect::from_min_max(at(r, 0.06, top), at(r, 0.94, 0.86));
+    gradient(p, egui::Shape::rect_filled(front, rad, Color32::WHITE), lighter(front_c, shine), front_c);
     let hl = (r.width() / 20.0).max(1.0);
     p.line_segment(
         [pos2(front.left() + 1.5, front.top() + hl * 0.5), pos2(front.right() - 1.5, front.top() + hl * 0.5)],
@@ -516,7 +539,31 @@ pub enum Place {
     Cloud,
 }
 
+/// The GNOME icon theme's symbolic icon for a place.
+pub fn place_symbolic(kind: Place) -> &'static str {
+    match kind {
+        Place::Home => "user-home-symbolic",
+        Place::Desktop => "user-desktop-symbolic",
+        Place::Documents => "folder-documents-symbolic",
+        Place::Downloads => "folder-download-symbolic",
+        Place::Music => "folder-music-symbolic",
+        Place::Pictures => "folder-pictures-symbolic",
+        Place::Videos => "folder-videos-symbolic",
+        Place::Trash => "user-trash-symbolic",
+        Place::Folder => "folder-symbolic",
+        Place::Bookmark => "user-bookmarks-symbolic",
+        Place::Recent => "document-open-recent-symbolic",
+        Place::Drive => "drive-harddisk-symbolic",
+        Place::Network => "network-server-symbolic",
+        Place::Cloud => "folder-remote-symbolic",
+    }
+}
+
 pub fn place(p: &Painter, r: Rect, kind: Place, pal: &Palette) {
+    // GNOME Files draws its sidebar with symbolic icons in the text color.
+    if crate::system_icons::symbolic(p, r, place_symbolic(kind), pal.text) {
+        return;
+    }
     let r = square(r);
     match kind {
         Place::Home => {

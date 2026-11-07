@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use egui::{Align, Align2, Color32, Id, Key, Modifiers, Order, RichText, Sense, Stroke, TextEdit, Ui, pos2, vec2};
 
-use super::{RowIcon, badge, font, menu_row, popup_frame, search_box, text};
+use super::{RowIcon, font, menu_row, popup_frame, search_box, text};
 use crate::app::{Action, Dialog, FileFlier, MenuItem, PaletteItem, Resolve, display_name, step};
-use crate::commands::{self, Command};
+use crate::commands::Command;
 use crate::icons::FileKind;
 use crate::search::{self, Search};
 use crate::trashview;
@@ -65,11 +65,11 @@ fn input_row(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: I
     resp
 }
 
-fn plain_input(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: Id) -> egui::Response {
+pub(super) fn plain_input(ui: &mut Ui, pal: &crate::theme::Palette, value: &mut String, id: Id) -> egui::Response {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(r, 5.0, pal.input);
-    p.rect_stroke(r, 5.0, Stroke::new(1.0, pal.accent), egui::StrokeKind::Inside);
+    p.rect_filled(r, pal.round(5.0), pal.input);
+    p.rect_stroke(r, pal.round(5.0), Stroke::new(1.0, pal.accent), egui::StrokeKind::Inside);
     let inner = r.shrink2(vec2(10.0, 1.0));
     ui.put(
         inner,
@@ -101,9 +101,9 @@ pub(super) fn button(
         (false, _, false) => pal.input,
         (false, _, true) => pal.tab_hover,
     };
-    ui.painter().rect_filled(r, 5.0, fill);
+    ui.painter().rect_filled(r, pal.round(5.0), fill);
     if !primary && !danger {
-        ui.painter().rect_stroke(r, 5.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(r, pal.round(5.0), Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
     }
     let color = if danger {
         Color32::WHITE
@@ -129,6 +129,7 @@ impl FileFlier {
     pub(crate) fn menu_ui(&mut self, ctx: &egui::Context) {
         let pal = self.pal();
         let fx = self.fx();
+        let scheme = self.cfg.folder_scheme;
         let Some(menu) = self.menu.as_mut() else { return };
         let esc = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
         let (up, down, enter, _) = list_keys(ctx);
@@ -139,39 +140,50 @@ impl FileFlier {
             .iter()
             .enumerate()
             .filter(|(_, it)| match it {
-                MenuItem::Sep => q.is_empty(),
-                MenuItem::Cmd(c) => fuzzy::score(&q, c.label()).is_some(),
+                MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => q.is_empty(),
+                MenuItem::Cmd(c) | MenuItem::Choice(c, _) => fuzzy::score(&q, c.label()).is_some(),
                 MenuItem::Go(p) => fuzzy::score(&q, &p.to_string_lossy()).is_some(),
                 MenuItem::NewTabAt(_) => fuzzy::score(&q, "Open in new tab").is_some(),
                 MenuItem::Unbookmark(_) => fuzzy::score(&q, "Remove bookmark").is_some(),
                 MenuItem::CloudDisconnect(_) => fuzzy::score(&q, "Disconnect").is_some(),
                 MenuItem::CloudSignOut(_) => fuzzy::score(&q, "Sign out").is_some(),
+                MenuItem::Dropbox(l, ..) => fuzzy::score(&q, l).is_some(),
+                MenuItem::DropboxUnsync(_) => fuzzy::score(&q, "Keep online only").is_some(),
+                MenuItem::DropboxExcluded => fuzzy::score(&q, "Dropbox folders not synced").is_some(),
             })
             .collect();
-        let selectable: Vec<usize> =
-            entries.iter().filter(|(_, it)| !matches!(it, MenuItem::Sep)).map(|(i, _)| *i).collect();
+        let selectable: Vec<usize> = entries
+            .iter()
+            .filter(|(_, it)| !matches!(it, MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..)))
+            .map(|(i, _)| *i)
+            .collect();
         menu.cursor = step(menu.cursor, up, down, selectable.len());
 
         let width = 320.0;
-        let est_h =
-            52.0 + entries.iter().map(|(_, it)| if matches!(it, MenuItem::Sep) { 9.0 } else { 30.0 }).sum::<f32>();
+        let est_h = if menu.search { 52.0 } else { 14.0 }
+            + entries.iter().map(|(_, it)| if matches!(it, MenuItem::Sep) { 9.0 } else { 30.0 }).sum::<f32>();
         let screen = ctx.content_rect();
         let pos = pos2(
-            menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left())),
-            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top())),
+            menu.pos.x.clamp(screen.left() + 4.0, (screen.right() - width - 16.0).max(screen.left() + 4.0)),
+            menu.pos.y.clamp(screen.top() + 4.0, (screen.bottom() - est_h - 16.0).max(screen.top() + 4.0)),
         );
         let mut chosen: Option<MenuItem> = None;
+        let mut picked_color: Option<(Vec<PathBuf>, ColorPick)> = None;
+        let mut picked_rating: Option<(Vec<PathBuf>, u8)> = None;
         let mut query = std::mem::take(&mut menu.query);
+        let with_search = menu.search;
         let area = egui::Area::new(Id::new("cmd_menu")).order(Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
             super::animate_in(ui, Id::new("cmd_menu_appear"), &fx, -6.0);
             popup_frame(pal, &fx).show(ui, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
-                let (resp, _) =
-                    search_box(ui, r, pal, &mut query, Id::new("menu_search"), "Select a command...", false);
-                resp.request_focus();
-                ui.add_space(6.0);
+                if with_search {
+                    let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
+                    let (resp, _) =
+                        search_box(ui, r, pal, &mut query, Id::new("menu_search"), "Select a command...", false);
+                    resp.request_focus();
+                    ui.add_space(6.0);
+                }
                 let mut sel_i = 0;
                 for (i, item) in &entries {
                     if let MenuItem::Sep = item {
@@ -179,17 +191,60 @@ impl FileFlier {
                         ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, pal.border));
                         continue;
                     }
+                    if let MenuItem::Colors(paths, current) = item {
+                        if let Some(c) = color_row(ui, pal, width, *current, scheme, paths.len() > 1) {
+                            picked_color = Some((paths.clone(), c));
+                        }
+                        continue;
+                    }
+                    if let MenuItem::Rating(paths, current) = item {
+                        let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
+                        let p = ui.painter().clone();
+                        text(&p, pos2(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Rating", 14.0, pal.text);
+                        let id = Id::new("menu_rating");
+                        if let Some(n) =
+                            super::tags::star_row(ui, id, r.left() + 74.0, r.center().y, 22.0, *current, pal)
+                        {
+                            picked_rating = Some((paths.clone(), n));
+                        }
+                        // Remove the stars.
+                        if *current > 0 {
+                            let xr = egui::Rect::from_center_size(
+                                pos2(r.left() + 74.0 + 22.0 * 5.0 + 22.0, r.center().y),
+                                vec2(26.0, 26.0),
+                            );
+                            let tip = if paths.len() > 1 { "Remove the ratings" } else { "Remove the rating" };
+                            if super::icon_button(ui, xr, Id::new("menu_rating_clear"), true, pal, tip, |p, ir, c| {
+                                crate::icons::close(p, ir.shrink(2.0), c)
+                            })
+                            .clicked()
+                            {
+                                picked_rating = Some((paths.clone(), 0));
+                            }
+                        }
+                        continue;
+                    }
                     let selected = selectable.get(menu.cursor) == Some(i);
                     let danger = matches!(item, MenuItem::Cmd(Command::Trash | Command::DeletePermanently));
                     let (label, badges, icon) = match item {
                         MenuItem::Cmd(c) if danger => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::Trash),
                         MenuItem::Cmd(c) => (c.label().to_string(), c.shortcut_texts(ctx), RowIcon::None),
+                        MenuItem::Choice(c, on) => {
+                            let label = c.label();
+                            let label = label.strip_prefix("View: ").map_or(label.to_string(), super::capitalize);
+                            (label, c.shortcut_texts(ctx), RowIcon::Check(*on))
+                        }
                         MenuItem::Go(p) => (tilde(p), vec![], RowIcon::Folder),
                         MenuItem::NewTabAt(_) => ("Open in new tab".into(), vec![], RowIcon::None),
                         MenuItem::Unbookmark(_) => ("Remove bookmark".into(), vec![], RowIcon::None),
                         MenuItem::CloudDisconnect(_) => ("Disconnect".into(), vec![], RowIcon::None),
                         MenuItem::CloudSignOut(n) => (format!("Sign out of {n}…"), vec![], RowIcon::None),
-                        MenuItem::Sep => unreachable!(),
+                        MenuItem::Dropbox(l, ..) => (l.clone(), vec![], RowIcon::None),
+                        MenuItem::DropboxUnsync(_) => {
+                            ("Keep online only (don't sync here)…".into(), vec![], RowIcon::None)
+                        }
+                        MenuItem::DropboxExcluded => ("Dropbox folders not synced here…".into(), vec![], RowIcon::None),
+                        MenuItem::Sep | MenuItem::Colors(..) | MenuItem::Rating(..) => unreachable!(),
                     };
                     let resp = super::menu_row_ex(ui, pal, selected, icon, &label, &badges, danger);
                     if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
@@ -223,16 +278,29 @@ impl FileFlier {
         let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
             && ctx.pointer_interact_pos().is_some_and(|p| !area.response.rect.contains(p))
             && menu.opened.elapsed() > Duration::from_millis(150);
-        if chosen.is_some() || esc || clicked_outside {
+        if chosen.is_some() || picked_color.is_some() || picked_rating.is_some() || esc || clicked_outside {
             self.menu = None;
         }
+        match picked_color {
+            Some((paths, ColorPick::Set(color))) => self.actions.push(Action::ColorFolders(paths, color)),
+            Some((paths, ColorPick::Rainbow)) => self.actions.push(Action::RainbowFolders(paths)),
+            None => {}
+        }
+        if let Some((paths, stars)) = picked_rating {
+            self.actions.push(Action::Rate(paths, stars));
+        }
         match chosen {
-            Some(MenuItem::Cmd(c)) => self.actions.push(Action::Run(c)),
+            Some(MenuItem::Cmd(c) | MenuItem::Choice(c, _)) => self.actions.push(Action::Run(c)),
             Some(MenuItem::Go(p)) => self.actions.push(Action::Navigate(p)),
             Some(MenuItem::NewTabAt(p)) => self.actions.push(Action::OpenInNewTab(p)),
             Some(MenuItem::Unbookmark(p)) => self.toggle_bookmark(p),
             Some(MenuItem::CloudDisconnect(n)) => self.cloud_disconnect(n, false),
             Some(MenuItem::CloudSignOut(n)) => self.cloud_disconnect(n, true),
+            Some(MenuItem::Dropbox(_, verb, paths)) => crate::dropbox::run(paths, verb, ctx),
+            Some(MenuItem::DropboxUnsync(paths)) => self.dialog = Some(Dialog::DropboxUnsync(paths)),
+            Some(MenuItem::DropboxExcluded) => {
+                self.dialog = Some(Dialog::DropboxExcluded(crate::dropbox::excluded()));
+            }
             _ => {}
         }
     }
@@ -466,6 +534,7 @@ impl FileFlier {
                         Ok(target) => {
                             keep = false;
                             if target != *path {
+                                self.carry_folder_color(path, &target);
                                 let op = crate::undo::UndoOp::Rename { from: path.clone(), to: target.clone() };
                                 self.info_undoable(format!("Renamed to {}", display_name(&target)), op);
                             }
@@ -726,9 +795,9 @@ impl FileFlier {
                                     ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
                                 let p = ui.painter();
                                 if sel {
-                                    p.rect_filled(r, 4.0, pal.accent.gamma_multiply(0.35));
+                                    p.rect_filled(r, pal.round(4.0), pal.accent.gamma_multiply(0.35));
                                 } else if resp.hovered() {
-                                    p.rect_filled(r, 4.0, pal.tab_hover);
+                                    p.rect_filled(r, pal.round(4.0), pal.tab_hover);
                                 }
                                 let cb =
                                     egui::Rect::from_center_size(pos2(r.left() + 14.0, r.center().y), vec2(16.0, 16.0));
@@ -876,9 +945,9 @@ impl FileFlier {
                                     ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
                                 let p = ui.painter();
                                 if selected {
-                                    p.rect_filled(r, 5.0, pal.accent);
+                                    p.rect_filled(r, pal.round(5.0), pal.accent);
                                 } else if resp.hovered() {
-                                    p.rect_filled(r, 5.0, pal.tab_hover);
+                                    p.rect_filled(r, pal.round(5.0), pal.tab_hover);
                                 }
                                 let ir =
                                     egui::Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), vec2(24.0, 24.0));
@@ -894,7 +963,7 @@ impl FileFlier {
                                     None => {
                                         // No icon (yet): a tile with the app's initial.
                                         let tile = if selected { Color32::from_white_alpha(46) } else { pal.tab_hover };
-                                        p.rect_filled(ir.shrink(2.0), 5.0, tile);
+                                        p.rect_filled(ir.shrink(2.0), pal.round(5.0), tile);
                                         let initial = app.name.chars().next().unwrap_or('?').to_uppercase().to_string();
                                         let c = if selected { pal.on_accent } else { pal.text_dim };
                                         super::text_bold(p, ir.center(), Align2::CENTER_CENTER, initial, 12.0, c);
@@ -982,45 +1051,49 @@ impl FileFlier {
                     keep = false;
                 }
             }
-            Dialog::Help => {
-                modal(ctx, "help", 620.0, pal, &fx, |ui| {
-                    label(ui, pal, "Keyboard shortcuts", 16.0, Some(pal.text_strong));
-                    egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
-                        let basics = [
-                            ("Move cursor (Shift selects)", vec!["↑ ↓ PgUp PgDn Home End".to_string()]),
-                            ("Open folder / file", vec!["Enter".into(), "→".into()]),
-                            ("Parent folder", vec!["Backspace".into(), "←".into()]),
-                            ("Filter this folder", vec!["Type anything".into()]),
-                            ("Multi-select", vec![super::keys("Ctrl+Click"), super::keys("Shift+Click")]),
-                            (
-                                "Copy / cut / paste",
-                                vec![super::keys("Ctrl+C"), super::keys("Ctrl+X"), super::keys("Ctrl+V")],
-                            ),
-                            ("Drag files (hold Ctrl to copy)", vec!["Drag".into()]),
-                        ];
-                        let rows = basics.into_iter().chain(
-                            commands::ALL
-                                .iter()
-                                .filter(|c| !matches!(c, Command::Copy | Command::Cut | Command::Paste))
-                                .map(|c| (c.label(), c.shortcut_texts(ctx)))
-                                .filter(|(_, s)| !s.is_empty()),
-                        );
-                        for (desc, keys) in rows {
-                            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-                            let p = ui.painter();
-                            text(p, pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, desc, 13.5, pal.text);
-                            let mut right = r.right() - 8.0;
-                            for k in keys.iter().rev() {
-                                right -= badge(p, right, r.center().y, k, pal, false) + 6.0;
-                            }
-                            p.hline(r.x_range(), r.bottom(), Stroke::new(1.0, pal.row_sep));
-                        }
-                    });
-                    ui.add_space(8.0);
-                    if button(ui, pal, "Close", false, false).clicked() {
-                        keep = false;
-                    }
-                });
+            Dialog::TagFiles { paths, new_tag, error } => {
+                if modal(ctx, "tag_files", 460.0, pal, &fx, |ui| self.tag_files_ui(ui, paths, new_tag, error)) {
+                    keep = false;
+                }
+            }
+            Dialog::DropboxUnsync(paths) => {
+                if modal(ctx, "dropbox_unsync", 460.0, pal, &fx, |ui| self.dropbox_unsync_ui(ui, paths)) {
+                    keep = false;
+                }
+            }
+            Dialog::DropboxExcluded(list) => {
+                if modal(ctx, "dropbox_excluded", 560.0, pal, &fx, |ui| self.dropbox_excluded_ui(ui, list)) {
+                    keep = false;
+                }
+            }
+            Dialog::BatchRename(st) => {
+                if !keep && st.add_open {
+                    // Esc closes the Add menu first.
+                    keep = true;
+                    st.add_open = false;
+                }
+                if modal(ctx, "batch_rename", 640.0, pal, &fx, |ui| self.batch_rename_ui(ui, st)) {
+                    keep = false;
+                }
+            }
+            Dialog::ManageTags(st) => {
+                if modal(ctx, "manage_tags", 560.0, pal, &fx, |ui| self.manage_tags_ui(ui, st)) {
+                    keep = false;
+                }
+            }
+            Dialog::Shortcuts { query, cursor, record } => {
+                if !keep && record.is_some() {
+                    // Esc while recording cancels the recording, not the overlay.
+                    keep = true;
+                    *record = None;
+                }
+                let out = modal(ctx, "shortcuts", 720.0, pal, &fx, |ui| self.shortcuts_ui(ui, query, cursor, record));
+                if out.close {
+                    keep = false;
+                }
+                if out.run.is_some() {
+                    run_after = out.run;
+                }
             }
         }
 
@@ -1040,4 +1113,79 @@ impl FileFlier {
             }
         }
     }
+}
+
+/// "Color" and a row of swatches: no color, then the scheme's colors. Returns the
+/// one clicked (`Some(None)` = no color).
+/// A choice in the menu's color row.
+enum ColorPick {
+    /// One color (or none) for every folder.
+    Set(Option<u8>),
+    /// The scheme's colors in turn, across the folders.
+    Rainbow,
+}
+
+fn color_row(
+    ui: &mut egui::Ui,
+    pal: &crate::theme::Palette,
+    width: f32,
+    current: Option<u8>,
+    scheme: u8,
+    several: bool,
+) -> Option<ColorPick> {
+    let names = crate::ui::tint::SCHEMES.get(scheme as usize).unwrap_or(&crate::ui::tint::SCHEMES[0]).names;
+    let colors = crate::ui::tint::scheme(scheme, pal.accent);
+    let (r, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
+    let p = ui.painter().clone();
+    text(&p, pos2(r.left() + 10.0, r.center().y), Align2::LEFT_CENTER, "Color", 14.0, pal.text);
+    let mut picked = None;
+    let n = names.len() + 1 + usize::from(several);
+    let gap = ((r.width() - 78.0) / n as f32).min(27.0);
+    for i in 0..n {
+        if several && i == n - 1 {
+            // Rainbow: a pie of the scheme's colors.
+            let c = pos2(r.left() + 74.0 + gap * (i as f32 + 0.5), r.center().y);
+            let hit = egui::Rect::from_center_size(c, vec2(gap, 30.0));
+            let resp = ui.interact(hit, Id::new(("menu_color", i)), Sense::click());
+            let grow = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+            let rad = 8.5 + 2.0 * grow;
+            let k = colors.len();
+            for (j, &col) in colors.iter().enumerate() {
+                let a0 = std::f32::consts::TAU * j as f32 / k as f32 - std::f32::consts::FRAC_PI_2;
+                let a1 = std::f32::consts::TAU * (j + 1) as f32 / k as f32 - std::f32::consts::FRAC_PI_2;
+                let mut pts = vec![c];
+                for s in 0..=4 {
+                    let a = a0 + (a1 - a0) * s as f32 / 4.0;
+                    pts.push(c + vec2(a.cos(), a.sin()) * rad);
+                }
+                p.add(egui::epaint::PathShape::convex_polygon(pts, col, Stroke::NONE));
+            }
+            if resp.on_hover_text("Rainbow: each folder the next color").clicked() {
+                picked = Some(ColorPick::Rainbow);
+            }
+            continue;
+        }
+        let c = pos2(r.left() + 74.0 + gap * (i as f32 + 0.5), r.center().y);
+        let hit = egui::Rect::from_center_size(c, vec2(gap, 30.0));
+        let resp = ui.interact(hit, Id::new(("menu_color", i)), Sense::click());
+        let grow = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+        let rad = 8.5 + 2.0 * grow;
+        let value = if i == 0 { None } else { Some((i - 1) as u8) };
+        if i == 0 {
+            // No color: an empty ring with a slash.
+            p.circle_stroke(c, rad, Stroke::new(1.5, pal.text_dim));
+            let d = rad * 0.7;
+            p.line_segment([c + vec2(-d, d), c + vec2(d, -d)], Stroke::new(1.5, pal.text_dim));
+        } else {
+            p.circle_filled(c, rad, colors[i - 1]);
+        }
+        if value == current {
+            p.circle_stroke(c, rad + 3.0, Stroke::new(1.6, pal.accent));
+        }
+        let name = if i == 0 { "No color" } else { names[i - 1] };
+        if resp.on_hover_text(name).clicked() {
+            picked = Some(ColorPick::Set(value));
+        }
+    }
+    picked
 }

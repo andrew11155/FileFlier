@@ -1,0 +1,655 @@
+//! The desktop's own icons (the icon theme GNOME uses, e.g. Adwaita or Yaru), looked up
+//! as GTK does and drawn as textures. Used when Settings → Icons is "GNOME", so folders
+//! and the sidebar look just like they do in GNOME Files; if no icon theme can be
+//! found, the hand-drawn icons are used instead.
+//!
+//! Folders are drawn as the theme has them, or recolored to a color the user gave the
+//! folder. Symbolic icons (the sidebar's) are drawn in any color, like GTK does.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, Once, OnceLock};
+
+use egui::{Color32, ColorImage, Painter, Rect, TextureHandle, TextureOptions, pos2, vec2};
+
+/// Icon names File Flier draws from the theme.
+const NAMES: &[&str] = &[
+    "folder",
+    "folder-documents",
+    "folder-download",
+    "folder-music",
+    "folder-pictures",
+    "folder-videos",
+    "folder-publicshare",
+    "folder-templates",
+    "folder-remote",
+    "user-home",
+    "user-desktop",
+    "user-home-symbolic",
+    "user-desktop-symbolic",
+    "folder-documents-symbolic",
+    "folder-download-symbolic",
+    "folder-music-symbolic",
+    "folder-pictures-symbolic",
+    "folder-videos-symbolic",
+    "folder-symbolic",
+    "folder-remote-symbolic",
+    "user-trash-symbolic",
+    "user-bookmarks-symbolic",
+    "document-open-recent-symbolic",
+    "drive-harddisk-symbolic",
+    "network-server-symbolic",
+    "pan-down-symbolic",
+    "pan-end-symbolic",
+    "list-add-symbolic",
+    "media-eject-symbolic",
+    "window-close-symbolic",
+    "window-minimize-symbolic",
+    "window-maximize-symbolic",
+    "window-restore-symbolic",
+    "org.gnome.Nautilus",
+    "system-file-manager",
+];
+
+static ON: AtomicBool = AtomicBool::new(false);
+
+/// Turns the theme's icons on or off (from the settings, once a frame). The theme is
+/// indexed in the background the first time; `ctx` is repainted when it's ready.
+pub fn set_enabled(on: bool, ctx: &egui::Context) {
+    ON.store(on, Ordering::Relaxed);
+    // Indexed even when off: native window buttons and the title bar's Files icon use it too.
+    static START: Once = Once::new();
+    START.call_once(|| {
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = INDEX.set(Index::build(&theme_name()));
+            ctx.request_repaint();
+        });
+    });
+}
+
+/// Whether the theme's icons are to be drawn: chosen, and found.
+pub fn enabled() -> bool {
+    ON.load(Ordering::Relaxed) && ready()
+}
+
+/// Whether the icon theme has been indexed and found.
+fn ready() -> bool {
+    INDEX.get().is_some_and(|i| i.found)
+}
+
+/// Whether an icon theme was found (true while it's still being looked up).
+pub fn available() -> bool {
+    INDEX.get().is_none_or(|i| i.found)
+}
+
+/// The icon theme GNOME uses (`icon-theme` in GNOME's settings), or Adwaita.
+pub fn theme_name() -> String {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| {
+        std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "icon-theme"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().trim_matches('\'').to_string())
+            .filter(|s| !s.is_empty() && !s.contains('/'))
+            .unwrap_or_else(|| "Adwaita".to_string())
+    })
+    .clone()
+}
+
+/// The theme's folder icon for special folders (Music, Downloads, …), by path.
+pub fn special_folder(path: &Path) -> Option<&'static str> {
+    static DIRS: OnceLock<Vec<(PathBuf, &'static str)>> = OnceLock::new();
+    let dirs = DIRS.get_or_init(|| {
+        let home = dirs::home_dir();
+        let mut v: Vec<(PathBuf, &'static str)> = home.iter().map(|h| (h.clone(), "user-home")).collect();
+        let others = [
+            (dirs::desktop_dir(), "user-desktop"),
+            (dirs::document_dir(), "folder-documents"),
+            (dirs::download_dir(), "folder-download"),
+            (dirs::audio_dir(), "folder-music"),
+            (dirs::picture_dir(), "folder-pictures"),
+            (dirs::video_dir(), "folder-videos"),
+            (dirs::public_dir(), "folder-publicshare"),
+            (dirs::template_dir(), "folder-templates"),
+        ];
+        // Unset XDG folders point at home; home keeps its own icon.
+        v.extend(others.into_iter().filter_map(|(d, n)| d.filter(|d| Some(d) != home.as_ref()).map(|d| (d, n))));
+        v
+    });
+    dirs.iter().find(|(d, _)| d == path).map(|(_, n)| *n)
+}
+
+// ------------------------------------------------------------ theme lookup
+
+/// How one theme directory's icons are sized (from the theme's `index.theme`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Sizing {
+    Fixed(u32),
+    Scalable(u32, u32),
+    Threshold(u32, u32),
+}
+
+#[derive(Clone, Debug)]
+struct Candidate {
+    path: PathBuf,
+    sizing: Sizing,
+    scale: u32,
+    /// Position of its theme in the inheritance chain: earlier themes win.
+    theme: usize,
+}
+
+static INDEX: OnceLock<Index> = OnceLock::new();
+
+struct Index {
+    icons: HashMap<&'static str, Vec<Candidate>>,
+    found: bool,
+}
+
+/// The directories icon themes are installed in, in lookup order.
+fn base_dirs() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(h) = dirs::home_dir() {
+        v.push(h.join(".icons"));
+    }
+    if let Some(d) = dirs::data_dir() {
+        v.push(d.join("icons"));
+    }
+    let data_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_default();
+    let data_dirs = if data_dirs.is_empty() { "/usr/local/share:/usr/share".to_string() } else { data_dirs };
+    v.extend(std::env::split_paths(&data_dirs).map(|d| d.join("icons")));
+    // In the Flatpak, the host's themes.
+    v.push(PathBuf::from("/run/host/usr/share/icons"));
+    v.push(PathBuf::from("/usr/share/icons"));
+    let mut seen = HashSet::new();
+    v.retain(|d| seen.insert(d.clone()));
+    v
+}
+
+/// A parsed `index.theme`: its parents and its directories with their sizing.
+#[derive(Default)]
+struct ThemeIndex {
+    inherits: Vec<String>,
+    dirs: Vec<(String, Sizing, u32)>,
+}
+
+fn parse_index(text: &str) -> ThemeIndex {
+    let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut cur = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(s) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            cur = s.to_string();
+        } else if let Some((k, v)) = line.split_once('=') {
+            sections.entry(cur.clone()).or_default().insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+    let list = |s: Option<&String>| -> Vec<String> {
+        s.map(|s| s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default()
+    };
+    let head = sections.get("Icon Theme");
+    let mut names = list(head.and_then(|h| h.get("Directories")));
+    names.extend(list(head.and_then(|h| h.get("ScaledDirectories"))));
+    let mut seen = HashSet::new();
+    names.retain(|n| seen.insert(n.clone()));
+    let dirs = names
+        .into_iter()
+        .filter_map(|n| {
+            let s = sections.get(&n)?;
+            let num = |k: &str| s.get(k).and_then(|v| v.parse::<u32>().ok());
+            let size = num("Size")?;
+            let sizing = match s.get("Type").map(String::as_str) {
+                Some("Fixed") => Sizing::Fixed(size),
+                Some("Scalable") => Sizing::Scalable(num("MinSize").unwrap_or(size), num("MaxSize").unwrap_or(size)),
+                _ => Sizing::Threshold(size, num("Threshold").unwrap_or(2)),
+            };
+            Some((n, sizing, num("Scale").unwrap_or(1).max(1)))
+        })
+        .collect();
+    ThemeIndex { inherits: list(head.and_then(|h| h.get("Inherits"))), dirs }
+}
+
+impl Index {
+    fn build(theme: &str) -> Index {
+        let bases = base_dirs();
+        let read = |name: &str| -> Option<ThemeIndex> {
+            bases
+                .iter()
+                .find_map(|b| std::fs::read_to_string(b.join(name).join("index.theme")).ok())
+                .map(|t| parse_index(&t))
+        };
+        // The theme, then what it inherits (depth first), then Adwaita and hicolor.
+        let mut chain: Vec<(String, ThemeIndex)> = Vec::new();
+        let mut todo = vec![theme.to_string()];
+        let mut seen = HashSet::new();
+        while let Some(t) = todo.pop() {
+            if !seen.insert(t.clone()) {
+                continue;
+            }
+            let Some(ix) = read(&t) else { continue };
+            todo.extend(ix.inherits.iter().rev().filter(|p| p.as_str() != "hicolor").cloned());
+            chain.push((t, ix));
+        }
+        for t in ["Adwaita", "hicolor"] {
+            if seen.insert(t.to_string())
+                && let Some(ix) = read(t)
+            {
+                chain.push((t.to_string(), ix));
+            }
+        }
+        let wanted: HashMap<&str, &'static str> = NAMES.iter().map(|n| (*n, *n)).collect();
+        let mut icons: HashMap<&'static str, Vec<Candidate>> = HashMap::new();
+        for (i, (name, ix)) in chain.iter().enumerate() {
+            for base in &bases {
+                let root = base.join(name);
+                if !root.is_dir() {
+                    continue;
+                }
+                for (dir, sizing, scale) in &ix.dirs {
+                    let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+                    for e in rd.flatten() {
+                        let path = e.path();
+                        let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+                        if ext != "svg" && ext != "png" {
+                            continue;
+                        }
+                        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+                        if let Some(&n) = wanted.get(stem) {
+                            let c = Candidate { path, sizing: *sizing, scale: *scale, theme: i };
+                            icons.entry(n).or_default().push(c);
+                        }
+                    }
+                }
+            }
+        }
+        let found = icons.contains_key("folder");
+        Index { icons, found }
+    }
+
+    /// The file to draw `name` from at `px` pixels, as GTK picks it: from the first
+    /// theme that has the icon, the size that matches, or else the closest one.
+    fn lookup(&self, name: &str, px: u32) -> Option<&Candidate> {
+        let all = self.icons.get(name)?;
+        let first = all.iter().map(|c| c.theme).min()?;
+        all.iter().filter(|c| c.theme == first).min_by_key(|c| distance(c.sizing, c.scale, px))
+    }
+}
+
+/// How far a directory's size is from `px` (0 = a match). Smaller icons count double,
+/// as scaling them up blurs them.
+fn distance(sizing: Sizing, scale: u32, px: u32) -> u32 {
+    let (lo, hi) = match sizing {
+        Sizing::Fixed(s) => (s * scale, s * scale),
+        Sizing::Scalable(min, max) => (min * scale, max * scale),
+        Sizing::Threshold(s, t) => ((s.saturating_sub(t)) * scale, (s + t) * scale),
+    };
+    if px < lo {
+        lo - px
+    } else if px > hi {
+        (px - hi) * 2
+    } else {
+        0
+    }
+}
+
+// ------------------------------------------------------------ drawing
+
+/// Rendered icons by (name, kind, folder color, size in pixels).
+type Key = (&'static str, u8, Option<[u8; 3]>, u32);
+
+/// A rendered icon (None: it couldn't be loaded, so it isn't tried again every frame),
+/// when it was last drawn, and its size in bytes.
+struct Cached {
+    tex: Option<TextureHandle>,
+    used: u64,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct Textures {
+    map: HashMap<Key, Cached>,
+    bytes: usize,
+    /// Counts draws, for "least recently drawn".
+    clock: u64,
+}
+
+static TEXTURES: Mutex<Option<Textures>> = Mutex::new(None);
+
+/// At most this many icons, or this many bytes of them, are kept.
+const MAX_ICONS: usize = 600;
+const MAX_BYTES: usize = 192 << 20;
+
+fn texture(p: &Painter, name: &'static str, kind: Kind, px: u32) -> Option<egui::TextureId> {
+    let (tag, tint) = match kind {
+        Kind::Folder(Some(c)) => (0, Some([c.r(), c.g(), c.b()])),
+        Kind::Folder(None) => (0, None),
+        Kind::Accent(c) => (1, Some([c.r(), c.g(), c.b()])),
+        Kind::Symbolic => (2, None),
+    };
+    let key = (name, tag, tint, px);
+    let mut g = TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
+    let t = g.get_or_insert_with(Textures::default);
+    t.clock += 1;
+    let clock = t.clock;
+    if let Some(c) = t.map.get_mut(&key) {
+        c.used = clock;
+        return c.tex.as_ref().map(|h| h.id());
+    }
+    let index = INDEX.get()?;
+    // Color changes animate through many shades: past the limits, drop the icons drawn
+    // longest ago (not all of them, which would make every icon load again at once).
+    if t.map.len() >= MAX_ICONS || t.bytes > MAX_BYTES {
+        let mut by_age: Vec<(u64, Key)> = t.map.iter().map(|(k, c)| (c.used, *k)).collect();
+        by_age.sort_unstable_by_key(|(used, _)| *used);
+        for (_, k) in by_age.into_iter().take(t.map.len() / 4 + 1) {
+            if let Some(c) = t.map.remove(&k) {
+                t.bytes -= c.bytes;
+            }
+        }
+    }
+    let rgba = index.lookup(name, px).and_then(|c| load(&c.path, px)).map(|mut rgba| {
+        match kind {
+            Kind::Symbolic => mask(&mut rgba),
+            Kind::Folder(Some(color)) => recolor(&mut rgba, color),
+            Kind::Folder(None) => {}
+            Kind::Accent(accent) => recolor_to_accent(&mut rgba, accent),
+        }
+        rgba
+    });
+    let bytes = rgba.as_ref().map_or(0, |v| v.len());
+    let tex = rgba.map(|rgba| {
+        let img = ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &rgba);
+        p.ctx().load_texture(name, img, TextureOptions::LINEAR)
+    });
+    let id = tex.as_ref().map(|h| h.id());
+    t.bytes += bytes;
+    t.map.insert(key, Cached { tex, used: clock, bytes });
+    id
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Folder(Option<Color32>),
+    /// A folder in the accent color, the way the icon theme does its accent variants.
+    Accent(Color32),
+    Symbolic,
+}
+
+/// Reads an SVG or PNG icon as `px`×`px` straight (not premultiplied) RGBA.
+fn load(path: &Path, px: u32) -> Option<Vec<u8>> {
+    let data = std::fs::read(path).ok()?;
+    if path.extension().is_some_and(|e| e == "svg") {
+        rasterize(&data, px)
+    } else {
+        let img = image::load_from_memory(&data).ok()?.to_rgba8();
+        if img.dimensions() == (px, px) {
+            return Some(img.into_raw());
+        }
+        // Fit the longer side and center, so a non-square icon isn't stretched.
+        let (w, h) = img.dimensions();
+        let scale = px as f32 / w.max(h).max(1) as f32;
+        let (sw, sh) =
+            (((w as f32 * scale).round() as u32).clamp(1, px), ((h as f32 * scale).round() as u32).clamp(1, px));
+        let small = image::imageops::resize(&img, sw, sh, image::imageops::FilterType::Lanczos3);
+        let mut out = image::RgbaImage::new(px, px);
+        image::imageops::overlay(&mut out, &small, ((px - sw) / 2) as i64, ((px - sh) / 2) as i64);
+        Some(out.into_raw())
+    }
+}
+
+fn rasterize(svg: &[u8], px: u32) -> Option<Vec<u8>> {
+    use resvg::{tiny_skia, usvg};
+    let tree = usvg::Tree::from_data(svg, &usvg::Options::default()).ok()?;
+    let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
+    let size = tree.size();
+    let scale = px as f32 / size.width().max(size.height());
+    // Center a non-square drawing.
+    let (dx, dy) = ((px as f32 - size.width() * scale) / 2.0, (px as f32 - size.height() * scale) / 2.0);
+    let t = tiny_skia::Transform::from_scale(scale, scale).post_translate(dx, dy);
+    resvg::render(&tree, t, &mut pixmap.as_mut());
+    let mut data = pixmap.take();
+    // tiny-skia's pixels are premultiplied.
+    for [r, g, b, a] in data.as_chunks_mut::<4>().0 {
+        if *a > 0 && *a < 255 {
+            let un = |c: u8| ((c as u32 * 255 + *a as u32 / 2) / *a as u32).min(255) as u8;
+            (*r, *g, *b) = (un(*r), un(*g), un(*b));
+        }
+    }
+    Some(data)
+}
+
+/// Keeps only a symbolic icon's shape, in white, to be tinted when drawn.
+fn mask(rgba: &mut [u8]) {
+    for [r, g, b, _] in rgba.as_chunks_mut::<4>().0 {
+        (*r, *g, *b) = (255, 255, 255);
+    }
+}
+
+fn saturation([r, g, b]: [u8; 3]) -> f32 {
+    let (max, min) = (r.max(g).max(b) as f32, r.min(g).min(b) as f32);
+    if max == 0.0 { 0.0 } else { (max - min) / max }
+}
+
+/// Recolors a folder to `color`: its main color becomes `color`, and its other colored
+/// parts (the darker back, the emblem) take `color`'s hue too, a shade lighter or darker
+/// as they were. White and grey parts stay as they are.
+/// The folder's main color: its most common solid, colored one (the front sheet).
+fn main_color(rgba: &[u8]) -> Option<[u8; 3]> {
+    let mut counts: HashMap<[u8; 3], ([f32; 3], u32)> = HashMap::new();
+    for [r, g, b, a] in rgba.as_chunks::<4>().0 {
+        if *a > 200 && saturation([*r, *g, *b]) > 0.2 {
+            let e = counts.entry([*r >> 3, *g >> 3, *b >> 3]).or_default();
+            e.0 = [e.0[0] + *r as f32, e.0[1] + *g as f32, e.0[2] + *b as f32];
+            e.1 += 1;
+        }
+    }
+    let (sum, n) = counts.into_values().max_by_key(|(_, n)| *n)?;
+    Some(sum.map(|s| (s / n as f32).round() as u8))
+}
+
+/// Colors a folder for an accent. When the icon theme's folder already has the
+/// accent's hue (Yaru-purple with a purple accent, say) it's kept exactly as it is,
+/// so it matches GNOME Files. Otherwise it becomes a lighter, softer shade of the
+/// accent, as the theme's own accent variants are.
+fn recolor_to_accent(rgba: &mut [u8], accent: Color32) {
+    let Some(main) = main_color(rgba) else { return };
+    if hue_distance(hsl([accent.r(), accent.g(), accent.b()]).0, hsl(main).0) < 25.0 {
+        return;
+    }
+    let soft = |c: u8, to: f32, k: f32| c as f32 + (to - c as f32) * k;
+    let pale =
+        [accent.r(), accent.g(), accent.b()].map(|c| soft(soft(c, 255.0, 0.16) as u8, 150.0, 0.14).round() as u8);
+    recolor(rgba, Color32::from_rgb(pale[0], pale[1], pale[2]));
+}
+
+/// How far apart two hues (in degrees, around the color wheel) are, 0..180.
+fn hue_distance(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(360.0);
+    d.min(360.0 - d)
+}
+
+fn recolor(rgba: &mut [u8], color: Color32) {
+    let Some(main) = main_color(rgba) else { return };
+    let px = rgba.as_chunks_mut::<4>().0;
+    let target = [color.r(), color.g(), color.b()];
+    for [r, g, b, _] in px.iter_mut() {
+        let s = saturation([*r, *g, *b]);
+        if s < 0.12 {
+            continue;
+        }
+        let new = shade(target, main, [*r, *g, *b]);
+        // Fade in the recoloring with saturation, so greyish edges blend.
+        let k = ((s - 0.12) / 0.1).min(1.0);
+        let mix = |o: u8, n: u8| (o as f32 + (n as f32 - o as f32) * k).round() as u8;
+        (*r, *g, *b) = (mix(*r, new[0]), mix(*g, new[1]), mix(*b, new[2]));
+    }
+}
+
+/// Moves `orig` from a folder whose main color is `main` to one in `target`: `target`'s
+/// hue, with saturation and lightness changed from `target`'s as `orig`'s differ from
+/// `main`'s. So `main` itself becomes exactly `target`.
+fn shade(target: [u8; 3], main: [u8; 3], orig: [u8; 3]) -> [u8; 3] {
+    let (ht, st, lt) = hsl(target);
+    let (_, sm, lm) = hsl(main);
+    let (_, so, lo) = hsl(orig);
+    let s = (st * so / sm.max(0.01)).clamp(0.0, 1.0);
+    let l = if lo >= lm { lt + (lo - lm) * (1.0 - lt) / (1.0 - lm).max(0.01) } else { lt * lo / lm.max(0.01) };
+    rgb(ht, s, l.clamp(0.0, 1.0))
+}
+
+fn hsl([r, g, b]: [u8; 3]) -> (f32, f32, f32) {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d == 0.0 {
+        return (0.0, 0.0, l);
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if max == r {
+        ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (h * 60.0, s, l)
+}
+
+fn rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match (h / 60.0) as u32 % 6 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    [r, g, b].map(|v| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8)
+}
+
+/// Draws an icon of side `side`, centered in `r` and on the pixel grid.
+fn draw(p: &Painter, r: Rect, side: f32, name: &'static str, kind: Kind, tint: Color32) -> bool {
+    let ppp = p.ctx().pixels_per_point();
+    let px = (side * ppp).round().clamp(4.0, 1024.0);
+    let Some(tex) = texture(p, name, kind, px as u32) else { return false };
+    let tex = egui::load::SizedTexture::new(tex, vec2(px, px));
+    let s = px / ppp;
+    let min = ((r.center() - vec2(s, s) / 2.0) * ppp).round() / ppp;
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    p.image(tex.id, Rect::from_min_size(min, vec2(s, s)), uv, tint);
+    true
+}
+
+/// Draws the theme's folder (or a special folder, by icon name), in the theme's own
+/// colors or recolored to `color`. Returns false when it can't, so the caller draws its own.
+/// `color` is a folder color picked for it; otherwise `accent`, a custom accent color.
+pub fn folder(
+    p: &Painter,
+    r: Rect,
+    color: Option<Color32>,
+    accent: Option<Color32>,
+    special: Option<&'static str>,
+) -> bool {
+    if !enabled() {
+        return false;
+    }
+    let side = r.width().min(r.height());
+    let name = special.filter(|n| NAMES.contains(n)).unwrap_or("folder");
+    let kind = match (color, accent) {
+        (None, Some(a)) => Kind::Accent(a),
+        _ => Kind::Folder(color),
+    };
+    draw(p, r, side, name, kind, Color32::WHITE)
+        || (name != "folder" && draw(p, r, side, "folder", kind, Color32::WHITE))
+}
+
+/// Draws a symbolic icon (e.g. "user-home-symbolic") in `color`, at most 16 points big
+/// as GTK draws them, when the GNOME icon set is on.
+pub fn symbolic(p: &Painter, r: Rect, name: &'static str, color: Color32) -> bool {
+    enabled() && symbolic_always(p, r, name, color)
+}
+
+/// Like [`symbolic`], whichever icon set is chosen (for the native window buttons).
+pub fn symbolic_always(p: &Painter, r: Rect, name: &'static str, color: Color32) -> bool {
+    let side = r.width().min(r.height()).min(16.0);
+    ready() && draw(p, r, side, name, Kind::Symbolic, color)
+}
+
+/// Draws a full-color icon from the theme (e.g. an app's), whichever icon set is chosen.
+pub fn icon(p: &Painter, r: Rect, name: &'static str) -> bool {
+    let side = r.width().min(r.height());
+    ready() && draw(p, r, side, name, Kind::Folder(None), Color32::WHITE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_theme_indexes() {
+        let ix = parse_index(
+            "[Icon Theme]\nName=Yaru\nInherits=Humanity,hicolor\nDirectories=16x16/places,scalable/places\n\
+             ScaledDirectories=16x16@2x/places\n\n[16x16/places]\nSize=16\nType=Fixed\n\n\
+             [16x16@2x/places]\nSize=16\nScale=2\nType=Fixed\n\n\
+             [scalable/places]\nSize=16\nMinSize=16\nMaxSize=256\nType=Scalable\n",
+        );
+        assert_eq!(ix.inherits, ["Humanity", "hicolor"]);
+        assert_eq!(ix.dirs[0], ("16x16/places".into(), Sizing::Fixed(16), 1));
+        assert_eq!(ix.dirs[1], ("scalable/places".into(), Sizing::Scalable(16, 256), 1));
+        assert_eq!(ix.dirs[2], ("16x16@2x/places".into(), Sizing::Fixed(16), 2));
+    }
+
+    #[test]
+    fn picks_the_closest_size() {
+        // A 32 px icon: 16@2x matches, 48 is close, 16 would be blurry.
+        assert_eq!(distance(Sizing::Fixed(16), 2, 32), 0);
+        assert!(distance(Sizing::Fixed(48), 1, 32) < distance(Sizing::Fixed(16), 1, 32));
+        assert_eq!(distance(Sizing::Scalable(16, 256), 1, 100), 0);
+    }
+
+    #[test]
+    fn accent_folders_keep_a_matching_theme_color() {
+        let folder = |c: [u8; 3]| c.iter().copied().chain([255]).cycle().take(4 * 16).collect::<Vec<u8>>();
+        // Yaru-purple's folder with File Flier's purple accent: left exactly as it is.
+        let mut px = folder([166, 154, 254]);
+        recolor_to_accent(&mut px, Color32::from_rgb(137, 87, 229));
+        assert_eq!(&px[..3], &[166, 154, 254]);
+        // With a green accent it turns green.
+        recolor_to_accent(&mut px, Color32::from_rgb(46, 160, 67));
+        assert!(px[1] > px[0] && px[1] > px[2]);
+        assert!((hue_distance(350.0, 10.0) - 20.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn recoloring_moves_the_main_color() {
+        // A purple folder with a darker purple emblem and a white highlight.
+        let mut px = vec![];
+        for c in [[0x9b, 0x7b, 0xd6], [0x9b, 0x7b, 0xd6], [0x70, 0x50, 0xb0], [255, 255, 255]] {
+            px.extend_from_slice(&[c[0], c[1], c[2], 255]);
+        }
+        let green = Color32::from_rgb(0x2e, 0xc2, 0x7e);
+        recolor(&mut px, green);
+        let main = [px[0], px[1], px[2]];
+        assert!(main.iter().zip([0x2e, 0xc2, 0x7e]).all(|(a, b)| a.abs_diff(b) <= 8), "{main:?}");
+        // The emblem stays darker than the folder; white stays white.
+        assert!(px[9] < px[1]);
+        assert_eq!(&px[12..15], &[255, 255, 255]);
+    }
+
+    #[test]
+    fn masks_keep_only_the_shape() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="0" y="0" width="8" height="16" fill="gray"/></svg>"##;
+        let mut px = rasterize(svg, 16).unwrap();
+        mask(&mut px);
+        assert_eq!(&px[0..4], &[255, 255, 255, 255]);
+        assert_eq!(px[15 * 4 + 3], 0);
+    }
+}

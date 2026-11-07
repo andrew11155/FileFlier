@@ -26,6 +26,32 @@ pub struct Palette {
     pub folder_back: Color32,
     /// Text drawn on top of `accent` (white or near-black, whichever reads better).
     pub on_accent: Color32,
+    /// The GNOME look (the Adwaita themes): rounder corners, Adwaita-style folders,
+    /// and a sidebar like GNOME Files'.
+    pub gnome: bool,
+    /// Rounder corners on rows, tabs, buttons and menus (the GNOME themes' default).
+    pub rounded: bool,
+    /// A sidebar like GNOME Files': the desktop's font, roomier rows, no accent bar.
+    pub gnome_sidebar: bool,
+    /// Text drawn as GTK draws it, without egui's thickening of light-on-dark text.
+    pub gtk_text: bool,
+    /// The accent picked in Settings, if any (system folder icons take it on).
+    pub custom_accent: Option<Color32>,
+}
+
+/// Visual tweaks the user turned on or off; `None` follows the theme.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Look {
+    pub rounded: Option<bool>,
+    pub gnome_sidebar: Option<bool>,
+    pub gtk_text: Option<bool>,
+}
+
+impl Palette {
+    /// A corner radius: `r` normally, rounder in the GNOME look.
+    pub fn round(&self, r: f32) -> f32 {
+        if self.rounded { (r * 1.6).max(r + 3.0) } else { r }
+    }
 }
 
 pub const DARK: Palette = Palette {
@@ -51,6 +77,11 @@ pub const DARK: Palette = Palette {
     folder: Color32::from_rgb(255, 209, 92),
     folder_back: Color32::from_rgb(236, 168, 44),
     on_accent: Color32::WHITE,
+    gnome: false,
+    rounded: false,
+    gnome_sidebar: false,
+    gtk_text: false,
+    custom_accent: None,
 };
 
 pub const LIGHT: Palette = Palette {
@@ -75,6 +106,11 @@ pub const LIGHT: Palette = Palette {
     folder: Color32::from_rgb(255, 202, 72),
     folder_back: Color32::from_rgb(230, 160, 30),
     on_accent: Color32::WHITE,
+    gnome: false,
+    rounded: false,
+    gnome_sidebar: false,
+    gtk_text: false,
+    custom_accent: None,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -87,10 +123,13 @@ pub enum ThemeId {
     CatppuccinMocha,
     Gruvbox,
     SolarizedLight,
+    /// GNOME's Adwaita, light and dark, with the GNOME look.
+    AdwaitaLight,
+    AdwaitaDark,
 }
 
 impl ThemeId {
-    pub const ALL: [ThemeId; 8] = [
+    pub const ALL: [ThemeId; 10] = [
         ThemeId::Dark,
         ThemeId::Light,
         ThemeId::Midnight,
@@ -99,6 +138,8 @@ impl ThemeId {
         ThemeId::CatppuccinMocha,
         ThemeId::Gruvbox,
         ThemeId::SolarizedLight,
+        ThemeId::AdwaitaLight,
+        ThemeId::AdwaitaDark,
     ];
 
     pub fn name(self) -> &'static str {
@@ -111,6 +152,8 @@ impl ThemeId {
             ThemeId::CatppuccinMocha => "Catppuccin Mocha",
             ThemeId::Gruvbox => "Gruvbox",
             ThemeId::SolarizedLight => "Solarized Light",
+            ThemeId::AdwaitaLight => "GNOME Light",
+            ThemeId::AdwaitaDark => "GNOME Dark",
         }
     }
 }
@@ -185,6 +228,11 @@ fn from_spec(s: Spec) -> Palette {
         folder,
         folder_back: mix(folder, Color32::BLACK, 0.12),
         on_accent: Color32::WHITE,
+        gnome: false,
+        rounded: false,
+        gnome_sidebar: false,
+        gtk_text: false,
+        custom_accent: None,
     };
     set_accent(&mut p, accent);
     p
@@ -192,6 +240,11 @@ fn from_spec(s: Spec) -> Palette {
 
 fn set_accent(p: &mut Palette, accent: Color32) {
     p.accent = accent;
+    if p.gnome {
+        // As in GNOME 47: folders are drawn in the accent color, a lighter front over it.
+        p.folder = mix(accent, Color32::WHITE, 0.22);
+        p.folder_back = accent;
+    }
     p.accent_dim = mix(p.bg, accent, if p.is_dark { 0.40 } else { 0.30 });
     p.grid_sel = mix(p.bg, accent, 0.16);
     // Pick whichever text color contrasts more with the accent (WCAG contrast ratio).
@@ -206,6 +259,41 @@ fn set_accent(p: &mut Palette, accent: Color32) {
 
 fn build(theme: ThemeId) -> Palette {
     match theme {
+        // libadwaita's colors (as in GNOME Files), with its blue folders.
+        ThemeId::AdwaitaLight | ThemeId::AdwaitaDark => {
+            let dark = theme == ThemeId::AdwaitaDark;
+            let mut p = from_spec(if dark {
+                Spec {
+                    is_dark: true,
+                    bg: 0x1d1d20,
+                    titlebar: 0x2e2e32,
+                    sidebar: 0x2e2e32,
+                    input: 0x38383c,
+                    border: 0x3d3d41,
+                    text: 0xffffff,
+                    text_dim: 0x9a9a9e,
+                    accent: 0x3584e4,
+                    folder: 0x62a0ea,
+                }
+            } else {
+                Spec {
+                    is_dark: false,
+                    bg: 0xffffff,
+                    titlebar: 0xebebed,
+                    sidebar: 0xebebed,
+                    input: 0xe8e8ea,
+                    border: 0xdcdcdf,
+                    text: 0x2e2e33,
+                    text_dim: 0x77767b,
+                    accent: 0x3584e4,
+                    folder: 0x62a0ea,
+                }
+            });
+            p.gnome = true;
+            let accent = p.accent;
+            set_accent(&mut p, accent); // folders take the accent color
+            p
+        }
         ThemeId::Dark => DARK,
         ThemeId::Light => LIGHT,
         ThemeId::Midnight => from_spec(Spec {
@@ -286,17 +374,26 @@ fn build(theme: ThemeId) -> Palette {
 /// The palette for a theme, optionally with a custom accent. Palettes are built once
 /// and cached for the life of the program (there are only a few dozen combinations).
 pub fn palette(theme: ThemeId, accent: Option<Color32>) -> &'static Palette {
+    palette_with(theme, accent, Look::default())
+}
+
+/// The palette with the user's visual tweaks.
+pub fn palette_with(theme: ThemeId, accent: Option<Color32>, look: Look) -> &'static Palette {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    type Key = (ThemeId, Option<[u8; 3]>);
+    type Key = (ThemeId, Option<[u8; 3]>, Look);
     static CACHE: OnceLock<Mutex<HashMap<Key, &'static Palette>>> = OnceLock::new();
-    let key = (theme, accent.map(|c| [c.r(), c.g(), c.b()]));
-    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    let key = (theme, accent.map(|c| [c.r(), c.g(), c.b()]), look);
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
     cache.entry(key).or_insert_with(|| {
         let mut p = build(theme);
         if let Some(a) = accent {
             set_accent(&mut p, a);
         }
+        p.custom_accent = accent;
+        p.rounded = look.rounded.unwrap_or(p.gnome);
+        p.gnome_sidebar = look.gnome_sidebar.unwrap_or(p.gnome);
+        p.gtk_text = look.gtk_text.unwrap_or(p.gnome);
         Box::leak(Box::new(p))
     })
 }
@@ -308,8 +405,8 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
     v.panel_fill = p.bg;
     v.window_fill = p.popup;
     v.window_stroke = Stroke::new(1.0, p.border);
-    v.window_corner_radius = CornerRadius::same(8);
-    v.menu_corner_radius = CornerRadius::same(6);
+    v.window_corner_radius = CornerRadius::same(p.round(8.0) as u8);
+    v.menu_corner_radius = CornerRadius::same(p.round(6.0) as u8);
     v.extreme_bg_color = p.input;
     v.faint_bg_color = p.row_sep;
     v.override_text_color = Some(p.text);
@@ -324,7 +421,7 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
         (&mut v.widgets.active, p.accent),
         (&mut v.widgets.open, p.tab_hover),
     ] {
-        w.corner_radius = CornerRadius::same(4);
+        w.corner_radius = CornerRadius::same(p.round(4.0) as u8);
         w.bg_fill = fill;
         w.weak_bg_fill = fill;
     }
@@ -335,6 +432,10 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
     v.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
     v.popup_shadow = egui::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(110) };
     v.window_shadow = v.popup_shadow;
+    // egui thickens light-on-dark text; GTK doesn't, so the GNOME themes don't either.
+    if p.gtk_text {
+        v.text_options.color_transfer_function = egui::epaint::FontColorTransferFunction::Off;
+    }
     ctx.set_visuals_of(if dark { egui::Theme::Dark } else { egui::Theme::Light }, v);
     ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.global_style_mut(|s| {
@@ -358,6 +459,53 @@ pub fn apply(ctx: &egui::Context, p: &Palette, ui_scale: f32, animations: bool) 
 
 /// Font family used for headings and labels that need weight ([`crate::ui::bold`]).
 pub const SEMIBOLD: &str = "semibold";
+
+/// The desktop's interface font (GNOME's `font-name`, e.g. Adwaita Sans or Ubuntu Sans),
+/// used by the GNOME themes' sidebar as in GNOME Files. Inter when it can't be found.
+pub const GNOME_UI: &str = "gnome-ui";
+
+static GNOME_FONT_PX: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+
+/// The size of the desktop's interface font, in points (GNOME's 11 pt is 14.67).
+pub fn gnome_font_size() -> f32 {
+    *GNOME_FONT_PX.get().unwrap_or(&(11.0 * 96.0 / 72.0))
+}
+
+/// Splits GNOME's `font-name` ("'Ubuntu Sans 11'") into family and size in points.
+fn parse_font_name(s: &str) -> Option<(String, f32)> {
+    let s = s.trim().trim_matches('\'');
+    let (family, size) = s.rsplit_once(' ')?;
+    let size = size.parse::<f32>().ok().filter(|z| (5.0..=40.0).contains(z))?;
+    Some((family.trim().to_string(), size)).filter(|(f, _)| !f.is_empty())
+}
+
+/// The desktop's interface font: its file, and its size in points.
+#[cfg(target_os = "linux")]
+fn desktop_font() -> Option<(Vec<u8>, f32)> {
+    use std::process::Command;
+    let out = |cmd: &mut Command| {
+        cmd.output().ok().filter(|o| o.status.success()).and_then(|o| String::from_utf8(o.stdout).ok())
+    };
+    let set = out(Command::new("gsettings").args(["get", "org.gnome.desktop.interface", "font-name"]))
+        .and_then(|s| parse_font_name(&s));
+    let candidates = set.into_iter().chain([("Adwaita Sans".to_string(), 11.0), ("Cantarell".to_string(), 11.0)]);
+    for (family, pt) in candidates {
+        // fc-match always answers; make sure it found this family and not a fallback.
+        let Some(found) = out(Command::new("fc-match").args(["-f", "%{family}|%{file}", &family])) else { continue };
+        let Some((families, file)) = found.split_once('|') else { continue };
+        if !families.split(',').any(|f| f.trim().eq_ignore_ascii_case(&family)) {
+            continue;
+        }
+        let Ok(regular) = std::fs::read(file) else { continue };
+        return Some((regular, pt * 96.0 / 72.0));
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn desktop_font() -> Option<(Vec<u8>, f32)> {
+    None
+}
 
 /// Inter (SIL Open Font License, see `assets/fonts/Inter-OFL.txt`), bundled so text
 /// looks the same crisp way on every distro. One variable font gives both weights.
@@ -388,7 +536,17 @@ pub fn load_fonts(ctx: &egui::Context) {
     }
     let defaults = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let regular: Vec<String> = std::iter::once("inter".to_string()).chain(fallback).chain(defaults).collect();
-    let semibold = std::iter::once("inter-semibold".to_string()).chain(regular.iter().cloned()).collect();
+    let semibold: Vec<String> = std::iter::once("inter-semibold".to_string()).chain(regular.iter().cloned()).collect();
+    let gnome = match desktop_font() {
+        Some((reg, px)) => {
+            let _ = GNOME_FONT_PX.set(px);
+            // Variable fonts (like Ubuntu Sans) get the regular weight.
+            fonts.font_data.insert(GNOME_UI.into(), FontData::from_owned(reg).tweak(tweak(400.0)).into());
+            std::iter::once(GNOME_UI.to_string()).chain(regular.iter().cloned()).collect()
+        }
+        None => regular.clone(),
+    };
+    fonts.families.insert(FontFamily::Name(GNOME_UI.into()), gnome);
     fonts.families.insert(FontFamily::Proportional, regular);
     fonts.families.insert(FontFamily::Name(SEMIBOLD.into()), semibold);
     ctx.set_fonts(fonts);
@@ -397,6 +555,27 @@ pub fn load_fonts(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_gnome_font_names() {
+        assert_eq!(parse_font_name("'Ubuntu Sans 11'\n"), Some(("Ubuntu Sans".into(), 11.0)));
+        assert_eq!(parse_font_name("'Adwaita Sans 10.5'"), Some(("Adwaita Sans".into(), 10.5)));
+        assert_eq!(parse_font_name("'Cantarell'"), None);
+        assert_eq!(parse_font_name("''"), None);
+    }
+
+    #[test]
+    fn gnome_folders_follow_the_accent() {
+        let green = Color32::from_rgb(46, 160, 67);
+        for t in [ThemeId::AdwaitaLight, ThemeId::AdwaitaDark] {
+            assert_eq!(palette(t, None).folder_back, hex(0x3584e4));
+            let p = palette(t, Some(green));
+            assert_eq!(p.folder_back, green);
+            assert_ne!(p.folder, palette(t, None).folder);
+        }
+        // Other themes keep their own folder color.
+        assert_eq!(palette(ThemeId::Nord, Some(green)).folder, palette(ThemeId::Nord, None).folder);
+    }
 
     #[test]
     fn every_theme_builds_and_accent_text_is_readable() {
