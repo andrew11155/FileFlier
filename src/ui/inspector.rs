@@ -82,11 +82,16 @@ impl FileFlier {
             };
             // Taller for things you read (text, documents, tables).
             let reading = self.reading(&e);
-            let preview_h = if reading {
+            let auto_h = if reading {
                 (body.height() * 0.55).max(160.0)
             } else {
                 body.width().min(body.height() * 0.5).max(140.0)
             };
+            let preview_h = self
+                .cfg
+                .inspector_split
+                .map_or(auto_h, |f| body.height() * f)
+                .clamp(80.0, (body.height() - 90.0).max(80.0));
             let pr = Rect::from_min_size(body.min, vec2(body.width(), preview_h.min(body.height())));
             self.inspector_preview(ui, pr, &e);
             let p = ui.painter();
@@ -95,6 +100,7 @@ impl FileFlier {
             let details = Rect::from_min_max(pos2(body.left(), pr.bottom()), body.max);
             self.inspector_details(ui, details, &e, true);
             self.inspector_foot(ui, foot);
+            self.preview_split(ui, body.x_range(), pr.bottom(), body.y_range(), false);
         } else {
             let Some(e) = e else {
                 self.inspector_head(
@@ -107,7 +113,12 @@ impl FileFlier {
                 return;
             };
             // The preview on the left, about as wide as a photo is for this height.
-            let pw = (rect.height() * 1.6).min(rect.width() * 0.45).max(160.0);
+            let auto_w = (rect.height() * 1.6).min(rect.width() * 0.45).max(160.0);
+            let pw = self
+                .cfg
+                .inspector_band_split
+                .map_or(auto_w, |f| rect.width() * f)
+                .clamp(140.0, (rect.width() - 240.0).max(140.0));
             let pr = Rect::from_min_max(rect.min, pos2(rect.left() + pw, rect.bottom()));
             self.inspector_preview(ui, pr, &e);
             ui.painter().vline(pr.right() - 0.5, pr.y_range(), Stroke::new(1.0, pal.row_sep));
@@ -116,7 +127,44 @@ impl FileFlier {
             self.inspector_head(ui, head, Some(&e), true);
             let details = Rect::from_min_max(pos2(right.left(), head.bottom()), right.max);
             self.inspector_details(ui, details, &e, false);
+            self.preview_split(ui, rect.y_range(), pr.right(), rect.x_range(), true);
         }
+    }
+
+    /// The line between the preview and the details: drag it to give either more
+    /// room, double-click it for the automatic size. `at` is where it is along the
+    /// panel (y in a column, x in a band), `span` how far the panel reaches that way.
+    fn preview_split(&mut self, ui: &mut Ui, across: egui::Rangef, at: f32, span: egui::Rangef, band: bool) {
+        let pal = self.pal();
+        let handle = if band {
+            Rect::from_x_y_ranges(at - 3.0..=at + 3.0, across)
+        } else {
+            Rect::from_x_y_ranges(across, at - 3.0..=at + 3.0)
+        };
+        let h = ui.interact(handle, Id::new("insp_split"), Sense::click_and_drag());
+        if h.hovered() || h.dragged() {
+            ui.ctx().set_cursor_icon(if band { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical });
+            let s = Stroke::new(2.0, pal.accent);
+            if band {
+                ui.painter().vline(at - 0.5, across, s);
+            } else {
+                ui.painter().hline(across, at - 0.5, s);
+            }
+        }
+        let slot = if band { &mut self.cfg.inspector_band_split } else { &mut self.cfg.inspector_split };
+        if h.dragged()
+            && let Some(ptr) = h.interact_pointer_pos()
+        {
+            let v = if band { ptr.x } else { ptr.y };
+            *slot = Some(((v - span.min) / span.span().max(1.0)).clamp(0.1, 0.9));
+        }
+        if h.double_clicked() {
+            *slot = None;
+        }
+        if h.drag_stopped() || h.double_clicked() {
+            self.cfg.save();
+        }
+        h.on_hover_text("Drag to resize · double-click for the automatic size");
     }
 
     /// Several items selected: a header saying how many, the canvas, and (in a
@@ -449,8 +497,10 @@ impl FileFlier {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                 let full_w = ui.available_width();
                 ui.add_space(12.0);
-                // A wide band puts the Information beside the rest instead of below it.
-                let two = !column && full_w >= 560.0;
+                // With room, the Information goes beside the name, rating and tags
+                // (left-aligned); stacked in a narrow column, those are centered.
+                let two = full_w >= if column { 480.0 } else { 560.0 };
+                let center = column && !two;
                 let meta_w = if two { (full_w * 0.4).clamp(220.0, 320.0) } else { full_w };
                 let info_w = if two { (full_w - meta_w - 28.0).min(560.0) } else { full_w };
                 let layout = if two {
@@ -462,11 +512,16 @@ impl FileFlier {
                     ui.vertical(|ui| {
                         ui.set_width(meta_w);
                         let w = meta_w;
-                        if column {
+                        if center {
                             // The name, in full, and what it is.
                             let g = super::wrapped_in(ui.painter(), &e.name, super::bold(16.0), pal.text_strong, w, 4);
                             let (r, _) = ui.allocate_exact_size(vec2(w, g.size().y), Sense::hover());
                             ui.painter().galley(pos2(r.center().x, r.top()), g, pal.text_strong);
+                            ui.add_space(3.0);
+                        } else if column {
+                            let g = super::elided_in(ui.painter(), &e.name, super::bold(16.0), pal.text_strong, w);
+                            let (r, _) = ui.allocate_exact_size(vec2(w, g.size().y), Sense::hover());
+                            ui.painter().galley(r.min, g, pal.text_strong);
                             ui.add_space(3.0);
                         }
                         let sub = if e.is_dir {
@@ -479,14 +534,14 @@ impl FileFlier {
                         if !sub.is_empty() {
                             let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
                             let g = elided(ui.painter(), &sub, 12.5, pal.text_dim, w);
-                            let x = if column { r.center().x - g.size().x / 2.0 } else { r.left() };
+                            let x = if center { r.center().x - g.size().x / 2.0 } else { r.left() };
                             ui.painter().galley(pos2(x, r.center().y - g.size().y / 2.0), g, pal.text_dim);
                         }
                         ui.add_space(8.0);
                         if ratings {
                             let size = 18.0;
                             let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
-                            let left = if column { r.center().x - size * 2.5 } else { r.left() };
+                            let left = if center { r.center().x - size * 2.5 } else { r.left() };
                             rate =
                                 super::tags::star_row(ui, Id::new("insp_stars"), left, r.center().y, size, rating, pal);
                             ui.add_space(6.0);
@@ -515,14 +570,14 @@ impl FileFlier {
                                 x += cw + 6.0;
                             }
                             let (block, _) = ui.allocate_exact_size(vec2(w, y + chip_h), Sense::hover());
-                            // A column centers its rows of chips.
+                            // Stacked in a column, the rows of chips are centered.
                             for (i, ((t, g), spot)) in labels.into_iter().zip(&spots).enumerate() {
                                 let row_w = spots
                                     .iter()
                                     .filter(|s| s.top() == spot.top())
                                     .map(|s| s.right())
                                     .fold(0.0, f32::max);
-                                let dx = if column { (w - row_w) / 2.0 } else { 0.0 };
+                                let dx = if center { (w - row_w) / 2.0 } else { 0.0 };
                                 let r = spot.translate(block.min.to_vec2() + vec2(dx, 0.0));
                                 let resp = ui.interact(r, Id::new(("insp_tag", i)), Sense::click());
                                 let p = ui.painter();

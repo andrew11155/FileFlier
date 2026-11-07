@@ -194,6 +194,12 @@ pub struct Config {
     pub inspector_height: f32,
     /// The selection canvas shows each item's stars and tags.
     pub canvas_meta: bool,
+    /// The selection canvas shows names under the items.
+    pub canvas_names: bool,
+    /// The preview's share of the panel, set by dragging the line between it and the
+    /// details: of the height in a column, of the width in a band (None = automatic).
+    pub inspector_split: Option<f32>,
+    pub inspector_band_split: Option<f32>,
     /// Render office documents as pages with LibreOffice when it's installed.
     pub office_previews: bool,
     /// Set once the preview panel has been turned on for existing users.
@@ -276,6 +282,9 @@ impl Default for Config {
             inspector_side: PanelSide::Right,
             inspector_height: 280.0,
             canvas_meta: true,
+            canvas_names: true,
+            inspector_split: None,
+            inspector_band_split: None,
             office_previews: true,
             preview_panel_intro: false,
             check_updates: true,

@@ -371,7 +371,7 @@ impl FileFlier {
                 &p,
                 pos2(footer.right() - 18.0, footer.center().y),
                 Align2::RIGHT_CENTER,
-                "scroll  zoom   ·   drag  pan   ·   double-click  fit, or see one alone   ·   Enter  open   ·   Space  close",
+                "scroll  zoom   ·   drag  pan   ·   double-click  fit, or see one alone   ·   N  names   ·   Enter  open   ·   Space  close",
                 12.0,
                 pal.text_dim,
             );

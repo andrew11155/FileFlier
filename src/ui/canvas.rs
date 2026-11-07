@@ -156,7 +156,7 @@ impl FileFlier {
         let ratings = self.cfg.ext_on(crate::ext::Ext::Ratings);
         let tags_on = self.cfg.ext_on(crate::ext::Ext::Tags);
         let overlay = self.cfg.canvas_meta && (ratings || tags_on);
-        let names = tile_px >= 90.0;
+        let names = self.cfg.canvas_names && tile_px >= 90.0;
         let mut hovered = None;
         let mut rate: Option<(PathBuf, u8)> = None;
         let mut toggle = false;
@@ -253,8 +253,9 @@ impl FileFlier {
                 }
             }
 
-            // Buttons in the top right corner: fit, and the stars and tags toggle.
+            // Buttons in the top right corner: fit, names, and stars and tags.
             let mut x = rect.right() - 8.0;
+            let names_toggle;
             if ratings || tags_on {
                 let r = Rect::from_min_max(pos2(x - 28.0, rect.top() + 8.0), pos2(x, rect.top() + 36.0));
                 p.rect_filled(r, pal.round(6.0), pal.popup.gamma_multiply(0.92));
@@ -271,6 +272,22 @@ impl FileFlier {
                 })
                 .clicked();
                 x = r.left() - 6.0;
+            }
+            {
+                let r = Rect::from_min_max(pos2(x - 32.0, rect.top() + 8.0), pos2(x, rect.top() + 36.0));
+                p.rect_filled(r, pal.round(6.0), pal.popup.gamma_multiply(0.92));
+                let on = self.cfg.canvas_names;
+                let tip = if on { "Hide names (N in Quick Look)" } else { "Show names (N in Quick Look)" };
+                names_toggle = super::icon_button(ui, r, Id::new((id, "names")), true, pal, tip, |p, ir, c| {
+                    let col = if on { pal.accent } else { c };
+                    super::text_bold(p, ir.center(), Align2::CENTER_CENTER, "Aa", 13.0, col);
+                })
+                .clicked();
+                x = r.left() - 6.0;
+            }
+            if names_toggle {
+                self.cfg.canvas_names = !self.cfg.canvas_names;
+                self.cfg.save();
             }
             if !view.at_fit {
                 let r = Rect::from_min_max(pos2(x - 44.0, rect.top() + 8.0), pos2(x, rect.top() + 36.0));

@@ -1534,6 +1534,11 @@ impl FileFlier {
             if let Some(p) = self.ql_player.as_mut() {
                 media_keys(ctx, p);
             }
+            // N shows or hides the names on the selection canvas.
+            if self.tab().selected.len() > 1 && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::N)) {
+                self.cfg.canvas_names = !self.cfg.canvas_names;
+                self.cfg.save();
+            }
             // Typing doesn't filter the folder behind Quick Look.
             ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Text(_))));
             let page = self.preview_page.1;
